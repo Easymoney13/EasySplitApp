@@ -5,6 +5,7 @@ import { Sparkles, Phone, User, Globe, LogOut } from 'lucide-react';
 import defaultTranslations, { translations as namedTranslations, formatCurrency, convertCurrency, formatDualPrice, updateLiveExchangeRates } from '../../lib/i18n';
 import { getCookie, setCookie, removeCookie } from '../../lib/cookies';
 import { clearAccountScopedStorage, transitionAccountScope } from '../../lib/accountIsolation';
+import { isProtectedSameOriginApi } from '../../lib/authFetch';
 
 const rawDictionary: any = defaultTranslations || namedTranslations || {};
 const i18nDictionary: Record<string, Record<string, string>> = 
@@ -94,18 +95,16 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     if (typeof window !== 'undefined') {
       const originalFetch = window.fetch;
       window.fetch = async (input, init) => {
-        const url = typeof input === 'string' ? input : (input as Request).url;
-        if (url.startsWith('/api/') && !url.includes('/api/exchange-rates') && !url.includes('/api/network-ip')) {
+        if (isProtectedSameOriginApi(input, window.location.origin)) {
           try {
             const { auth } = await import('../../lib/firebase');
             const currentUser = auth.currentUser;
             if (currentUser) {
               const token = await currentUser.getIdToken();
-              init = init || {};
-              init.headers = {
-                ...init.headers,
-                'Authorization': `Bearer ${token}`
-              };
+              const inheritedHeaders = input instanceof Request ? input.headers : undefined;
+              const headers = new Headers(init?.headers || inheritedHeaders);
+              headers.set('Authorization', `Bearer ${token}`);
+              init = { ...init, headers };
             }
           } catch (e) {
             console.error('Error attaching Firebase token to request:', e);
