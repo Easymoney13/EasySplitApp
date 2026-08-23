@@ -246,7 +246,7 @@ function isTotalOrTaxLine(name: string): boolean {
     .trim();
   const rate = '\\d+(?:[.,]\\d+)?\\s*%?';
   const englishLabel = '(?:total|subtotal|grand total|balance due|amount due|total due|final total|bill total|check total|net total|tax|vat|sales tax|discount(?: coupon| member| club| loyalty| promotion)?|(?:member|club|loyalty|coupon|promo(?:tional)?) discount|coupon|credit|service(?: charge| fee)?|tip(?: amount)?|gratuity|cash|cash paid|change due|amount paid|tendered|visa|mastercard|amex|credit card|debit card)';
-  const hebrewLabel = '(?:לתשלום|סהכ|סחכ|סך הכל|סכהכל|סחיכ|סהיק|סהכ חשבון|סכ הכל חשבון|סך הכל חשבון|סכום כולל|סך הכול|סך הכול לתשלום|סכום לתשלום|סך לתשלום|חשבון לתשלום|חשבון סופי|סהכ בשח|סהכ מחיר|סהכ סופי|סהכ לתשלום|מעמ|שירות|דמי שירות|טיפ|תשר|הנחה|הנחת (?:מועדון|חבר|קופון|מבצע)|זיכוי|שובר|קופון(?: הנחה)?|מבצע|מזומן|כרטיס אשראי|אשראי|עודף|סכום ששולם|חשבון מס|חשבונית מס)';
+  const hebrewLabel = '(?:לתשלום|סהכ|סה כ|סחכ|סך הכל|סכהכל|סחיכ|סהיק|סהכ חשבון|סה כ חשבון|סהכ פריטים|סה כ פריטים|סיכום|סיכום פריטים|יתרה|סכ הכל חשבון|סך הכל חשבון|סך חשבון|סכום כולל|סך הכול|סך הכול לתשלום|סכום לתשלום|סך לתשלום|חשבון לתשלום|חשבון סופי|סהכ בשח|סה כ בשח|סהכ מחיר|סה כ מחיר|סהכ סופי|סה כ סופי|סהכ לתשלום|סה כ לתשלום|מעמ|שירות|דמי שירות|טיפ|תשר|הנחה|הנחת (?:מועדון|חבר|קופון|מבצע)|זיכוי|שובר|קופון(?: הנחה)?|מבצע|מזומן|כרטיס אשראי|אשראי|עודף|סכום ששולם|חשבון מס|חשבונית מס)';
   const english = new RegExp(`^(?:${englishLabel}(?:\\s+${rate})?|${rate}\\s+${englishLabel})$`);
   const hebrew = new RegExp(`^(?:${hebrewLabel}(?:\\s+${rate})?|${rate}\\s+${hebrewLabel})$`);
   return english.test(clean) || hebrew.test(clean);
@@ -264,7 +264,7 @@ export function parseReceiptText(rawText: string): ParsedBill | null {
   if (lines.length === 0) return null;
 
   let receiptTotal: number | null = null;
-  const finalTotalLabel = /(?:grand\s+total|amount\s+due|total\s+due|final\s+total|לתשלום|סה["״']?כ|סך\s+הכ[ו]?ל|סכום\s+כולל)/i;
+  const finalTotalLabel = /(?:grand\s+total|amount\s+due|total\s+due|final\s+total|לתשלום|סה\s*["״']?\s*כ|סך\s+הכ[ו]?ל|סכום\s+כולל|יתרה)/i;
   for (const line of lines) {
     const numericMatches = [...line.matchAll(/\b(\d+(?:[.,]\d{1,2})?)\b/g)];
     if (!numericMatches.length) continue;

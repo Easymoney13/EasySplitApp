@@ -71,3 +71,19 @@ test('real Tesseract pipeline exceeds the 96% Hebrew synthetic-fixture acceptanc
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });
   }
 });
+
+test('Hebrew OCR parser recognizes spaced totals and excludes summary rows from purchased items', () => {
+  const { parseReceiptText } = loadBrowserOcrModule();
+  const receipt = parseReceiptText([
+    'קפה 12.00',
+    'עוגה 24.00',
+    'סה " כ פריטים 36.00',
+    'יתרה 36.00',
+  ].join('\n'));
+  assert.ok(receipt);
+  assert.equal(receipt.receiptTotal, 36);
+  assert.deepEqual(receipt.items.map(({ name, price }) => ({ name, price })), [
+    { name: 'קפה', price: 12 },
+    { name: 'עוגה', price: 24 },
+  ]);
+});

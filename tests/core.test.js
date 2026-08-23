@@ -629,10 +629,10 @@ test('OCR verification uses a different pinned model from the primary read', asy
   };
   try {
     const receipt = await parseReceiptImage('/9j/', 'image/jpeg', 'test-key', { pipelineTimeoutMs: 12_000 });
-    assert.match(endpoints[0], /gemini-3\.6-flash:generateContent/);
-    assert.match(endpoints[1], /gemini-flash-latest:generateContent/);
+    assert.match(endpoints[0], /gemini-3\.7-flash:generateContent/);
+    assert.match(endpoints[1], /gemini-3\.6-flash:generateContent/);
     assert.equal(receipt.ocr.verificationStatus, 'cross_model_agreement');
-    assert.equal(receipt.ocr.verificationModelName, 'gemini-flash-latest');
+    assert.equal(receipt.ocr.verificationModelName, 'gemini-3.6-flash');
   } finally {
     global.fetch = originalFetch;
   }
@@ -1191,6 +1191,9 @@ test('isTotalOrTaxLine correctly identifies total/tax lines in Hebrew and Englis
   assert.equal(isTotalOrTaxLine('BALANCE DUE'), true);
   assert.equal(isTotalOrTaxLine('AMOUNT DUE: 45.00'), true);
   assert.equal(isTotalOrTaxLine('מע"מ'), true);
+  assert.equal(isTotalOrTaxLine('סה"כ פריטים'), true);
+  assert.equal(isTotalOrTaxLine('סיכום פריטים'), true);
+  assert.equal(isTotalOrTaxLine('יתרה'), true);
   
   // Real menu items should NOT be identified as totals
   assert.equal(isTotalOrTaxLine('פיצה מרגריטה'), false);
