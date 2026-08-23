@@ -95,14 +95,14 @@ export const AttachToGroupModal: React.FC<AttachToGroupModalProps> = ({
           ) : (
             <div className="space-y-1.5">
               <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                {t('enterGroupCodeLabel', undefined, 'Enter 4-Digit Group Code')}
+                {t('enterGroupCodeLabel', undefined, 'Enter 8-Digit Group Code')}
               </label>
               <input
                 type="text"
                 maxLength={8}
                 value={customGroupCode}
                 onChange={(e) => setCustomGroupCode(e.target.value.replace(/\D/g, ''))}
-                placeholder={t('enterGroupCodePlaceholder', undefined, 'Enter 4-digit group code')}
+                placeholder={t('enterGroupCodePlaceholder', undefined, 'Enter 8-digit group code')}
                 className="w-full py-2.5 px-3.5 rounded-xl photo-input text-center text-lg font-mono font-extrabold tracking-widest bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800"
               />
             </div>

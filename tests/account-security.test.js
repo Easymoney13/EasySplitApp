@@ -62,3 +62,27 @@ test('a stored id field cannot redirect a trusted user write to another UID', as
   assert.equal(victim.username, 'Real Victim');
   assert.deepEqual(victim.bills, [{ id: 'keep-me' }]);
 });
+
+test('client-controlled account settings cannot persist unrelated user fields', async () => {
+  const user = await db.findOrCreateUser('settings-attacker', 'Settings Attacker', '', {
+    language: 'he',
+    currency: 'usd',
+    theme: 'dark',
+    ocrEngine: 'gemini',
+    groups: ['private-group'],
+    bills: [{ id: 'forged-history' }],
+    isAdmin: true,
+    nested: { role: 'owner' },
+  });
+
+  assert.deepEqual(user.settings, {
+    language: 'he',
+    currency: 'USD',
+    theme: 'dark',
+    customGeminiKey: '',
+    ocrEngine: 'gemini',
+  });
+  assert.equal(user.settings.isAdmin, undefined);
+  assert.equal(user.settings.groups, undefined);
+  assert.equal(user.settings.bills, undefined);
+});

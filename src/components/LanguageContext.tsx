@@ -3,7 +3,8 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { Sparkles, Phone, User, Globe, LogOut } from 'lucide-react';
 import defaultTranslations, { translations as namedTranslations, formatCurrency, convertCurrency, formatDualPrice, updateLiveExchangeRates } from '../../lib/i18n';
-import { getCookie, setCookie } from '../../lib/cookies';
+import { getCookie, setCookie, removeCookie } from '../../lib/cookies';
+import { clearAccountScopedStorage, transitionAccountScope } from '../../lib/accountIsolation';
 
 const rawDictionary: any = defaultTranslations || namedTranslations || {};
 const i18nDictionary: Record<string, Record<string, string>> = 
@@ -177,6 +178,16 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           });
 
         onAuthStateChanged(auth, async (user) => {
+          const accountTransition = transitionAccountScope(localStorage, user?.uid || '');
+          if (accountTransition.changed) {
+            removeCookie('billsplit_user_groups');
+            savedLocalProfile = null;
+            setProfile({ displayName: '', avatarColor: '#10B981', avatarUrl: undefined, phoneNumber: undefined });
+            setGuestName('');
+            // Cancel old-account requests before they can repopulate caches.
+            window.location.reload();
+            return;
+          }
           setFirebaseUser(user);
           if (user) {
             // Sync user settings and fetch DB record
@@ -338,23 +349,26 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const logout = async () => {
     try {
       if (typeof window !== 'undefined') {
-        localStorage.removeItem('billsplit_local_profile');
-        localStorage.removeItem('billsplit_phone');
-        localStorage.removeItem('billsplit_active_session');
+        clearAccountScopedStorage(localStorage);
+        removeCookie('billsplit_user_groups');
       }
       setProfile({ displayName: '', avatarColor: '#10B981', avatarUrl: undefined, phoneNumber: undefined });
       setGuestName('');
       const { auth } = await import('../../lib/firebase');
       const { signOut } = await import('firebase/auth');
       await signOut(auth);
-      if (typeof window !== 'undefined' && window.location.pathname !== '/') {
+      if (typeof window !== 'undefined') {
+        clearAccountScopedStorage(localStorage);
+        removeCookie('billsplit_user_groups');
         window.location.href = '/';
       }
     } catch (e) {
       console.error('Sign-Out failed:', e);
       setProfile({ displayName: '', avatarColor: '#10B981', avatarUrl: undefined, phoneNumber: undefined });
       setGuestName('');
-      if (typeof window !== 'undefined' && window.location.pathname !== '/') {
+      if (typeof window !== 'undefined') {
+        clearAccountScopedStorage(localStorage);
+        removeCookie('billsplit_user_groups');
         window.location.href = '/';
       }
     }

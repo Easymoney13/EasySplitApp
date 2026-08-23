@@ -23,7 +23,14 @@ BillSplit is a modern, real-time, collaborative web application built to make sh
 - **Backend & Real-Time**: Node.js, Express, WebSockets (ws)
 - **Authentication**: Firebase Client SDK & Firebase Admin SDK (JWT Validation)
 - **AI / OCR**: Google Gemini Vision API, Tesseract.js
-- **Database**: Local JSON database (db.json) for persistence
+- **Database**: Cloud Firestore in production. `db.json` is retained temporarily
+  only as a protected migration source and for explicit local tests.
+
+Before retiring any local runtime database, run `npm run verify:firestore` with
+Firebase Admin credentials. It compares data without printing personal records
+or modifying `db.json`. Use `npm run cutover:firestore` for a read-only dry-run;
+`-- --apply` creates only a verified immutable snapshot and never overwrites
+operational Firestore documents. The legacy boot migration is disabled.
 
 ---
 

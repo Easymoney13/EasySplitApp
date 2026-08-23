@@ -372,7 +372,7 @@ export default function HomePage() {
   const handleUniversalJoin = async (e: React.FormEvent) => {
     e.preventDefault();
     const code = universalJoinCode.trim();
-    if (!/^\d{8}$/.test(code)) return;
+    if (!/^(?:\d{4}|\d{8})$/.test(code)) return;
 
     setIsUploading(true);
     try {
@@ -417,7 +417,7 @@ export default function HomePage() {
     }
 
     triggerHaptic('warning');
-    alert(t('codeNotFound', undefined, 'Code not found. Please check the 4-digit code.'));
+    alert(t('codeNotFound', undefined, 'Code not found. Please check the room code.'));
   };
 
   const handleScanComplete = (scanResult: any) => {
@@ -1601,7 +1601,7 @@ export default function HomePage() {
               <input
                 type="text"
                 maxLength={8}
-                placeholder={t('enterUniversalCodePlaceholder', undefined, 'Enter 4-digit code')}
+                placeholder={t('enterUniversalCodePlaceholder', undefined, 'Enter room code')}
                 value={universalJoinCode}
                 onChange={(e) => setUniversalJoinCode(e.target.value.replace(/\D/g, ''))}
                 className="w-full py-2.5 px-3.5 rounded-xl photo-input text-center text-sm font-mono tracking-widest font-extrabold text-slate-900 dark:text-white placeholder:text-slate-400 placeholder:font-sans placeholder:text-xs placeholder:tracking-normal"
@@ -1609,7 +1609,7 @@ export default function HomePage() {
 
               <button
                 type="submit"
-                disabled={!/^\d{4,8}$/.test(universalJoinCode)}
+                disabled={!/^(?:\d{4}|\d{8})$/.test(universalJoinCode)}
                 className="w-full py-3 px-4 photo-btn-indigo text-xs flex items-center justify-center gap-1.5 disabled:opacity-40"
               >
                 <span>{t('joinSessionBtn', undefined, 'Join')}</span>

@@ -10,6 +10,8 @@
     "test": "node --test tests/*.test.js",
     "test:strain": "node --test tests/strain.integration.js",
     "test:ocr-hebrew": "node --test tests/hebrew-ocr.integration.js",
+    "verify:firestore": "node scripts/verify-firestore-parity.js",
+    "cutover:firestore": "node scripts/safe-firestore-cutover.js",
     "verify": "npm run test && npm run test:ocr-hebrew && npm run typecheck && npm run build"
   },
   "dependencies": {

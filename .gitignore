@@ -8,10 +8,8 @@
 /build
 
 # environment variables
-.env
-.env.local
-.env.production
-.env*.local
+.env*
+!.env.example
 
 # build cache
 tsconfig.tsbuildinfo
@@ -23,10 +21,24 @@ tsconfig.tsbuildinfo
 scratch/
 
 # local runtime data (never commit user or receipt records)
-/db.json
-/db.json.tmp
-/db-*.json
-/db-*.json.tmp
+/db*.json
+!/db.example.json
+/db*.json.*
+*.db
+*.db.*
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite.*
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3
+*.sqlite3.*
+*.sqlite3-journal
+*.sqlite3-shm
+*.sqlite3-wal
 
 # debug logs
 *.log
@@ -38,5 +50,22 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 
-# firebase secrets
-firebase-service-account.json
+# credentials and private keys
+*service-account*.json
+*service_account*.json
+*serviceAccount*.json
+*ServiceAccount*.json
+*firebase-adminsdk*.json
+*credential*.json
+*Credential*.json
+*client-secret*.json
+client_secret*.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+id_dsa
+id_ecdsa
+id_ed25519
+id_rsa

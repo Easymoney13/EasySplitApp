@@ -38,7 +38,7 @@ function waitForServer(child, timeoutMs = 45_000) {
   });
 }
 
-test('new four-digit invite codes can be discovered and joined by guests', { timeout: 60_000 }, async (t) => {
+test('legacy four-digit invite codes remain compatible and responses include security headers', { timeout: 60_000 }, async (t) => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'easysplit-invite-'));
   const dbPath = path.join(tempDir, 'db.json');
   const sessionHost = createRoomMember({ name: 'Session Host', isHost: true });
@@ -89,9 +89,25 @@ test('new four-digit invite codes can be discovered and joined by guests', { tim
 
   const sessionDiscovery = await fetch(`${baseUrl}/api/session/4321`);
   assert.equal(sessionDiscovery.status, 200);
+  assert.equal(sessionDiscovery.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(sessionDiscovery.headers.get('x-frame-options'), 'DENY');
+  assert.equal(sessionDiscovery.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
+  assert.match(sessionDiscovery.headers.get('permissions-policy') || '', /microphone=\(\)/);
+  assert.match(sessionDiscovery.headers.get('content-security-policy') || '', /frame-ancestors 'none'/);
+  assert.match(sessionDiscovery.headers.get('content-security-policy') || '', /https:\/\/fonts\.googleapis\.com/);
+  assert.match(sessionDiscovery.headers.get('content-security-policy') || '', /https:\/\/fonts\.gstatic\.com/);
   assert.deepEqual(await sessionDiscovery.json(), {
     session: { id: 'sess_invite_test', code: '4321', status: 'active' },
   });
+
+  const oversizedEarlyResponse = await fetch(`${baseUrl}/api/unknown`, {
+    method: 'POST',
+    headers: { 'content-type': 'text/plain' },
+    body: 'x'.repeat(769 * 1024),
+  });
+  assert.equal(oversizedEarlyResponse.status, 413);
+  assert.equal(oversizedEarlyResponse.headers.get('x-content-type-options'), 'nosniff');
+  assert.match(oversizedEarlyResponse.headers.get('content-security-policy') || '', /frame-ancestors 'none'/);
 
   const sessionJoin = await fetch(`${baseUrl}/api/session/4321/join`, {
     method: 'POST',

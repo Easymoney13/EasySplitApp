@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createUniqueRoomCode, hashAccessToken, tokenMatches } = require('../lib/ids');
-const { ValidationError, validateItems, validateSessionAction, validateReceiptBody } = require('../lib/validation');
+const { ValidationError, validateItems, validateSessionAction, validateReceiptBody, validateUserSyncBody } = require('../lib/validation');
 const { processSessionAction } = require('../lib/sessionActions');
 const { createRoomMember, findRoomMember, joinRoom, publicRoom } = require('../lib/roomAuth');
 const { broadcastToRoom, subscribeClient } = require('../lib/realtimeRooms');
@@ -16,6 +16,7 @@ const { createStableScanEntityId, normalizeScanId, normalizeRecoveryToken, creat
 const { processGroupBillAction } = require('../lib/groupActions');
 const security = require('../lib/security');
 const { reconstructReceiptRows } = require('../lib/ocrRows');
+const { reserveUniqueFirestoreRoomCode } = require('../lib/db');
 const {
   assessOcrReadability,
   evaluateReceiptAccuracy,
@@ -37,20 +38,69 @@ function sampleSession() {
   };
 }
 
-test('room codes never reuse an occupied session or group code', () => {
-  const data = { sessions: { a: { code: '1234' } }, groups: { b: { code: '5678' } } };
-  const values = [1234, 5678, 9012];
-  const result = createUniqueRoomCode(data, () => values.shift());
-  assert.equal(result, '9012');
+test('user sync validation strips identity and account-structure field tampering', () => {
+  const result = validateUserSyncBody({
+    uid: 'victim-uid',
+    id: 'victim-id',
+    username: '<b>Alice</b>',
+    groups: ['victim-group'],
+    settings: {
+      language: 'HE',
+      currency: 'usd',
+      theme: 'DARK',
+      ocrEngine: 'GEMINI',
+      role: 'admin',
+      hiddenHistoryIds: ['victim-history'],
+    },
+  });
+  assert.deepEqual(result, {
+    username: 'Alice',
+    settings: {
+      language: 'he',
+      currency: 'USD',
+      theme: 'dark',
+      ocrEngine: 'gemini',
+    },
+  });
 });
 
-test('room code allocation finds the final free code after random retries are exhausted', () => {
-  const sessions = {};
-  for (let code = 1000; code < 9999; code += 1) {
-    sessions[`session-${code}`] = { code: String(code) };
-  }
-  const result = createUniqueRoomCode({ sessions, groups: {} }, () => 1000);
-  assert.equal(result, '9999');
+test('room codes never reuse an occupied session or group code', () => {
+  const data = { sessions: { a: { code: '12345678' } }, groups: { b: { code: '56781234' } } };
+  const values = [12345678, 56781234, 90123456];
+  const result = createUniqueRoomCode(data, () => values.shift());
+  assert.equal(result, '90123456');
+});
+
+test('room code allocation finds a deterministic free code after random retries are exhausted', () => {
+  const sessions = { occupied: { code: '10000000' } };
+  const result = createUniqueRoomCode({ sessions, groups: {} }, () => 10000000);
+  assert.equal(result, '10000001');
+});
+
+test('Firestore room codes are reserved atomically before room persistence', async () => {
+  const created = [];
+  const values = [12345678, 87654321];
+  const firestore = {
+    collection(name) {
+      assert.equal(name, '_room_codes');
+      return {
+        doc(code) {
+          return {
+            async create(value) {
+              created.push({ code, value });
+              if (code === '12345678') throw Object.assign(new Error('occupied'), { code: 'already-exists' });
+            },
+          };
+        },
+      };
+    },
+  };
+
+  const code = await reserveUniqueFirestoreRoomCode(firestore, 'session', 'sess_secure', () => values.shift());
+  assert.equal(code, '87654321');
+  assert.equal(created.length, 2);
+  assert.equal(created[1].value.roomType, 'session');
+  assert.equal(created[1].value.roomId, 'sess_secure');
 });
 
 test('access token hashes compare without exposing the token', () => {

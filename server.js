@@ -49,7 +49,7 @@ const allocateTipAdjustedCents = debtMinimizer.allocateTipAdjustedCents;
 const splitCents = debtMinimizer.splitCents;
 const toCents = debtMinimizer.toCents;
 const { createEntityId, hashAccessToken } = require('./lib/ids');
-const { ValidationError, validateItems, validateReceiptBody } = require('./lib/validation');
+const { ValidationError, validateItems, validateReceiptBody, validateUserSyncBody } = require('./lib/validation');
 const { processSessionAction } = require('./lib/sessionActions');
 const {
   createRoomMember,
@@ -120,7 +120,7 @@ if (process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
 // Local data migration is an explicit administrative operation. Never upload a
 // repository-adjacent database merely because a Firestore project is empty.
 if (process.env.MIGRATE_LOCAL_DB_TO_FIRESTORE === 'true' && typeof db.migrateLocalDbToFirestore === 'function') {
-  db.migrateLocalDbToFirestore();
+  throw new Error('MIGRATE_LOCAL_DB_TO_FIRESTORE is no longer supported at server startup. Run the verified standalone cutover script instead.');
 }
 
 // Middleware to verify Firebase ID token in Authorization header
@@ -166,6 +166,38 @@ app.prepare().then(() => {
   const server = express();
   const trustedProxyHops = Number(process.env.TRUST_PROXY_HOPS || 0);
   if (Number.isInteger(trustedProxyHops) && trustedProxyHops > 0) server.set('trust proxy', trustedProxyHops);
+
+  // Install the browser security boundary before admission controls and body
+  // parsing so early 4xx/5xx responses receive the same protections.
+  server.use((req, res, nextMiddleware) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-XSS-Protection', '0');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    res.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=(), payment=()');
+    if (process.env.NODE_ENV === 'production') {
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    }
+    const scriptSources = ["'self'", "'unsafe-inline'"];
+    if (process.env.NODE_ENV !== 'production') scriptSources.push("'unsafe-eval'");
+    res.setHeader('Content-Security-Policy', [
+      "default-src 'self'",
+      `script-src ${scriptSources.join(' ')}`,
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "img-src 'self' data: blob: https://lh3.googleusercontent.com",
+      "font-src 'self' data: https://fonts.gstatic.com",
+      "connect-src 'self' ws: wss: https://*.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com",
+      "frame-src https://accounts.google.com https://*.firebaseapp.com",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'none'",
+    ].join('; '));
+    nextMiddleware();
+  });
+
   const httpServer = http.createServer(server);
   const wss = new WebSocket.Server({ noServer: true, maxPayload: 10_000 });
   const wsConnectionsByIp = new Map();
@@ -308,15 +340,6 @@ app.prepare().then(() => {
   const ocrGate = createAsyncGate({ maxConcurrent: 3, maxQueue: 8, waitTimeoutMs: 1_000 });
   const ocrResultCache = createExpiringPromiseCache({ ttlMs: 5 * 60_000, maxEntries: 200 });
   const accountReadGate = createAsyncGate({ maxConcurrent: 2, maxQueue: 4, waitTimeoutMs: 750 });
-
-  // 🛡️ Enterprise Security Headers Middleware
-  server.use((req, res, nextMiddleware) => {
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('X-Frame-Options', 'DENY');
-    res.setHeader('X-XSS-Protection', '1; mode=block');
-    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-    nextMiddleware();
-  });
 
   // 🛡️ Pass-through API Middleware
   server.use('/api/', (req, res, nextMiddleware) => {
@@ -575,8 +598,8 @@ app.prepare().then(() => {
     };
   }
 
-  // Four-digit invite codes are deliberately easy to type, so anonymous
-  // discovery and join attempts need tighter brute-force limits.
+  // New invites use eight digits; retain tighter limits for code discovery and
+  // legacy four-digit rooms until those records expire.
   const roomLookupRateLimit = roomWindowRateLimit(roomLookupRateBuckets, 60, 'Too many room lookups. Please wait and try again.');
   const roomJoinRateLimit = roomWindowRateLimit(roomJoinRateBuckets, 30, 'Too many room join attempts. Please wait and try again.');
   const mutationRateLimit = roomWindowRateLimit(mutationRateBuckets, 240, 'Too many room updates. Please wait and try again.');
@@ -956,9 +979,10 @@ app.prepare().then(() => {
             host.member.accessTokenHash = hashAccessToken(recoveryToken);
             host.accessToken = recoveryToken;
           }
+          const newSessionId = stableSessionId || createEntityId('sess');
           const newSession = {
-            id: stableSessionId || createEntityId('sess'),
-            code: await db.generateUniqueRoomCode(),
+            id: newSessionId,
+            code: await db.generateUniqueRoomCode('session', newSessionId),
             storeName: security.sanitizeString(parsedReceipt.storeName || 'Scanned Receipt', 40),
             date: parsedReceipt.date || new Date().toISOString().split('T')[0],
             currency: security.sanitizeString(parsedReceipt.currency || 'NIS', 5),
@@ -1261,9 +1285,10 @@ app.prepare().then(() => {
         avatarColor: '#A3E635',
       });
 
+      const newGroupId = createEntityId('grp');
       const newGroup = {
-        id: createEntityId('grp'),
-        code: await db.generateUniqueRoomCode(),
+        id: newGroupId,
+        code: await db.generateUniqueRoomCode('group', newGroupId),
         name: cleanName,
         currency: security.sanitizeString(currency || 'NIS', 5),
         createdAt: Date.now(),
@@ -1291,7 +1316,7 @@ app.prepare().then(() => {
     }
   });
 
-  // 2. Fetch Group by ID or high-entropy invite code
+  // 2. Fetch Group by durable ID or human invite code
   server.get('/api/groups/:idOrCode', authenticateUser, roomLookupRateLimit, async (req, res) => {
     const sanitizedId = security.sanitizeString(req.params.idOrCode, 50);
     const group = await db.getGroup(sanitizedId);
@@ -1581,7 +1606,7 @@ app.prepare().then(() => {
         groupId: group.id,
         billId,
         payerId: cleanPayerId,
-        code: existingSession?.code || await db.generateUniqueRoomCode(),
+        code: existingSession?.code || await db.generateUniqueRoomCode('session', sessionId),
         storeName: cleanTitle,
         date: billDate,
         currency: group.currency || 'NIS',
@@ -1820,8 +1845,8 @@ app.prepare().then(() => {
       }
 
       const { uid, name, picture } = req.user;
-      const { username, settings } = req.body;
-      const finalName = username || name || 'User';
+      const { username, settings } = validateUserSyncBody(req.body || {});
+      const finalName = security.sanitizeName(username || name || 'User', 'User');
 
       const user = await db.findOrCreateUser(uid, finalName, '', settings || {});
 
@@ -1838,8 +1863,7 @@ app.prepare().then(() => {
 
       return res.json({ success: true, user: publicUserProfile(user) });
     } catch (err) {
-      console.error('Error syncing user:', err);
-      return res.status(500).json({ error: 'Failed to sync user' });
+      return sendRouteError(res, err, 'Failed to sync user');
     }
   });
 

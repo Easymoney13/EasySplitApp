@@ -30,8 +30,8 @@ export const translations: Record<string, Record<string, string>> = {
     parsing: "Parsing OCR...",
     scanCamera: "Scan Camera",
     manualBtn: "Manual",
-    joinViaCode: "Join via 4-Digit Code",
-    enterCodePlaceholder: "Enter 4-digit code",
+    joinViaCode: "Join via Room Code",
+    enterCodePlaceholder: "Enter room code",
     joinSessionBtn: "Join Session",
     startSplitBtn: "Start Split",
     joinSessionBtnAction: "Join Session",
@@ -64,7 +64,7 @@ export const translations: Record<string, Record<string, string>> = {
     groupsSub: "Create a group to split shared bills and minimize debts with friends.",
     noGroupsYetHint: "💡 Create a group above to start a shared expense tracker with friends!",
     joinGroupBtn: "Join Group",
-    enterGroupCodePlaceholder: "Enter 4-digit group code",
+    enterGroupCodePlaceholder: "Enter 8-digit group code",
     tripExpenseTracker: "Group Expense Tracker",
     addBillsToGroup: "Add Bills to {groupName}",
     groupHeroSub: "Upload scans or manual bills anytime. Balances update & minimize automatically!",
@@ -284,7 +284,7 @@ export const translations: Record<string, Record<string, string>> = {
     categoryOther: "General / Other 🏷️",
 
     // Alerts & Messages
-    codeNotFound: "Session code not found. Please check the 4-digit code.",
+    codeNotFound: "Room code not found. Please check the code.",
     couldNotParse: "Could not parse receipt image. Please take a clear, well-lit photo or enter items manually.",
     errorUploading: "Error uploading receipt image."
   },
@@ -320,8 +320,8 @@ export const translations: Record<string, Record<string, string>> = {
     parsing: "מפענח OCR...",
     scanCamera: "סריקה במצלמה",
     manualBtn: "ידני",
-    joinViaCode: "הצטרפות באמצעות קוד 4 ספרות",
-    enterCodePlaceholder: "הזן קוד בן 4 ספרות",
+    joinViaCode: "הצטרפות באמצעות קוד חדר",
+    enterCodePlaceholder: "הזן קוד חדר",
     joinSessionBtn: "הצטרף לחדר",
     startSplitBtn: "התחל חלוקה",
     joinSessionBtnAction: "הצטרף לחדר",
@@ -354,7 +354,7 @@ export const translations: Record<string, Record<string, string>> = {
     groupsSub: "צרו קבוצה לחלוקת חשבונות וצמצום חובות עם חברים.",
     noGroupsYetHint: "💡 צרו קבוצה למעלה כדי להתחיל מעקב הוצאות משותף עם חברים!",
     joinGroupBtn: "הצטרף לקבוצה",
-    enterGroupCodePlaceholder: "הזן קוד קבוצה בן 4 ספרות",
+    enterGroupCodePlaceholder: "הזן קוד קבוצה בן 8 ספרות",
     tripExpenseTracker: "מעקב הוצאות קבוצתי",
     addBillsToGroup: "הוספת חשבונות ל{groupName}",
     groupHeroSub: "סרקו קבלות או הזינו חשבונות. היתרות מתעדכנות ומצטמצמות אוטומטית!",
@@ -574,7 +574,7 @@ export const translations: Record<string, Record<string, string>> = {
     categoryOther: "כללי / אחר 🏷️",
 
     // Alerts & Messages
-    codeNotFound: "קוד סשן לא נמצא. אנא בדוק את הקוד בן 4 הספרות.",
+    codeNotFound: "קוד החדר לא נמצא. אנא בדוק את הקוד.",
     couldNotParse: "לא ניתן לפענח את הקבלה. אנא צלם תמונה ברורה או הזן פריטים ידנית.",
     errorUploading: "שגיאה בהעלאת תמונת הקבלה."
   }
