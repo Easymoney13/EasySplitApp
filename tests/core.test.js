@@ -9,7 +9,7 @@ const { processSessionAction } = require('../lib/sessionActions');
 const { createRoomMember, findRoomMember, joinRoom, publicRoom } = require('../lib/roomAuth');
 const { broadcastToRoom, subscribeClient } = require('../lib/realtimeRooms');
 const { calculateDebtMinimization, allocateTipAdjustedCents, splitCents } = require('../lib/debtMinimizer');
-const { normalizeReceipt, haveSameReceiptValues, selectBetterReceipt, parseReceiptImage } = require('../lib/gemini');
+const { normalizeReceipt, haveSameReceiptValues, buildValueConsensus, selectBetterReceipt, parseReceiptImage } = require('../lib/gemini');
 const { normalizeAmount, reconcileReceipt, getReceiptPayableTotal, isTotalOrTaxLine } = require('../lib/receiptMath');
 const { assessReceipt } = require('../lib/receiptAssessment');
 const { createStableScanEntityId, normalizeScanId, normalizeRecoveryToken, createAsyncGate, createExpiringPromiseCache } = require('../lib/ocrControl');
@@ -607,11 +607,83 @@ test('OCR verification never changes a value merely to improve reconciliation', 
   assert.equal(selectBetterReceipt(first, second), first);
 });
 
+test('OCR numeric consensus changes a price only when two independent reads agree', () => {
+  const base = {
+    storeName: 'מסעדה',
+    date: '2026-08-23',
+    currency: 'NIS',
+    receiptTotal: 69,
+    items: [{ name: 'כרוב ממולא', price: 9, lineTotal: 9, quantity: 1, unitPrice: 9 }],
+  };
+  const verification = {
+    ...base,
+    items: [{ ...base.items[0], price: 69, lineTotal: 69, unitPrice: 69 }],
+  };
+  const tiebreaker = {
+    ...verification,
+    items: [{ ...verification.items[0] }],
+  };
+  const consensus = buildValueConsensus(base, verification, tiebreaker);
+  assert.equal(consensus.receipt.items[0].price, 69);
+  assert.equal(consensus.resolvedItemPrices, 1);
+  assert.equal(consensus.unresolvedItemPrices, 0);
+  assert.equal(consensus.changedValues, 1);
+
+  const unresolved = buildValueConsensus(base, verification, {
+    ...base,
+    items: [{ ...base.items[0], price: 89, lineTotal: 89, unitPrice: 89 }],
+  });
+  assert.equal(unresolved.receipt.items[0].price, 9);
+  assert.equal(unresolved.resolvedItemPrices, 0);
+  assert.equal(unresolved.unresolvedItemPrices, 1);
+});
+
+test('OCR starts three independent reads and resolves numeric disagreement by majority', async () => {
+  const originalFetch = global.fetch;
+  const endpoints = [];
+  const prices = [9, 69, 69];
+  global.fetch = async (endpoint) => {
+    endpoints.push(String(endpoint));
+    const price = prices[endpoints.length - 1];
+    return {
+      ok: true,
+      async json() {
+        return {
+          candidates: [{ content: { parts: [{ text: JSON.stringify({
+            storeName: 'מסעדה',
+            date: '2026-08-23',
+            currency: 'NIS',
+            documentLanguage: 'hebrew',
+            receiptTotal: 69,
+            items: [{ name: 'כרוב ממולא', lineTotal: price }],
+          }) }] } }],
+        };
+      },
+    };
+  };
+  try {
+    const receipt = await parseReceiptImage('/9j/', 'image/jpeg', 'test-key', { pipelineTimeoutMs: 12_000 });
+    assert.equal(endpoints.length, 3);
+    assert.match(endpoints[0], /gemini-3\.6-flash:generateContent/);
+    assert.match(endpoints[1], /gemini-3\.5-flash:generateContent/);
+    assert.match(endpoints[2], /gemini-3\.5-flash-lite:generateContent/);
+    assert.equal(receipt.items[0].price, 69);
+    assert.equal(receipt.ocr.verificationStatus, 'value_consensus');
+    assert.equal(receipt.ocr.resolvedItemPrices, 1);
+    assert.equal(receipt.ocr.unresolvedItemPrices, 0);
+    assert.equal(receipt.ocr.nameVerificationStatus, 'exact-cross-model-agreement');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('OCR verification uses a different pinned model from the primary read', async () => {
   const originalFetch = global.fetch;
   const endpoints = [];
-  global.fetch = async (endpoint) => {
+  const payloads = [];
+  global.fetch = async (endpoint, options) => {
     endpoints.push(String(endpoint));
+    payloads.push(JSON.parse(options.body));
     return {
       ok: true,
       async json() {
@@ -629,10 +701,61 @@ test('OCR verification uses a different pinned model from the primary read', asy
   };
   try {
     const receipt = await parseReceiptImage('/9j/', 'image/jpeg', 'test-key', { pipelineTimeoutMs: 12_000 });
-    assert.match(endpoints[0], /gemini-3\.7-flash:generateContent/);
-    assert.match(endpoints[1], /gemini-3\.6-flash:generateContent/);
+    assert.equal(endpoints.length, 3);
+    assert.match(endpoints[0], /gemini-3\.6-flash:generateContent/);
+    assert.match(endpoints[1], /gemini-3\.5-flash:generateContent/);
+    assert.match(endpoints[2], /gemini-3\.5-flash-lite:generateContent/);
+    assert.equal(payloads[0].generationConfig.thinkingConfig.thinkingLevel, 'low');
+    assert.equal(Object.hasOwn(payloads[0].generationConfig, 'temperature'), false);
     assert.equal(receipt.ocr.verificationStatus, 'cross_model_agreement');
-    assert.equal(receipt.ocr.verificationModelName, 'gemini-3.6-flash');
+    assert.equal(receipt.ocr.verificationModelName, 'gemini-3.5-flash');
+    assert.equal(receipt.ocr.successfulModelReads, 2);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('OCR model reads run concurrently instead of adding their latencies', async () => {
+  const originalFetch = global.fetch;
+  const starts = [];
+  let callCount = 0;
+  global.fetch = async (_endpoint, options) => {
+    const index = callCount;
+    callCount += 1;
+    starts.push(Date.now());
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(resolve, [35, 70, 105][index]);
+      options.signal.addEventListener('abort', () => {
+        clearTimeout(timeout);
+        const error = new Error('aborted');
+        error.name = 'AbortError';
+        reject(error);
+      }, { once: true });
+    });
+    return {
+      ok: true,
+      async json() {
+        return {
+          candidates: [{ content: { parts: [{ text: JSON.stringify({
+            storeName: 'Cafe',
+            date: '2026-08-18',
+            currency: 'NIS',
+            receiptTotal: 10,
+            items: [{ name: 'Tea', lineTotal: 10 }],
+          }) }] } }],
+        };
+      },
+    };
+  };
+  try {
+    const startedAt = Date.now();
+    const receipt = await parseReceiptImage('/9j/', 'image/jpeg', 'test-key', { pipelineTimeoutMs: 2_000 });
+    const elapsedMs = Date.now() - startedAt;
+    assert.equal(callCount, 3);
+    assert.ok(Math.max(...starts) - Math.min(...starts) < 30, `model starts were ${Math.max(...starts) - Math.min(...starts)}ms apart`);
+    assert.ok(elapsedMs < 100, `parallel quorum OCR took ${elapsedMs}ms`);
+    assert.equal(receipt.ocr.verificationStatus, 'cross_model_agreement');
+    assert.ok(receipt.ocr.providerDurationMs < 100);
   } finally {
     global.fetch = originalFetch;
   }
@@ -643,7 +766,7 @@ test('Hebrew Gemini OCR keeps a readable primary draft on a one-letter verifier 
   let callCount = 0;
   global.fetch = async () => {
     callCount += 1;
-    const name = callCount === 1 ? 'פיצה מרגריטה' : 'פיצה מרגריתא';
+    const name = ['פיצה מרגריטה', 'פיצה מרגריתא', 'פיצה מרגרטה'][callCount - 1];
     return {
       ok: true,
       async json() {
@@ -831,6 +954,16 @@ test('receipt assessment requires confirmation and escalates row disagreement', 
   const confirmed = assessReceipt(receipt, { source: 'gemini-vision', confirmedByUser: true });
   assert.equal(confirmed.requiresUserConfirmation, false);
   assert.equal(confirmed.confirmedByUser, true);
+});
+
+test('receipt assessment keeps partial numeric consensus in mandatory review', () => {
+  const assessment = assessReceipt({
+    receiptTotal: 100,
+    items: [{ name: 'Meal', price: 100 }],
+    ocr: { verificationStatus: 'partial_value_consensus' },
+  }, { source: 'gemini-vision' });
+  assert.equal(assessment.level, 'high');
+  assert.ok(assessment.reasons.includes('verification-partial-value-consensus'));
 });
 
 test('scan ids create deterministic owner-scoped entity ids', () => {
