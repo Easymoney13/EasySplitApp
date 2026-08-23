@@ -175,7 +175,10 @@ async function createAndVerifySnapshot(firestore, snapshot) {
 
 async function main() {
   const projectRoot = path.resolve(__dirname, '..');
-  const dbPath = path.resolve(process.env.BILLSPLIT_DB_PATH || path.join(projectRoot, 'db.json'));
+  if (!process.env.BILLSPLIT_DB_PATH) {
+    throw new Error('BILLSPLIT_DB_PATH must point to an authorized external migration backup');
+  }
+  const dbPath = path.resolve(process.env.BILLSPLIT_DB_PATH);
   const fileBytes = fs.readFileSync(dbPath);
   const localData = JSON.parse(fileBytes.toString('utf8'));
   const validation = validateLocalData(localData);

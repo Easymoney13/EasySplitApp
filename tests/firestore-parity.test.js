@@ -94,3 +94,9 @@ test('production fails closed instead of silently using a local JSON database', 
   assert.notEqual(result.status, 0);
   assert.match(`${result.stdout}\n${result.stderr}`, /Firestore must remain the authoritative datastore/);
 });
+
+test('the retired production JSON database is absent from the repository', () => {
+  const projectRoot = path.resolve(__dirname, '..');
+  assert.equal(require('node:fs').existsSync(path.join(projectRoot, 'db.json')), false);
+  assert.equal(require('node:fs').existsSync(path.join(projectRoot, 'db.example.json')), true);
+});
