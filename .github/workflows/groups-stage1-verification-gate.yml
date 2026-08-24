@@ -30,8 +30,16 @@ jobs:
         run: |
           set -euo pipefail
           if [ -d .stage1 ]; then
-            git apply --check .stage1/*.patch
-            git apply .stage1/*.patch
+            PATCHES=(
+              .stage1/01-groupLifecycle.patch
+              .stage1/02-groupActions.patch
+              .stage1/03-group-lifecycle-tests.patch
+              .stage1/04-group-lifecycle-stress.patch
+              .stage1/06-db.patch
+            )
+            git apply --check "${PATCHES[@]}"
+            git apply "${PATCHES[@]}"
+            python3 .stage1/apply_server.py
           else
             echo "Groups Stage 1 already materialized; verifying current branch."
           fi
