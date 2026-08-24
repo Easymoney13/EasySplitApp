@@ -1293,7 +1293,7 @@ function SessionWorkspaceInner() {
 
         return (
           <div className="fixed inset-0 z-50 flex flex-col justify-end bg-slate-950/60 backdrop-blur-sm animate-fadeIn">
-            <div className="w-full max-w-md mx-auto rounded-t-[32px] p-6 bg-white dark:bg-brand-900 text-slate-900 dark:text-white space-y-5 max-h-[90vh] overflow-y-auto shadow-2xl">
+            <div className="w-full max-w-md mx-auto rounded-t-[32px] p-5 bg-white dark:bg-brand-900 text-slate-900 dark:text-white space-y-4 max-h-[78vh] overflow-y-auto shadow-2xl">
               {/* Header */}
               <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
                 <div>
