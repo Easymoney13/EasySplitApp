@@ -1,0 +1,121 @@
+diff --git a/lib/db.js b/lib/db.js
+--- a/lib/db.js
++++ b/lib/db.js
+@@ -1,6 +1,13 @@
+ const fs = require('fs');
+ const path = require('path');
+ const { createEntityId, createUniqueRoomCode } = require('./ids');
+ const { sanitizeUserSettings } = require('./validation');
++const {
++  GROUP_STATUS,
++  BILL_STATUS,
++  getGroupStatus,
++  getBillStatus,
++  assertGroupActive,
++} = require('./groupLifecycle');
+ 
+ if (process.env.NODE_ENV === 'production' && process.env.BILLSPLIT_DB_PATH) {
+@@ -1123,5 +1130,6 @@ const db = {
+       const data = readDb();
+       const currentGroup = data.groups[groupId];
+       if (!currentGroup) return null;
++      assertGroupActive(currentGroup);
+       const currentSession = data.sessions[session.id];
+       if (currentSession?.status === 'settled') {
+@@ -1160,8 +1168,12 @@ const db = {
+         error.statusCode = 409;
+         throw error;
+       }
+-      if (currentBill?.status === 'settled') {
+-        const error = new Error('A settled bill cannot be edited');
+-        error.statusCode = 409;
+-        throw error;
++      if (currentBill && getBillStatus(currentBill) !== BILL_STATUS.ACTIVE) {
++        const error = new Error(
++          getBillStatus(currentBill) === BILL_STATUS.FINALIZED
++            ? 'A finalized bill cannot be edited until it is reopened'
++            : 'A settled bill cannot be edited'
++        );
++        error.statusCode = 409;
++        throw error;
+       }
+@@ -1225,5 +1237,6 @@ const db = {
+           throw error;
+         }
+         const currentGroup = groupSnapshot.data();
++        assertGroupActive(currentGroup);
+         const currentActor = Array.isArray(currentGroup.members)
+           ? currentGroup.members.find((member) => member.id === actorId && member.active !== false)
+@@ -1249,8 +1262,12 @@ const db = {
+           error.statusCode = 409;
+           throw error;
+         }
+-        if (currentBill?.status === 'settled') {
+-          const error = new Error('A settled bill cannot be edited');
+-          error.statusCode = 409;
+-          throw error;
++        if (currentBill && getBillStatus(currentBill) !== BILL_STATUS.ACTIVE) {
++          const error = new Error(
++            getBillStatus(currentBill) === BILL_STATUS.FINALIZED
++              ? 'A finalized bill cannot be edited until it is reopened'
++              : 'A settled bill cannot be edited'
++          );
++          error.statusCode = 409;
++          throw error;
+         }
+@@ -1295,4 +1312,5 @@ const db = {
+       const data = readDb();
+       const group = data.groups?.[groupId];
+       if (!group) return null;
++      assertGroupActive(group);
+       const member = (group.members || []).find((m) => m.id === memberId || (m.userId && m.userId === memberId));
+@@ -1347,4 +1365,5 @@ const db = {
+         const groupDoc = await transaction.get(groupRef);
+         if (!groupDoc.exists) return null;
+         const group = groupDoc.data();
++        assertGroupActive(group);
+         const member = (group.members || []).find((m) => m.id === memberId || (m.userId && m.userId === memberId));
+@@ -1411,4 +1430,7 @@ const db = {
+       const data = readDb();
+       const group = data.groups?.[groupId];
+       if (!group) return null;
++      if (getGroupStatus(group) === GROUP_STATUS.SETTLING) {
++        throw Object.assign(new Error('Finish or reopen the group settlement before deleting this group'), { statusCode: 409 });
++      }
+       const actor = group.members?.find((member) => member.id === actorId && member.active !== false);
+@@ -1432,4 +1454,7 @@ const db = {
+         const groupDoc = await transaction.get(groupRef);
+         if (!groupDoc.exists) return null;
+         const group = groupDoc.data();
++        if (getGroupStatus(group) === GROUP_STATUS.SETTLING) {
++          throw Object.assign(new Error('Finish or reopen the group settlement before deleting this group'), { statusCode: 409 });
++        }
+         const actor = group.members?.find((member) => member.id === actorId && member.active !== false);
+@@ -1462,4 +1487,5 @@ const db = {
+       if (!data.groups || !data.groups[groupId]) return null;
+       const group = data.groups[groupId];
+       if (!Array.isArray(group.bills)) return null;
++      assertGroupActive(group);
+       const bill = group.bills.find((b) => b.id === billId);
+@@ -1475,5 +1501,5 @@ const db = {
+       }
+       const linkedSession = bill.sessionId ? data.sessions?.[bill.sessionId] : null;
+-      if (bill.status === 'settled' || linkedSession?.members?.some((member) => member.active !== false && member.settled === true)) {
+-        throw Object.assign(new Error('A paid or settled bill cannot be deleted'), { statusCode: 409 });
++      if (getBillStatus(bill) !== BILL_STATUS.ACTIVE || linkedSession?.members?.some((member) => member.active !== false && member.settled === true)) {
++        throw Object.assign(new Error('A finalized, paid, or settled bill cannot be deleted'), { statusCode: 409 });
+       }
+@@ -1496,4 +1522,5 @@ const db = {
+         if (!doc.exists) return null;
+         const group = doc.data();
+         if (!Array.isArray(group.bills)) return null;
++        assertGroupActive(group);
+         const bill = group.bills.find((candidate) => candidate.id === billId);
+@@ -1510,5 +1537,5 @@ const db = {
+           throw Object.assign(new Error('Only the bill creator or group host can delete this bill'), { statusCode: 403 });
+         }
+-        if (bill.status === 'settled' || linkedSession?.members?.some((member) => member.active !== false && member.settled === true)) {
+-          throw Object.assign(new Error('A paid or settled bill cannot be deleted'), { statusCode: 409 });
++        if (getBillStatus(bill) !== BILL_STATUS.ACTIVE || linkedSession?.members?.some((member) => member.active !== false && member.settled === true)) {
++          throw Object.assign(new Error('A finalized, paid, or settled bill cannot be deleted'), { statusCode: 409 });
+         }
