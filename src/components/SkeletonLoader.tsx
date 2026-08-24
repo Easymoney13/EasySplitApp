@@ -11,7 +11,7 @@ export function ReceiptSkeleton() {
       {[1, 2, 3, 4].map((i) => (
         <div
           key={i}
-          className="photo-card p-4 bg-white dark:bg-[#121824] border border-slate-200 dark:border-[#222C3D] space-y-3"
+          className="photo-card p-4 bg-white dark:bg-brand-900 border border-slate-200 dark:border-[#222C3D] space-y-3"
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">

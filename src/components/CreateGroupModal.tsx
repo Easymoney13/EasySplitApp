@@ -47,11 +47,11 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn text-slate-900 dark:text-white" dir={isRtl ? 'rtl' : 'ltr'}>
-      <div role="dialog" aria-modal="true" aria-label={t('createGroupTitle', undefined, 'Create Group')} className="w-full max-w-sm rounded-[24px] p-6 bg-white dark:bg-[#0E131F] border border-slate-200 dark:border-slate-800 space-y-5 shadow-2xl">
+      <div role="dialog" aria-modal="true" aria-label={t('createGroupTitle', undefined, 'Create Group')} className="w-full max-w-sm rounded-[24px] p-6 bg-white dark:bg-brand-950 border border-slate-200 dark:border-slate-800 space-y-5 shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800/80 pb-3">
           <div className="flex items-center gap-2.5">
-            <div className="p-2.5 rounded-2xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 border border-indigo-100 dark:border-indigo-900/40">
+            <div className="p-2.5 rounded-2xl bg-brand-50 dark:bg-brand-950/50 text-brand-600 dark:text-brand-400 border border-brand-100 dark:border-brand-900/40">
               <Users className="w-5 h-5 stroke-[2.2]" />
             </div>
             <div>
@@ -85,7 +85,7 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
               value={groupName}
               onChange={(e) => setGroupName(e.target.value)}
               placeholder={t('groupNamePlaceholder', undefined, 'e.g. Eilat Trip or Roommates')}
-              className="w-full py-2.5 px-3.5 rounded-xl text-xs font-semibold bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 focus:outline-none focus:border-indigo-500 text-slate-900 dark:text-white"
+              className="w-full py-2.5 px-3.5 rounded-xl text-xs font-semibold bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 focus:outline-none focus:border-brand-500 text-slate-900 dark:text-white"
               required
               disabled={isBusy}
             />
@@ -99,7 +99,7 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
               value={selectedCurrency}
               onChange={(e) => setSelectedCurrency(e.target.value)}
               disabled={isBusy}
-              className="w-full py-2.5 px-3 rounded-xl text-xs font-bold bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 focus:outline-none focus:border-indigo-500 text-slate-900 dark:text-white"
+              className="w-full py-2.5 px-3 rounded-xl text-xs font-bold bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 focus:outline-none focus:border-brand-500 text-slate-900 dark:text-white"
             >
               <option value="NIS">NIS ₪</option>
               <option value="USD">USD $</option>
@@ -121,7 +121,7 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
             <button
               type="submit"
               disabled={isBusy}
-              className="flex-1 py-2.5 rounded-full bg-slate-950 dark:bg-white text-white dark:text-slate-950 font-black text-xs hover:bg-slate-900 dark:hover:bg-slate-200 flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all disabled:opacity-60"
+              className="flex-1 py-2.5 rounded-full bg-brand-600 dark:bg-brand-300 text-white dark:text-brand-950 font-black text-xs hover:bg-brand-700 dark:hover:bg-brand-200 flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all disabled:opacity-60"
             >
               {isBusy ? (
                 <>

@@ -232,7 +232,7 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
                   if (!billNickName || billNickName === storeName) setBillNickName(e.target.value);
                 }}
                 placeholder={t('storeNamePlaceholder', undefined, isRtl ? 'שם העסק / מסעדה' : 'Store / Restaurant Name')}
-                className="w-full text-center font-black text-base text-slate-900 dark:text-white bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-indigo-500/40 rounded-lg py-0.5"
+                className="w-full text-center font-black text-base text-slate-900 dark:text-white bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-brand-500/40 rounded-lg py-0.5"
                 required
               />
               <p className="text-[11px] font-mono font-medium text-slate-400 dark:text-slate-400">
@@ -249,7 +249,7 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
                   return (
                     <div
                       key={item.id}
-                      className="p-2.5 rounded-xl bg-slate-50 dark:bg-[#18233A] border border-indigo-500/50 space-y-2 animate-fadeIn"
+                      className="p-2.5 rounded-xl bg-slate-50 dark:bg-[#18233A] border border-brand-500/50 space-y-2 animate-fadeIn"
                     >
                       <div className="flex items-center gap-2">
                         <input
@@ -257,7 +257,7 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
                           value={item.name}
                           onChange={(e) => handleItemChange(item.id, 'name', e.target.value)}
                           placeholder={t('itemNameLabel', undefined, isRtl ? 'שם הפריט' : 'Item Name')}
-                          className="flex-1 py-1.5 px-2.5 rounded-lg text-xs font-bold bg-white dark:bg-[#0E1524] border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500"
+                          className="flex-1 py-1.5 px-2.5 rounded-lg text-xs font-bold bg-white dark:bg-[#0E1524] border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-brand-500"
                           autoFocus
                           required
                         />
@@ -268,14 +268,14 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
                             value={item.price}
                             onChange={(e) => handleItemChange(item.id, 'price', e.target.value === '' ? '' : parseFloat(e.target.value))}
                             placeholder={t('priceLabel', undefined, isRtl ? 'מחיר' : 'Price')}
-                            className="w-full py-1.5 px-2 rounded-lg text-xs font-mono font-black bg-white dark:bg-[#0E1524] border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500"
+                            className="w-full py-1.5 px-2 rounded-lg text-xs font-mono font-black bg-white dark:bg-[#0E1524] border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-brand-500"
                             required
                           />
                         </div>
                         <button
                           type="button"
                           onClick={() => setEditingItemId(null)}
-                          className="p-1.5 rounded-lg bg-emerald-500 text-white shadow-xs hover:bg-emerald-600 active:scale-95"
+                          className="p-1.5 rounded-lg bg-mint-500 text-white shadow-xs hover:bg-mint-600 active:scale-95"
                           title="Done"
                         >
                           <Check className="w-3.5 h-3.5" />
@@ -321,7 +321,7 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
             <button
               type="button"
               onClick={handleAddItem}
-              className="w-full py-2 rounded-xl border border-dashed border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-indigo-500 hover:text-indigo-600 dark:hover:text-indigo-400 text-xs font-bold flex items-center justify-center gap-1.5 transition-all"
+              className="w-full py-2 rounded-xl border border-dashed border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-brand-500 hover:text-brand-600 dark:hover:text-brand-400 text-xs font-bold flex items-center justify-center gap-1.5 transition-all"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>{t('addItemBtn', undefined, isRtl ? 'הוסף פריט +' : '+ Add Another Item')}</span>
@@ -339,7 +339,7 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
               {serviceFee > 0 && (
                 <div className="flex justify-between text-slate-500 dark:text-slate-400 font-medium">
                   <span>{t('serviceFeeLabel', undefined, isRtl ? 'שירות / טיפ' : 'Service / Tip')}</span>
-                  <span className="font-mono font-bold text-indigo-500">
+                  <span className="font-mono font-bold text-brand-500">
                     {formatPrice(serviceFee, selectedCurrency)}
                   </span>
                 </div>
@@ -348,7 +348,7 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
               {taxFee > 0 && (
                 <div className="flex justify-between text-slate-500 dark:text-slate-400 font-medium">
                   <span>{t('taxLabel', undefined, isRtl ? 'מע״מ / מס' : 'Tax')}</span>
-                  <span className="font-mono font-bold text-indigo-500">
+                  <span className="font-mono font-bold text-brand-500">
                     {formatPrice(taxFee, selectedCurrency)}
                   </span>
                 </div>
@@ -375,7 +375,7 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
                 value={billNickName}
                 onChange={(e) => setBillNickName(e.target.value)}
                 placeholder={t('billNamePlaceholder', undefined, isRtl ? 'למשל: ארוחת צהריים או שולחן שישי' : 'e.g. Chill Brekkie or Friday Dinner')}
-                className="w-full py-2.5 px-3.5 rounded-xl text-xs font-bold bg-slate-50 dark:bg-[#18233A] border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500 transition-all"
+                className="w-full py-2.5 px-3.5 rounded-xl text-xs font-bold bg-slate-50 dark:bg-[#18233A] border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-brand-500 transition-all"
               />
             </div>
 
@@ -387,7 +387,7 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
               <select
                 value={selectedCategory}
                 onChange={(e) => setSelectedCategory(e.target.value)}
-                className="w-full py-2.5 px-3 rounded-xl text-xs font-bold bg-slate-50 dark:bg-[#18233A] border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500"
+                className="w-full py-2.5 px-3 rounded-xl text-xs font-bold bg-slate-50 dark:bg-[#18233A] border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-brand-500"
               >
                 {categories.map((cat) => (
                   <option key={cat.id} value={cat.id}>
@@ -412,7 +412,7 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
             <button
               type="submit"
               disabled={submittingNow}
-              className="flex-[2] py-3.5 px-6 rounded-full bg-[#4F46E5] hover:bg-[#4338CA] text-white font-black text-xs shadow-lg shadow-indigo-500/25 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              className="brand-tap flex-[2] py-3.5 px-6 rounded-full bg-brand-600 hover:bg-brand-700 text-white font-black text-xs shadow-lg shadow-brand-500/25 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
             >
               {submittingNow ? (
                 <>

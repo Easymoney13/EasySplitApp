@@ -33,7 +33,6 @@ import { useLanguage } from '../../../components/LanguageContext';
 import { QRCodeModal } from '../../../components/QRCodeModal';
 import { AttachToGroupModal } from '../../../components/AttachToGroupModal';
 import { ReceiptSkeleton } from '../../../components/SkeletonLoader';
-import { SettledPandaIllustration } from '../../../components/PandaIllustrations';
 import { getCookie, setCookie } from '../../../../lib/cookies';
 import { isValidIsraeliPhone, triggerBitPayment } from '../../../../lib/bitDeepLink';
 import { triggerHaptic } from '../../../../lib/haptics';
@@ -71,8 +70,8 @@ class SessionErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   public render() {
     if (this.state.hasError) {
       return (
-        <div className="flex flex-col items-center justify-center min-h-screen p-6 bg-slate-50 dark:bg-[#0A0E17] text-slate-900 dark:text-white text-center space-y-4">
-          <div className="p-4 rounded-full bg-indigo-100 dark:bg-slate-800 text-indigo-600 dark:text-indigo-400">
+        <div className="flex flex-col items-center justify-center min-h-screen p-6 bg-slate-50 dark:bg-brand-950 text-slate-900 dark:text-white text-center space-y-4">
+          <div className="p-4 rounded-full bg-brand-100 dark:bg-slate-800 text-brand-600 dark:text-brand-400">
             <Sparkles className="w-8 h-8" />
           </div>
           <h2 className="text-xl font-bold">Session Workspace Ready</h2>
@@ -103,7 +102,7 @@ function SessionWorkspaceInner() {
   const t = langCtx?.t || ((k: string, p?: any, d?: string) => d || k);
   const formatPrice = langCtx?.formatPrice || ((a: number) => `${a || 0}`);
   const formatDual = langCtx?.formatDual || ((a: number) => ({ primary: `${a || 0}` }));
-  const profile = langCtx?.profile || { displayName: 'User', avatarColor: '#10B981' };
+  const profile = langCtx?.profile || { displayName: 'User', avatarColor: '#4DE1A1' };
   const isRtl = langCtx?.isRtl || false;
   const theme = langCtx?.theme || 'light';
   const setTheme = langCtx?.setTheme || (() => {});
@@ -526,9 +525,9 @@ function SessionWorkspaceInner() {
     } else if (catLower.includes('dessert') || catLower.includes('sweet') || catLower.includes('ice')) {
       return <Cookie className="w-4 h-4 text-amber-500 shrink-0" />;
     } else if (catLower.includes('service') || catLower.includes('tax') || catLower.includes('tip')) {
-      return <Tag className="w-4 h-4 text-indigo-500 shrink-0" />;
+      return <Tag className="w-4 h-4 text-brand-500 shrink-0" />;
     } else if (catLower.includes('food') || catLower.includes('main') || catLower.includes('appetizer')) {
-      return <Utensils className="w-4 h-4 text-indigo-400 shrink-0" />;
+      return <Utensils className="w-4 h-4 text-brand-400 shrink-0" />;
     }
     return <ShoppingBag className="w-4 h-4 text-slate-400 shrink-0" />;
   };
@@ -619,7 +618,7 @@ function SessionWorkspaceInner() {
   if (!session) {
     if (sessionNotFound) {
       return (
-        <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-50 p-6 text-center text-slate-900 dark:bg-[#0A0E17] dark:text-white">
+        <div className="app-surface flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center text-slate-900 dark:text-white">
           <h2 className="text-xl font-extrabold">{t('sessionNotFoundTitle', undefined, 'Session not found')}</h2>
           <p className="max-w-sm text-sm text-slate-500">{t('sessionNotFoundText', undefined, 'This link or code is invalid, expired, or the room was deleted.')}</p>
           <button onClick={() => router.push('/')} className="photo-btn-indigo px-6 py-3 text-sm font-bold">
@@ -629,14 +628,14 @@ function SessionWorkspaceInner() {
       );
     }
     return (
-      <div className="flex flex-col min-h-screen p-5 bg-slate-50 dark:bg-[#0A0E17]">
+      <div className="app-surface flex flex-col min-h-screen p-5">
         <ReceiptSkeleton />
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col min-h-screen p-5 text-slate-900 dark:text-slate-100 bg-slate-50 dark:bg-[#121212] space-y-6 transition-colors duration-300 pb-28">
+    <div className="app-surface flex flex-col min-h-screen p-5 text-slate-900 dark:text-slate-100 space-y-6 transition-colors duration-300 pb-28">
       {/* Header Bar */}
       <header className="flex items-center justify-between py-2 border-b border-slate-200/80 dark:border-slate-800">
         <button
@@ -664,7 +663,7 @@ function SessionWorkspaceInner() {
 
           <button
             onClick={() => setShowQrModal(true)}
-            className="w-10 h-10 rounded-full bg-slate-900 dark:bg-white text-white dark:text-slate-900 flex items-center justify-center hover:bg-slate-800 dark:hover:bg-slate-200 transition-colors shadow-sm font-bold active:scale-95"
+            className="brand-tap w-10 h-10 rounded-full bg-brand-600 dark:bg-brand-300 text-white dark:text-brand-950 flex items-center justify-center hover:bg-brand-700 dark:hover:bg-brand-200 transition-colors shadow-brand font-bold"
             title="Share & Invite"
           >
             <Share2 className="w-5 h-5" />
@@ -686,18 +685,18 @@ function SessionWorkspaceInner() {
       <div className="photo-card p-4 bg-white dark:bg-[#141B28] border border-slate-200/80 dark:border-white/10 shadow-md space-y-3.5 rounded-2xl">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 flex items-center justify-center border border-indigo-500/20">
+            <div className="w-7 h-7 rounded-lg bg-brand-500/15 text-brand-600 dark:text-brand-400 flex items-center justify-center border border-brand-500/20">
               <Users className="w-4 h-4" />
             </div>
             <h3 className="font-extrabold text-sm text-slate-900 dark:text-white">{t('roomMembersTitle', undefined, 'Room Members')}</h3>
-            <span className="px-2 py-0.5 rounded-full bg-indigo-500/10 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 text-xs font-black border border-indigo-500/20">
+            <span className="px-2 py-0.5 rounded-full bg-brand-500/10 dark:bg-brand-500/20 text-brand-600 dark:text-brand-400 text-xs font-black border border-brand-500/20">
               {validMembers.length}
             </span>
           </div>
 
           <button
             onClick={() => setShowQrModal(true)}
-            className="py-1.5 px-3.5 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black flex items-center gap-1.5 transition-all shadow-md shadow-indigo-600/20 active:scale-95"
+            className="py-1.5 px-3.5 rounded-full bg-brand-600 hover:bg-brand-700 text-white text-xs font-black flex items-center gap-1.5 transition-all shadow-md shadow-brand-600/20 active:scale-95"
           >
             <UserPlus className="w-3.5 h-3.5" />
             <span>{t('inviteBtn', undefined, 'Invite')}</span>
@@ -710,9 +709,9 @@ function SessionWorkspaceInner() {
             const isMe = member?.id === currentMemberId;
             const validName = member?.name && member?.name.trim() !== '?' ? member.name.trim() : 'Guest';
             const MEMBER_PALETTES = [
-              { bg: 'bg-indigo-500/15 dark:bg-indigo-500/25 text-indigo-700 dark:text-indigo-300 border-indigo-500/30', icon: 'bg-indigo-500 text-white' },
+              { bg: 'bg-brand-500/15 dark:bg-brand-500/25 text-brand-700 dark:text-brand-300 border-brand-500/30', icon: 'bg-brand-500 text-white' },
               { bg: 'bg-orange-500/15 dark:bg-orange-500/25 text-orange-700 dark:text-orange-300 border-orange-500/30', icon: 'bg-orange-500 text-white' },
-              { bg: 'bg-emerald-500/15 dark:bg-emerald-500/25 text-emerald-700 dark:text-emerald-300 border-emerald-500/30', icon: 'bg-emerald-500 text-white' },
+              { bg: 'bg-mint-500/15 dark:bg-mint-500/25 text-mint-700 dark:text-mint-300 border-mint-500/30', icon: 'bg-mint-500 text-white' },
               { bg: 'bg-pink-500/15 dark:bg-pink-500/25 text-pink-700 dark:text-pink-300 border-pink-500/30', icon: 'bg-pink-500 text-white' },
               { bg: 'bg-sky-500/15 dark:bg-sky-500/25 text-sky-700 dark:text-sky-300 border-sky-500/30', icon: 'bg-sky-500 text-white' },
               { bg: 'bg-purple-500/15 dark:bg-purple-500/25 text-purple-700 dark:text-purple-300 border-purple-500/30', icon: 'bg-purple-500 text-white' },
@@ -736,7 +735,7 @@ function SessionWorkspaceInner() {
                   </span>
                 )}
                 {member?.settled && (
-                  <span className="w-4 h-4 rounded-full bg-emerald-500 text-white flex items-center justify-center text-[10px] font-black shadow-xs">✓</span>
+                  <span className="w-4 h-4 rounded-full bg-mint-500 text-white flex items-center justify-center text-[10px] font-black shadow-xs">✓</span>
                 )}
               </div>
             );
@@ -745,21 +744,21 @@ function SessionWorkspaceInner() {
 
         {/* Dedicated Clean Attach to Group Bar */}
         {session.groupId ? (
-          <div className="flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-indigo-500/10 dark:bg-indigo-500/15 border border-indigo-500/25 text-indigo-900 dark:text-indigo-200 text-xs font-extrabold">
+          <div className="flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-brand-500/10 dark:bg-brand-500/15 border border-brand-500/25 text-brand-900 dark:text-brand-200 text-xs font-extrabold">
             <span className="flex items-center gap-2">
-              <Link2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+              <Link2 className="w-4 h-4 text-brand-600 dark:text-brand-400" />
               <span>{t('billAttachedToGroup', undefined, 'Bill Attached to Group')}</span>
             </span>
-            <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-indigo-600 text-white shadow-xs">
+            <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-brand-600 text-white shadow-xs">
               {t('linkedBadge', undefined, 'LINKED ✓')}
             </span>
           </div>
         ) : (
           <button
             onClick={() => setShowAttachGroupModal(true)}
-            className="w-full py-2.5 px-3 rounded-xl bg-slate-50 dark:bg-[#1A2232] hover:bg-indigo-50/50 dark:hover:bg-indigo-950/30 text-slate-700 dark:text-slate-200 hover:text-indigo-600 dark:hover:text-indigo-300 text-xs font-extrabold flex items-center justify-center gap-2 transition-all border border-dashed border-slate-300 dark:border-white/10 hover:border-indigo-400 dark:hover:border-indigo-500/40 active:scale-95 shadow-2xs group"
+            className="w-full py-2.5 px-3 rounded-xl bg-slate-50 dark:bg-[#1A2232] hover:bg-brand-50/50 dark:hover:bg-brand-950/30 text-slate-700 dark:text-slate-200 hover:text-brand-600 dark:hover:text-brand-300 text-xs font-extrabold flex items-center justify-center gap-2 transition-all border border-dashed border-slate-300 dark:border-white/10 hover:border-brand-400 dark:hover:border-brand-500/40 active:scale-95 shadow-2xs group"
           >
-            <Link2 className="w-4 h-4 text-indigo-500 group-hover:scale-110 transition-transform" />
+            <Link2 className="w-4 h-4 text-brand-500 group-hover:scale-110 transition-transform" />
             <span>{t('attachBillTitle', undefined, 'Attach Bill to Group')} 🔗</span>
           </button>
         )}
@@ -779,7 +778,7 @@ function SessionWorkspaceInner() {
             value={activePayerId}
             onChange={(e) => sendAction('SET_PAYER', { payerId: e.target.value })}
             disabled={!isCurrentUserHost || isAccountingLocked}
-            className="py-1.5 px-3 rounded-lg bg-white dark:bg-[#121824] text-xs font-bold border border-slate-200 dark:border-white/10 text-slate-900 dark:text-white shadow-2xs focus:ring-2 focus:ring-indigo-500/30 cursor-pointer max-w-[220px] truncate"
+            className="py-1.5 px-3 rounded-lg bg-white dark:bg-brand-900 text-xs font-bold border border-slate-200 dark:border-white/10 text-slate-900 dark:text-white shadow-2xs focus:ring-2 focus:ring-brand-500/30 cursor-pointer max-w-[220px] truncate"
           >
             <option value="each">👥 {t('eachPaidShareOption', undefined, 'Each paid their share')}</option>
             {validMembers.map((m: any) => (
@@ -817,13 +816,13 @@ function SessionWorkspaceInner() {
                 onClick={() => setShowAddItemModal(true)}
                 className="py-1.5 px-3 rounded-full bg-white dark:bg-[#1A2232] hover:bg-slate-100 dark:hover:bg-[#222C3D] text-slate-800 dark:text-slate-200 text-xs font-extrabold flex items-center gap-1 transition-all border border-slate-200/80 dark:border-white/10 active:scale-95 shadow-2xs"
               >
-                <Plus className="w-3.5 h-3.5 text-indigo-500" />
+                <Plus className="w-3.5 h-3.5 text-brand-500" />
                 <span>{t('addItemBtn', undefined, 'Add Item')}</span>
               </button>
 
               <button
                 onClick={() => sendAction('SPLIT_EVERYONE', {})}
-                className="py-1.5 px-3.5 rounded-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white text-xs font-black flex items-center gap-1.5 transition-all shadow-md shadow-indigo-500/20 active:scale-95"
+                className="brand-tap py-1.5 px-3.5 rounded-full bg-gradient-to-r from-brand-600 to-peach-500 hover:from-brand-700 hover:to-peach-600 text-white text-xs font-black flex items-center gap-1.5 transition-all shadow-md shadow-brand-500/20"
               >
                 <Zap className="w-3.5 h-3.5 fill-current text-amber-300" />
                 <span>{t('splitAllBtn', undefined, 'Split All')}</span>
@@ -869,11 +868,11 @@ function SessionWorkspaceInner() {
               };
             } else if (cat.includes('grocer') || cat.includes('סופר')) {
               catStyle = {
-                iconBg: 'bg-emerald-500/15 text-emerald-500 border-emerald-500/25',
+                iconBg: 'bg-mint-500/15 text-mint-500 border-mint-500/25',
               };
             } else if (cat.includes('travel') || cat.includes('טיול') || cat.includes('flight') || cat.includes('מלון')) {
               catStyle = {
-                iconBg: 'bg-indigo-500/15 text-indigo-500 border-indigo-500/25',
+                iconBg: 'bg-brand-500/15 text-brand-500 border-brand-500/25',
               };
             } else if (cat.includes('shop') || cat.includes('בגדים') || cat.includes('shopping')) {
               catStyle = {
@@ -885,15 +884,25 @@ function SessionWorkspaceInner() {
               <div
                 key={item?.id}
                 onClick={isAccountingLocked ? undefined : () => sendAction('TOGGLE_CLAIM', { itemId: item?.id, memberId: currentMemberId, claimed: !isClaimedByMe })}
+                onKeyDown={isAccountingLocked ? undefined : (event) => {
+                  if (event.target !== event.currentTarget) return;
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    sendAction('TOGGLE_CLAIM', { itemId: item?.id, memberId: currentMemberId, claimed: !isClaimedByMe });
+                  }
+                }}
+                role={isAccountingLocked ? undefined : 'button'}
+                tabIndex={isAccountingLocked ? undefined : 0}
+                aria-pressed={isAccountingLocked ? undefined : isClaimedByMe}
                 className={`relative p-4 sm:p-5 transition-all flex flex-col ${isAccountingLocked ? '' : 'cursor-pointer'} ${
                   isClaimedByMe
-                    ? 'bg-indigo-500/[0.07] dark:bg-indigo-500/[0.12]'
+                    ? 'bg-brand-500/[0.07] dark:bg-brand-500/[0.12]'
                     : 'hover:bg-slate-50/70 dark:hover:bg-white/[0.02]'
                 }`}
               >
                 {/* Visual left accent bar when claimed */}
                 {isClaimedByMe && (
-                  <div className="absolute top-0 bottom-0 w-1.5 bg-gradient-to-b from-indigo-500 to-purple-600 ltr:left-0 rtl:right-0 shadow-sm" />
+                  <div className="absolute top-0 bottom-0 w-1.5 bg-gradient-to-b from-brand-500 to-peach-400 ltr:left-0 rtl:right-0 shadow-sm" />
                 )}
 
                 <div className="flex items-start justify-between mb-1">
@@ -914,7 +923,7 @@ function SessionWorkspaceInner() {
                           <button
                             type="button"
                             onClick={(e) => handleOpenEditModal(item, e)}
-                            className="p-1 rounded-full text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-colors"
+                            className="p-1 rounded-full text-slate-400 hover:text-brand-600 dark:hover:text-brand-400 hover:bg-brand-50 dark:hover:bg-brand-950/40 transition-colors"
                             title={t('editItemTitle', undefined, 'Edit Item')}
                           >
                             <Pencil className="w-3.5 h-3.5" />
@@ -929,7 +938,7 @@ function SessionWorkspaceInner() {
                               key={id}
                               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black border ${
                                 isMe
-                                  ? 'bg-indigo-600 text-white border-indigo-600'
+                                  ? 'bg-brand-600 text-white border-brand-600'
                                   : 'bg-slate-100 dark:bg-[#1A2232] text-slate-700 dark:text-slate-300 border-slate-200 dark:border-white/10'
                               }`}
                             >
@@ -962,7 +971,7 @@ function SessionWorkspaceInner() {
                             </span>
                           )}
                           {splitCount > 1 && (
-                            <span className="text-[10px] font-black text-indigo-600 dark:text-indigo-400 mt-0.5">
+                            <span className="text-[10px] font-black text-brand-600 dark:text-brand-400 mt-0.5">
                               {t('eachLabel', undefined, 'each')}
                             </span>
                           )}
@@ -978,7 +987,7 @@ function SessionWorkspaceInner() {
                     splitCount === 0
                       ? 'text-slate-500 bg-slate-100 dark:bg-white/5 dark:text-slate-400'
                       : isClaimedByMe
-                        ? 'text-indigo-700 bg-indigo-100 dark:bg-indigo-500/20 dark:text-indigo-300'
+                        ? 'text-brand-700 bg-brand-100 dark:bg-brand-500/20 dark:text-brand-300'
                         : 'text-slate-700 bg-slate-100 dark:bg-[#1A2232] dark:text-slate-300'
                   }`}>
                     {splitCount === 0
@@ -998,13 +1007,13 @@ function SessionWorkspaceInner() {
       {isCurrentUserHost && !isAccountingLocked && <button
         onClick={() => setShowAddItemModal(true)}
         aria-label={t('addItemBtn', undefined, 'Add Item')}
-        className="fixed bottom-24 ltr:right-6 rtl:left-6 z-30 w-14 h-14 rounded-full bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-extrabold shadow-float flex items-center justify-center hover:scale-105 transition-all active:scale-95"
+        className="brand-tap fixed bottom-24 ltr:right-6 rtl:left-6 z-30 w-14 h-14 rounded-full bg-brand-600 dark:bg-brand-300 text-white dark:text-brand-950 font-extrabold shadow-brand flex items-center justify-center hover:scale-105 transition-all"
       >
         <Plus className="w-7 h-7" />
       </button>}
 
       {/* Bottom Floating Settlement Banner */}
-      {!isSessionClosed && <div className="fixed bottom-0 left-0 right-0 max-w-md mx-auto z-40 p-5 bg-white/95 dark:bg-[#121212]/90 border-t border-slate-100 dark:border-white/5 backdrop-blur-xl flex items-center justify-between shadow-2xl">
+      {!isSessionClosed && <div className="fixed bottom-0 left-0 right-0 max-w-md mx-auto z-40 p-5 bg-white/95 dark:bg-brand-950/90 border-t border-slate-100 dark:border-white/5 backdrop-blur-xl flex items-center justify-between shadow-2xl">
         <div>
           <span className="text-xs text-slate-500 dark:text-slate-400 block">{t('yourShareLabel', undefined, 'Your Share')}</span>
           {(() => {
@@ -1033,7 +1042,7 @@ function SessionWorkspaceInner() {
             }
             setShowSettleModal(true);
           }}
-          className="py-3.5 px-6 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-200 text-white dark:text-slate-900 font-bold shadow-lg shadow-slate-900/20 text-sm transition-all active:scale-95"
+          className="brand-tap py-3.5 px-6 rounded-xl bg-brand-600 hover:bg-brand-700 dark:bg-brand-300 dark:hover:bg-brand-200 text-white dark:text-brand-950 font-bold shadow-brand text-sm transition-all"
         >
           {isCurrentMemberSettled && !isCurrentUserHost
             ? t('reopenMyShareBtn', undefined, 'Reopen My Share')
@@ -1046,7 +1055,7 @@ function SessionWorkspaceInner() {
       {/* --- MODAL 3: ADD CUSTOM ITEM MODAL --- */}
       {showAddItemModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-fadeIn">
-          <div className="w-full max-w-sm photo-card p-6 bg-white dark:bg-[#121824] border border-slate-200 dark:border-[#222C3D] text-slate-900 dark:text-white space-y-4 shadow-float">
+          <div className="w-full max-w-sm photo-card p-6 bg-white dark:bg-brand-900 border border-slate-200 dark:border-[#222C3D] text-slate-900 dark:text-white space-y-4 shadow-float">
             <h3 className="text-lg font-bold text-center">{t('addCustomItemTitle', undefined, 'Add Custom Item')}</h3>
 
             <form onSubmit={handleAddItemSubmit} className="space-y-3">
@@ -1120,7 +1129,7 @@ function SessionWorkspaceInner() {
       {/* --- MODAL 4: EDIT / DELETE CUSTOM ITEM MODAL --- */}
       {showEditItemModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-fadeIn">
-          <div className="w-full max-w-sm photo-card p-6 bg-white dark:bg-[#121824] border border-slate-200 dark:border-[#222C3D] text-slate-900 dark:text-white space-y-4 shadow-float">
+          <div className="w-full max-w-sm photo-card p-6 bg-white dark:bg-brand-900 border border-slate-200 dark:border-[#222C3D] text-slate-900 dark:text-white space-y-4 shadow-float">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-bold">{t('editItemTitle', undefined, 'Edit Receipt Item')}</h3>
               <button
@@ -1218,7 +1227,7 @@ function SessionWorkspaceInner() {
 
         return (
           <div className="fixed inset-0 z-50 flex flex-col justify-end bg-slate-950/60 backdrop-blur-sm animate-fadeIn">
-            <div className="w-full max-w-md mx-auto rounded-t-[32px] p-6 bg-white dark:bg-[#121824] text-slate-900 dark:text-white space-y-5 max-h-[90vh] overflow-y-auto shadow-2xl">
+            <div className="w-full max-w-md mx-auto rounded-t-[32px] p-6 bg-white dark:bg-brand-900 text-slate-900 dark:text-white space-y-5 max-h-[90vh] overflow-y-auto shadow-2xl">
               {/* Header */}
               <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
                 <div>
@@ -1376,7 +1385,7 @@ function SessionWorkspaceInner() {
                           triggerBitPayment({
                             phone: activePayerPhone,
                             amount: finalDueVal,
-                            storeName: session?.storeName || 'BillSplit Room'
+                            storeName: session?.storeName || 'EasySplit Room'
                           });
                         }}
                         className="py-3 px-3 rounded-xl bg-slate-900 text-white font-black text-xs shadow-sm hover:opacity-90 active:scale-95 transition-all text-center flex items-center justify-center gap-1.5"
@@ -1493,7 +1502,7 @@ function SessionWorkspaceInner() {
                     </>
                   ) : isSettling === 'success' ? (
                     <>
-                      <CheckCircle2 className="w-5 h-5 text-emerald-600 animate-scaleUp" />
+                      <CheckCircle2 className="w-5 h-5 text-mint-600 animate-scaleUp" />
                       <span className="animate-fadeIn text-black">{t('settledSuccessMsg', undefined, 'Settled Successfully! 🎉')}</span>
                     </>
                   ) : (
@@ -1527,13 +1536,14 @@ function SessionWorkspaceInner() {
           onClick={() => setShowCompletionReaction(false)}
         >
           <div 
-            className="w-full max-w-xs rounded-3xl p-6 bg-white dark:bg-[#121824] border border-slate-200 dark:border-white/10 text-center space-y-4 shadow-[0_20px_60px_rgba(0,0,0,0.5)] animate-scaleUp"
+            className="w-full max-w-xs rounded-3xl p-6 bg-white dark:bg-brand-900 border border-slate-200 dark:border-white/10 text-center space-y-4 shadow-[0_20px_60px_rgba(0,0,0,0.5)] animate-scaleUp"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Settled Success Panda with Green Checkmark (Pic 5) */}
-            <div className="relative w-36 h-36 mx-auto flex items-center justify-center">
-              <div className="absolute inset-0 rounded-full bg-emerald-400/20 dark:bg-emerald-400/10 animate-ping opacity-60 pointer-events-none" />
-              <SettledPandaIllustration className="w-32 h-32" />
+            <div className="relative w-28 h-28 mx-auto flex items-center justify-center">
+              <div className="absolute inset-0 rounded-full bg-mint-400/20 dark:bg-mint-400/10 animate-ping opacity-50 pointer-events-none" />
+              <div className="relative flex h-24 w-24 items-center justify-center rounded-[30px] bg-gradient-to-br from-mint-300 to-mint-500 text-white shadow-[0_18px_38px_rgba(43,199,137,0.30)]">
+                <CheckCircle2 className="h-12 w-12 stroke-[2.4]" />
+              </div>
             </div>
 
             <div className="space-y-1">
@@ -1551,7 +1561,7 @@ function SessionWorkspaceInner() {
                 setShowCompletionReaction(false);
                 router.push('/?tab=history');
               }}
-              className="w-full py-3 px-4 rounded-xl bg-black dark:bg-white text-white dark:text-slate-900 font-extrabold text-xs shadow-md hover:opacity-90 active:scale-95 transition-all"
+              className="brand-tap w-full py-3 px-4 rounded-xl bg-brand-600 hover:bg-brand-700 dark:bg-brand-300 text-white dark:text-brand-950 font-extrabold text-xs shadow-brand transition-all"
             >
               <span>{t('viewHistoryBtn', undefined, 'View in History')}</span>
             </button>
@@ -1567,7 +1577,7 @@ export default function WorkspacePage() {
     <SessionErrorBoundary>
       <Suspense
         fallback={
-          <div className="flex flex-col min-h-screen p-5 bg-slate-50 dark:bg-[#0A0E17]">
+          <div className="flex flex-col min-h-screen p-5 bg-slate-50 dark:bg-brand-950">
             <ReceiptSkeleton />
           </div>
         }

@@ -84,7 +84,7 @@ export const QRCodeModal: React.FC<QRCodeModalProps> = ({
     if (navigator.share) {
       try {
         await navigator.share({
-          title: hideCode ? 'Join BillSplit' : `Join BillSplit Session #${sessionCode}`,
+          title: hideCode ? 'Join EasySplit' : `Join EasySplit Session #${sessionCode}`,
           text: hideCode ? t('secureGroupInviteText', undefined, 'Join our bill splitting room with this secure link.') : `Join our bill splitting room with code ${sessionCode}!`,
           url: joinUrl,
         });
@@ -110,7 +110,7 @@ export const QRCodeModal: React.FC<QRCodeModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md animate-fadeIn text-slate-900 dark:text-white">
-      <div role="dialog" aria-modal="true" aria-label={t('shareRoomTitle', undefined, 'Invite Friends to Room')} className="relative w-full max-w-sm overflow-hidden rounded-[32px] border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0E131F] p-6 shadow-2xl space-y-4">
+      <div role="dialog" aria-modal="true" aria-label={t('shareRoomTitle', undefined, 'Invite Friends to Room')} className="relative w-full max-w-sm overflow-hidden rounded-[32px] border border-slate-200 dark:border-slate-800 bg-white dark:bg-brand-950 p-6 shadow-2xl space-y-4">
         {/* Close Button */}
         <button
           onClick={onClose}
@@ -122,14 +122,14 @@ export const QRCodeModal: React.FC<QRCodeModalProps> = ({
 
         {/* Modal Header */}
         <div className="text-center space-y-1">
-          <div className="inline-flex p-3 rounded-2xl bg-indigo-100 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 mb-1">
+          <div className="inline-flex p-3 rounded-2xl bg-brand-100 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400 mb-1">
             <Share2 className="w-6 h-6 stroke-[2.2]" />
           </div>
           <h3 className="text-lg font-extrabold text-slate-900 dark:text-white">
             {t('shareRoomTitle', undefined, 'Invite Friends to Room')}
           </h3>
           {!hideCode && <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-            Room Code: <span className="font-mono font-black text-indigo-600 dark:text-indigo-400">#{sessionCode}</span>
+            Room Code: <span className="font-mono font-black text-brand-600 dark:text-brand-400">#{sessionCode}</span>
           </p>}
         </div>
 
@@ -219,7 +219,7 @@ export const QRCodeModal: React.FC<QRCodeModalProps> = ({
 
               <button
                 onClick={shareNative}
-                className="py-2.5 px-3 rounded-xl bg-slate-950 dark:bg-white text-white dark:text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 transition-all shadow-sm"
+                className="py-2.5 px-3 rounded-xl bg-brand-600 dark:bg-brand-300 text-white dark:text-brand-950 font-black text-xs flex items-center justify-center gap-1.5 transition-all shadow-sm"
               >
                 <Share2 className="w-4 h-4" />
                 <span>{t('shareBtn', undefined, 'Share')}</span>
@@ -253,7 +253,7 @@ export const QRCodeModal: React.FC<QRCodeModalProps> = ({
 
             <button
               type="submit"
-              className="w-full py-3 rounded-full bg-slate-950 dark:bg-white text-white dark:text-slate-950 font-black text-xs hover:bg-slate-900 transition-all shadow-sm flex items-center justify-center gap-2"
+              className="w-full py-3 rounded-full bg-brand-600 dark:bg-brand-300 text-white dark:text-brand-950 font-black text-xs hover:bg-brand-700 transition-all shadow-sm flex items-center justify-center gap-2"
             >
               <UserPlus className="w-4 h-4" />
               <span>{t('addFriendToRoomBtn', undefined, 'Add Friend to Room')}</span>

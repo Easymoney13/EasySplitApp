@@ -71,7 +71,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const [profile, setProfile] = useState<UserProfile>({
     displayName: '',
-    avatarColor: '#10B981'
+    avatarColor: '#4DE1A1'
   });
 
 
@@ -148,7 +148,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       if (parsedProfile?.displayName) {
         savedLocalProfile = {
           displayName: String(parsedProfile.displayName),
-          avatarColor: String(parsedProfile.avatarColor || '#10B981'),
+          avatarColor: String(parsedProfile.avatarColor || '#4DE1A1'),
           avatarUrl: typeof parsedProfile.avatarUrl === 'string' ? parsedProfile.avatarUrl : undefined,
           phoneNumber: typeof parsedProfile.phoneNumber === 'string' ? parsedProfile.phoneNumber : localPhone,
         };
@@ -181,7 +181,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           if (accountTransition.changed) {
             removeCookie('billsplit_user_groups');
             savedLocalProfile = null;
-            setProfile({ displayName: '', avatarColor: '#10B981', avatarUrl: undefined, phoneNumber: undefined });
+            setProfile({ displayName: '', avatarColor: '#4DE1A1', avatarUrl: undefined, phoneNumber: undefined });
             setGuestName('');
             // Cancel old-account requests before they can repopulate caches.
             window.location.reload();
@@ -207,7 +207,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               if (data && data.success && data.user) {
                 setProfile({
                   displayName: data.user.username || user.displayName || 'Google User',
-                  avatarColor: data.user.avatarColor || '#10B981',
+                  avatarColor: data.user.avatarColor || '#4DE1A1',
                   avatarUrl: savedLocalProfile?.avatarUrl || user.photoURL || undefined
                 });
 
@@ -221,7 +221,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               // Fallback settings
               setProfile({
                 displayName: user.displayName || 'Google User',
-                avatarColor: '#10B981',
+                avatarColor: '#4DE1A1',
                 avatarUrl: savedLocalProfile?.avatarUrl || user.photoURL || undefined
               });
             }
@@ -231,12 +231,12 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             if (parsedProfile?.displayName) {
               setProfile({
                 displayName: String(parsedProfile.displayName),
-                avatarColor: String(parsedProfile.avatarColor || '#10B981'),
+                avatarColor: String(parsedProfile.avatarColor || '#4DE1A1'),
                 avatarUrl: typeof parsedProfile.avatarUrl === 'string' ? parsedProfile.avatarUrl : undefined,
                 phoneNumber: typeof parsedProfile.phoneNumber === 'string' ? parsedProfile.phoneNumber : undefined,
               });
             } else {
-              setProfile({ displayName: '', avatarColor: '#10B981' });
+              setProfile({ displayName: '', avatarColor: '#4DE1A1' });
             }
           }
           setAuthLoading(false);
@@ -351,7 +351,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         clearAccountScopedStorage(localStorage);
         removeCookie('billsplit_user_groups');
       }
-      setProfile({ displayName: '', avatarColor: '#10B981', avatarUrl: undefined, phoneNumber: undefined });
+      setProfile({ displayName: '', avatarColor: '#4DE1A1', avatarUrl: undefined, phoneNumber: undefined });
       setGuestName('');
       const { auth } = await import('../../lib/firebase');
       const { signOut } = await import('firebase/auth');
@@ -363,7 +363,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
     } catch (e) {
       console.error('Sign-Out failed:', e);
-      setProfile({ displayName: '', avatarColor: '#10B981', avatarUrl: undefined, phoneNumber: undefined });
+      setProfile({ displayName: '', avatarColor: '#4DE1A1', avatarUrl: undefined, phoneNumber: undefined });
       setGuestName('');
       if (typeof window !== 'undefined') {
         clearAccountScopedStorage(localStorage);
@@ -434,7 +434,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       {/* Global Onboarding Modal for New/Unauthenticated Users */}
       {showOnboarding && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-md animate-fadeIn" dir={isRtl ? 'rtl' : 'ltr'}>
-          <div role="dialog" aria-modal="true" aria-label={language === 'he' ? 'ברוכים הבאים ל-BillSplit' : 'Welcome to BillSplit'} className="w-full max-w-sm rounded-[24px] p-6 bg-white dark:bg-[#121824] border border-slate-200 dark:border-[#222C3D] text-slate-900 dark:text-white space-y-4 shadow-2xl transition-all">
+          <div role="dialog" aria-modal="true" aria-label={language === 'he' ? 'ברוכים הבאים ל-EasySplit' : 'Welcome to EasySplit'} className="w-full max-w-sm rounded-[24px] p-6 bg-white dark:bg-brand-900 border border-slate-200 dark:border-[#222C3D] text-slate-900 dark:text-white space-y-4 shadow-2xl transition-all">
             
             {/* Language Switcher */}
             <div className={`flex ${isRtl ? 'justify-start' : 'justify-end'} items-center`}>
@@ -449,11 +449,11 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             </div>
 
             <div className="text-center">
-              <div className="inline-flex p-3.5 rounded-full bg-indigo-100 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 mb-2 shadow-sm">
+              <div className="inline-flex p-3.5 rounded-full bg-brand-100 dark:bg-brand-950/50 text-brand-600 dark:text-brand-400 mb-2 shadow-sm">
                 <Sparkles className="w-6 h-6 animate-pulse" />
               </div>
               <h3 className="text-xl font-extrabold tracking-tight">
-                {language === 'he' ? 'ברוכים הבאים ל-BillSplit' : 'Welcome to BillSplit'}
+                {language === 'he' ? 'ברוכים הבאים ל-EasySplit' : 'Welcome to EasySplit'}
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
                 {language === 'he' ? 'אפשר להתחיל מיד כאורח, או להתחבר כדי לסנכרן בין מכשירים.' : 'Start immediately as a guest, or sign in to sync across devices.'}

@@ -3,8 +3,19 @@ import React from 'react';
 import { LanguageProvider } from '../components/LanguageContext';
 
 export const metadata = {
-  title: 'BillSplit - Real-Time Multi-User Bill Splitting',
+  title: 'EasySplit - Split the Bill Together',
   description: 'Split restaurant and group bills in real-time with friends via receipt scanning, photo uploads, WebSockets, and 1-tap Bit/Paybox transfers.',
+  icons: {
+    icon: '/images/easysplit-logo.webp',
+    apple: '/images/easysplit-logo.webp',
+  },
+};
+
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover' as const,
+  themeColor: '#3D3ACB',
 };
 
 export default function RootLayout({
@@ -14,10 +25,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="bg-slate-900/95 dark:bg-[#05070D] text-slate-900 min-h-screen flex items-center justify-center p-0 md:p-6 antialiased">
+      <body className="bg-brand-950 text-brand-950 min-h-screen flex items-center justify-center p-0 md:p-6 antialiased">
         <LanguageProvider>
           {/* Main container: Centered phone shell look on desktop, full screen on mobile */}
-          <div className="w-full max-w-md min-h-screen md:min-h-[844px] md:max-h-[92vh] bg-white dark:bg-[#0A0E17] md:rounded-[44px] md:shadow-[0_25px_70px_rgba(0,0,0,0.5)] md:border-[10px] md:border-slate-800 relative overflow-hidden flex flex-col">
+          <div className="w-full max-w-md min-h-screen md:min-h-[844px] md:max-h-[92vh] bg-[#F8F8FC] dark:bg-brand-950 md:rounded-[44px] md:shadow-[0_28px_80px_rgba(9,7,35,0.58)] md:border-[10px] md:border-brand-900 relative overflow-hidden flex flex-col">
             {/* Main view container */}
             <main className="flex-1 w-full relative z-10 flex flex-col overflow-y-auto">
               {children}

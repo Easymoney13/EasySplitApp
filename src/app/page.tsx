@@ -40,7 +40,8 @@ import { OCRProgressOverlay } from '../components/OCRProgressOverlay';
 import { SwipeableCard } from '../components/SwipeableCard';
 import { ManualBillModal } from '../components/ManualBillModal';
 import { CreateGroupModal } from '../components/CreateGroupModal';
-import { SleepingPandaIllustration, AppLogoPanda, HistoryPandaIllustration } from '../components/PandaIllustrations';
+import { SleepingPandaIllustration } from '../components/PandaIllustrations';
+import { EasySplitMark, EasySplitWordmark } from '../components/EasySplitBrand';
 import { compressAvatarImage } from '../../lib/imageUtils';
 import { createReceiptDraft, receiptConfirmationPayload, receiptScanUserMessage } from '../../lib/receiptScanClient';
 import { getCookie, setCookie } from '../../lib/cookies';
@@ -51,9 +52,9 @@ import { fetchPaginatedAccountData } from '../../lib/accountClient';
 const PASTEL_COLORS = [
   { bg: 'bg-slate-100 dark:bg-slate-800', text: 'text-slate-800 dark:text-slate-200' },
   { bg: 'bg-amber-100 dark:bg-amber-950/60', text: 'text-amber-700 dark:text-amber-300' },
-  { bg: 'bg-indigo-100 dark:bg-indigo-950/60', text: 'text-indigo-700 dark:text-indigo-300' },
+  { bg: 'bg-brand-100 dark:bg-brand-950/60', text: 'text-brand-700 dark:text-brand-300' },
   { bg: 'bg-sky-100 dark:bg-sky-950/60', text: 'text-sky-700 dark:text-sky-300' },
-  { bg: 'bg-violet-100 dark:bg-violet-950/60', text: 'text-violet-700 dark:text-violet-300' },
+  { bg: 'bg-brand-100 dark:bg-brand-950/60', text: 'text-brand-700 dark:text-brand-300' },
   { bg: 'bg-pink-100 dark:bg-pink-950/60', text: 'text-pink-700 dark:text-pink-300' },
   { bg: 'bg-zinc-100 dark:bg-zinc-800', text: 'text-zinc-700 dark:text-zinc-300' },
 ];
@@ -317,7 +318,7 @@ export default function HomePage() {
     const categories: Record<string, { amount: number; count: number; icon: any; color: string; stroke: string; label: string }> = {
       Transport: { amount: 0, count: 0, icon: Plane, color: 'bg-cyan-500', stroke: '#06B6D4', label: t('catTransport', undefined, 'Transport') },
       Food: { amount: 0, count: 0, icon: Utensils, color: 'bg-orange-500', stroke: '#F97316', label: t('catFood', undefined, 'Food') },
-      Travel: { amount: 0, count: 0, icon: Globe, color: 'bg-indigo-500', stroke: '#6366F1', label: t('catTravel', undefined, 'Travel') },
+      Travel: { amount: 0, count: 0, icon: Globe, color: 'bg-brand-500', stroke: '#5B52D6', label: t('catTravel', undefined, 'Travel') },
       Shopping: { amount: 0, count: 0, icon: ShoppingCart, color: 'bg-purple-500', stroke: '#8B5CF6', label: t('catShopping', undefined, 'Shopping') },
       Groceries: { amount: 0, count: 0, icon: Box, color: 'bg-slate-700 dark:bg-slate-300', stroke: '#64748B', label: t('catGroceries', undefined, 'Groceries') },
       Other: { amount: 0, count: 0, icon: Sparkles, color: 'bg-amber-500', stroke: '#F59E0B', label: t('catOther', undefined, 'Other') },
@@ -609,7 +610,7 @@ export default function HomePage() {
   const activeTabIndex = activeTab === 'history' ? 0 : activeTab === 'sessions' ? 1 : 2;
 
   return (
-    <div className="flex flex-col min-h-full flex-1 p-4 pb-2 transition-colors duration-300 dark:bg-[#0A0E17] dark:text-white">
+    <div className="app-surface flex flex-col min-h-full flex-1 p-4 pb-2 transition-colors duration-300 dark:text-white">
       {/* OCR Animated Progress Screen */}
       <OCRProgressOverlay isVisible={isUploading} />
 
@@ -646,17 +647,15 @@ export default function HomePage() {
         {/* TAB 2: SESSIONS (Middle tab) */}
         {activeTab === 'sessions' && (
           <div className="space-y-6 animate-fadeIn">
-            {/* Top Header - Brand Header with Official App Logo (Pic 4) + Classic Modern "Easy split" */}
+            {/* Brand header */}
             <header className="flex items-center justify-between pt-8 sm:pt-10 pb-3 mb-2">
               <div className="flex items-center gap-3">
-                <div className="w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center shrink-0">
-                  <AppLogoPanda className="w-11 h-11 sm:w-12 sm:h-12" />
-                </div>
+                <EasySplitMark className="w-11 h-11 sm:w-12 sm:h-12 shadow-brand" priority />
                 <div className="text-left rtl:text-right">
-                  <h1 className="font-rounded font-semibold text-2xl sm:text-[26px] text-slate-800 dark:text-slate-100 tracking-tight leading-tight">
-                    Easy split
+                  <h1 className="text-2xl sm:text-[26px] leading-tight">
+                    <EasySplitWordmark />
                   </h1>
-                  <p className="text-xs sm:text-sm font-normal text-slate-500 dark:text-slate-400 mt-0.5">
+                  <p className="text-xs sm:text-sm font-normal text-slate-500 dark:text-brand-200 mt-0.5">
                     {t('splitBillSubtitle', undefined, 'Split your bill with EasySplit')}
                   </p>
                 </div>
@@ -665,10 +664,10 @@ export default function HomePage() {
               <div className="flex items-center gap-2.5">
                 <button
                   onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-                  className="w-10 h-10 rounded-full bg-white dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700 shadow-sm flex items-center justify-center text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                  className="brand-tap w-10 h-10 rounded-full bg-white/90 dark:bg-brand-900 border border-brand-100 dark:border-brand-800 shadow-sm flex items-center justify-center text-brand-800 dark:text-brand-100 hover:bg-brand-50 dark:hover:bg-brand-800 transition-colors"
                   title="Toggle Light/Dark Theme"
                 >
-                  {theme === 'dark' ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-700" />}
+                  {theme === 'dark' ? <Sun className="w-4 h-4 text-peach-300" /> : <Moon className="w-4 h-4 text-brand-700" />}
                 </button>
 
                 {/* Avatar Profile Image / Icon Button */}
@@ -677,7 +676,7 @@ export default function HomePage() {
                     setActiveTab('settings');
                     triggerHaptic('light');
                   }}
-                  className="relative w-11 h-11 sm:w-12 sm:h-12 rounded-full p-0.5 bg-slate-100 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 overflow-hidden shadow-xs hover:scale-105 active:scale-95 transition-all focus:outline-none shrink-0 flex items-center justify-center"
+                  className="brand-tap relative w-11 h-11 sm:w-12 sm:h-12 rounded-full p-0.5 bg-brand-50 dark:bg-brand-900 border-2 border-brand-100 dark:border-brand-800 overflow-hidden shadow-xs hover:scale-105 transition-all focus:outline-none shrink-0 flex items-center justify-center"
                   title={profile.displayName || 'User'}
                 >
                   {profile.avatarUrl && !profile.avatarUrl.includes('unsplash') ? (
@@ -687,7 +686,7 @@ export default function HomePage() {
                       className="w-full h-full rounded-full object-cover"
                     />
                   ) : (
-                    <div className="w-full h-full rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-slate-600 dark:text-slate-200">
+                    <div className="w-full h-full rounded-full bg-brand-100 dark:bg-brand-800 flex items-center justify-center text-brand-700 dark:text-brand-100">
                       <User className="w-5 h-5 sm:w-6 sm:h-6" />
                     </div>
                   )}
@@ -698,12 +697,12 @@ export default function HomePage() {
             {/* Compact Swipe-To-Delete Active Session Card */}
             {activeSession && (
               <SwipeableCard onDelete={handleClearActiveSession}>
-                <div className="photo-card p-3.5 bg-white dark:bg-[#121824] border border-slate-200/80 dark:border-[#222C3D] shadow-sm space-y-2">
+                <div className="brand-card p-3.5 rounded-[20px] space-y-2">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5">
-                      <div className="w-2 h-2 rounded-full bg-slate-900 dark:bg-white animate-pulse" />
-                      <LockOpen className="w-3.5 h-3.5 text-slate-700 dark:text-slate-300" />
-                      <span className="text-[10px] font-black uppercase tracking-wider text-slate-900 dark:text-white">
+                      <div className="w-2 h-2 rounded-full bg-mint-500 animate-pulse" />
+                      <LockOpen className="w-3.5 h-3.5 text-brand-600 dark:text-brand-300" />
+                      <span className="text-[10px] font-black uppercase tracking-wider text-brand-900 dark:text-white">
                         {t('activeSplitTitle', undefined, 'Active Split')}
                       </span>
                     </div>
@@ -713,7 +712,7 @@ export default function HomePage() {
                         e.stopPropagation();
                         setShowQrModal(true);
                       }}
-                      className="p-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200"
+                      className="brand-tap p-1.5 rounded-full bg-brand-50 dark:bg-brand-900 text-brand-700 dark:text-brand-200 hover:bg-brand-100"
                       title="Share QR Code"
                     >
                       <QrCode className="w-3.5 h-3.5" />
@@ -722,7 +721,7 @@ export default function HomePage() {
 
                   <div className="flex items-center justify-between">
                     <div>
-                      <h3 className="text-base font-bold text-slate-900 dark:text-white leading-tight">{activeSession.storeName}</h3>
+                      <h3 className="text-base font-bold text-brand-950 dark:text-white leading-tight">{activeSession.storeName}</h3>
                       <p className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">#{activeSession.code}</p>
                     </div>
 
@@ -751,15 +750,16 @@ export default function HomePage() {
             {/* 3 Main Action Cards Layout Matching Picture 1 */}
             <div className="grid grid-cols-2 gap-3.5 pt-1">
               {/* Left Column: Tall Purple Card (start split) */}
-              <div
+              <button
+                type="button"
                 onClick={() => {
                   setShowStartSplitModal(true);
                   triggerHaptic('medium');
                 }}
-                className="relative rounded-[28px] bg-gradient-to-br from-[#685796] via-[#5D4E88] to-[#504177] dark:from-[#62528F] dark:via-[#574880] dark:to-[#493B70] p-5 flex flex-col justify-between overflow-hidden shadow-lg hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 cursor-pointer group min-h-[256px] select-none"
+                className="brand-tap relative rounded-[28px] bg-brand-600 hover:bg-brand-700 active:bg-brand-800 p-5 flex flex-col justify-between overflow-hidden shadow-brand hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer group min-h-[256px] select-none text-left rtl:text-right"
               >
                 {/* Decorative Subtle Receipt Bill Outline Pattern */}
-                <div className="absolute -top-12 -right-12 w-48 h-48 rounded-full bg-white/5 pointer-events-none group-hover:scale-110 transition-transform duration-700" />
+                <div className="brand-peach-glow absolute -top-14 -right-12 w-52 h-52 rounded-full pointer-events-none group-hover:scale-110 transition-transform duration-700" />
                 <div className="absolute top-1/3 right-3 -translate-y-1/2 w-24 h-32 opacity-10 pointer-events-none group-hover:rotate-6 group-hover:scale-105 transition-transform duration-700 ease-out">
                   <svg viewBox="0 0 100 120" fill="none" stroke="currentColor" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" className="w-full h-full text-white">
                     <rect x="10" y="10" width="80" height="100" rx="8" />
@@ -771,60 +771,62 @@ export default function HomePage() {
                 </div>
 
                 {/* Interactive Top-Left Bill Icon Badge */}
-                <div className="relative z-10 w-12 h-12 rounded-full bg-white/20 backdrop-blur-md border border-white/20 flex items-center justify-center text-white shadow-inner group-hover:bg-white/30 group-hover:scale-110 group-hover:rotate-6 transition-all duration-300">
-                  <Receipt className="w-6 h-6 text-white" />
+                <div className="relative z-10 w-12 h-12 rounded-2xl bg-peach-300 text-brand-950 border border-white/30 flex items-center justify-center shadow-peach group-hover:scale-110 group-hover:rotate-3 transition-all duration-300">
+                  <Receipt className="w-6 h-6 text-brand-950" />
                 </div>
 
                 {/* Card Typography Content */}
                 <div className="relative z-10 mt-auto pt-6">
-                  <h2 className="text-2xl font-black text-white leading-tight tracking-tight">
+                  <h2 className="whitespace-pre-line text-2xl font-black text-white leading-tight tracking-tight">
                     {t('startSplitCard', undefined, 'start\nsplit')}
                   </h2>
                   <p className="text-xs font-semibold text-white/75 mt-1.5 leading-tight">
                     {t('letTryItNow', undefined, "Let's try it now")}
                   </p>
                 </div>
-              </div>
+              </button>
 
               {/* Right Column: 2 Stacked Cards */}
               <div className="flex flex-col gap-3.5">
                 {/* Top Card: join session via code */}
-                <div
+                <button
+                  type="button"
                   onClick={() => {
                     setShowJoinSessionModal(true);
                     triggerHaptic('light');
                   }}
-                  className="relative rounded-[24px] bg-gradient-to-br from-[#2D3644] via-[#242C38] to-[#1C232E] dark:from-[#252E3E] dark:via-[#1F2735] dark:to-[#171D28] p-4 flex flex-col justify-between overflow-hidden shadow-md hover:shadow-lg hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 cursor-pointer group flex-1 min-h-[120px] select-none"
+                  className="home-secondary-action brand-tap relative rounded-[24px] bg-white p-4 flex flex-col justify-between overflow-hidden border border-slate-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-300 cursor-pointer group flex-1 min-h-[120px] select-none text-left rtl:text-right"
                 >
-                  <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-md border border-white/20 flex items-center justify-center text-white shadow-inner group-hover:bg-white/30 group-hover:scale-110 transition-all duration-300">
-                    <QrCode className="w-5 h-5 text-white" />
+                  <div className="w-10 h-10 rounded-2xl bg-brand-50 border border-brand-100 flex items-center justify-center text-brand-700 shadow-sm group-hover:scale-110 group-hover:rotate-3 transition-all duration-300">
+                    <QrCode className="w-5 h-5" />
                   </div>
 
                   <div className="mt-auto pt-2">
-                    <h3 className="text-sm font-extrabold text-white leading-snug">
+                    <h3 className="whitespace-pre-line text-sm font-extrabold text-brand-950 leading-snug">
                       {t('joinSessionViaCode', undefined, 'join session\nvia code')}
                     </h3>
                   </div>
-                </div>
+                </button>
 
                 {/* Bottom Card: create a group */}
-                <div
+                <button
+                  type="button"
                   onClick={() => {
                     setShowCreateGroupModal(true);
                     triggerHaptic('light');
                   }}
-                  className="relative rounded-[24px] bg-gradient-to-br from-[#2D3644] via-[#242C38] to-[#1C232E] dark:from-[#252E3E] dark:via-[#1F2735] dark:to-[#171D28] p-4 flex flex-col justify-between overflow-hidden shadow-md hover:shadow-lg hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 cursor-pointer group flex-1 min-h-[120px] select-none"
+                  className="home-secondary-action brand-tap relative rounded-[24px] bg-white p-4 flex flex-col justify-between overflow-hidden border border-slate-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-300 cursor-pointer group flex-1 min-h-[120px] select-none text-left rtl:text-right"
                 >
-                  <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-md border border-white/20 flex items-center justify-center text-white shadow-inner group-hover:bg-white/30 group-hover:scale-110 transition-all duration-300">
-                    <Users className="w-5 h-5 text-white" />
+                  <div className="w-10 h-10 rounded-2xl bg-peach-50 border border-peach-100 flex items-center justify-center text-peach-700 shadow-sm group-hover:scale-110 group-hover:-rotate-3 transition-all duration-300">
+                    <Users className="w-5 h-5" />
                   </div>
 
                   <div className="mt-auto pt-2">
-                    <h3 className="text-sm font-extrabold text-white leading-snug">
+                    <h3 className="whitespace-pre-line text-sm font-extrabold text-brand-950 leading-snug">
                       {t('createAGroupCard', undefined, 'create a\ngroup')}
                     </h3>
                   </div>
-                </div>
+                </button>
               </div>
             </div>
 
@@ -837,9 +839,10 @@ export default function HomePage() {
               </div>
 
               {userGroups.length === 0 ? (
-                <div 
+                <button
+                  type="button"
                   onClick={() => setShowCreateGroupModal(true)}
-                  className="p-5 sm:p-6 rounded-3xl bg-white dark:bg-[#1A2230] border border-dashed border-slate-200/90 dark:border-white/10 text-center space-y-3 cursor-pointer hover:bg-slate-50/70 dark:hover:bg-[#20293A] transition-all group active:scale-[0.99] shadow-xs"
+                  className="brand-tap w-full p-5 sm:p-6 rounded-3xl brand-card border-dashed text-center space-y-3 cursor-pointer hover:bg-brand-50/70 dark:hover:bg-brand-900 transition-all group shadow-xs"
                 >
                   <div className="flex items-center justify-center py-1 group-hover:scale-105 transition-transform duration-300">
                     <SleepingPandaIllustration className="w-44 h-28" />
@@ -850,7 +853,7 @@ export default function HomePage() {
                   <p className="text-xs text-slate-400 dark:text-slate-400 max-w-xs mx-auto">
                     {t('createOrJoinGroupPrompt', undefined, 'Create a group or join via code to split bills together')}
                   </p>
-                </div>
+                </button>
               ) : (
                 <div className="space-y-2.5">
                   {userGroups.map((g: any, idx: number) => {
@@ -859,7 +862,7 @@ export default function HomePage() {
                     // Distinctive Colorful Badge Palette
                     const GROUP_COLOR_PALETTES = [
                       { bg: 'bg-orange-500/15 dark:bg-orange-500/25', text: 'text-orange-600 dark:text-orange-400', border: 'border-orange-500/30' },
-                      { bg: 'bg-indigo-500/15 dark:bg-indigo-500/25', text: 'text-indigo-600 dark:text-indigo-400', border: 'border-indigo-500/30' },
+                      { bg: 'bg-brand-500/15 dark:bg-brand-500/25', text: 'text-brand-600 dark:text-brand-400', border: 'border-brand-500/30' },
                       { bg: 'bg-pink-500/15 dark:bg-pink-500/25', text: 'text-pink-600 dark:text-pink-400', border: 'border-pink-500/30' },
                       { bg: 'bg-sky-500/15 dark:bg-sky-500/25', text: 'text-sky-600 dark:text-sky-400', border: 'border-sky-500/30' },
                       { bg: 'bg-purple-500/15 dark:bg-purple-500/25', text: 'text-purple-600 dark:text-purple-400', border: 'border-purple-500/30' },
@@ -873,7 +876,16 @@ export default function HomePage() {
                       <div
                         key={g.id}
                         onClick={() => router.push(`/group/${g.id}`)}
-                        className="p-3.5 rounded-2xl bg-white dark:bg-[#1A2230] border border-slate-200/80 dark:border-white/5 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-[#222C3D] transition-all cursor-pointer shadow-xs active:scale-[0.99] group"
+                        onKeyDown={(event) => {
+                          if (event.target !== event.currentTarget) return;
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            router.push(`/group/${g.id}`);
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
+                        className="brand-tap p-3.5 rounded-2xl brand-card flex items-center justify-between hover:bg-brand-50 dark:hover:bg-brand-900 transition-all cursor-pointer shadow-xs group"
                       >
                         <div className="flex items-center gap-3 min-w-0">
                           <div className={`w-11 h-11 rounded-full ${colorPalette.bg} flex items-center justify-center shrink-0 border ${colorPalette.border} group-hover:scale-110 group-active:scale-95 transition-all shadow-xs`}>
@@ -934,7 +946,9 @@ export default function HomePage() {
               {/* Top Header for History Tab */}
               <header className="flex items-center justify-between pt-8 sm:pt-10 pb-3 mb-2">
                 <div className="flex items-center gap-2.5">
-                  <HistoryPandaIllustration className="w-9 h-9" />
+                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-100 text-brand-700 dark:bg-brand-800 dark:text-brand-200">
+                    <History className="h-5 w-5" />
+                  </span>
                   <h1 className="font-rounded font-semibold text-2xl sm:text-[26px] text-slate-800 dark:text-slate-100 tracking-tight leading-tight">
                     {t('tabHistory', undefined, 'History')}
                   </h1>
@@ -952,7 +966,7 @@ export default function HomePage() {
               </header>
 
               {/* Financial Dashboard Card (Top) - Compact & Elegant with Centered Total Above Pie */}
-              <div className="photo-card p-5 bg-white dark:bg-[#121824] border border-slate-200/80 dark:border-white/5 shadow-md shadow-slate-950/10 rounded-2xl space-y-3 flex flex-col items-center justify-center">
+              <div className="photo-card p-5 bg-white dark:bg-brand-900 border border-slate-200/80 dark:border-white/5 shadow-md shadow-slate-950/10 rounded-2xl space-y-3 flex flex-col items-center justify-center">
                 {/* Header: Total expenses & Amount Centered Right Above Pie Graph */}
                 <div className="text-center flex flex-col items-center justify-center pt-1">
                   <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 block tracking-wide">
@@ -1065,8 +1079,10 @@ export default function HomePage() {
                 </div>
 
                 {historyList.length === 0 ? (
-                  <div className="photo-card p-6 bg-white dark:bg-[#121824] text-center text-slate-400 space-y-2.5 rounded-2xl border border-slate-200/80 dark:border-white/5">
-                    <HistoryPandaIllustration className="w-14 h-14 mx-auto mb-1 opacity-90" />
+                  <div className="photo-card p-6 bg-white dark:bg-brand-900 text-center text-slate-400 space-y-2.5 rounded-2xl border border-slate-200/80 dark:border-white/5">
+                    <span className="mx-auto mb-1 flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-50 text-brand-500 dark:bg-brand-800 dark:text-brand-200">
+                      <Receipt className="h-6 w-6" />
+                    </span>
                     <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
                       {t('noHistoryYet', undefined, 'No settled splits yet.')}
                     </p>
@@ -1092,7 +1108,7 @@ export default function HomePage() {
                         iconBg = 'bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 border-purple-200/60 dark:border-purple-800/40';
                       } else if (titleLower.includes('hotel') || titleLower.includes('airbnb') || titleLower.includes('trip')) {
                         ItemIcon = Globe;
-                        iconBg = 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 border-indigo-200/60 dark:border-indigo-800/40';
+                        iconBg = 'bg-brand-50 dark:bg-brand-950/40 text-brand-600 dark:text-brand-400 border-brand-200/60 dark:border-brand-800/40';
                       } else if (titleLower.includes('super') || titleLower.includes('market') || titleLower.includes('grocer')) {
                         ItemIcon = Box;
                         iconBg = 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border-slate-200/60 dark:border-slate-700/60';
@@ -1108,7 +1124,18 @@ export default function HomePage() {
                                 router.push(`/session/${item.id}`);
                               }
                             }}
-                            className="photo-card p-3.5 bg-white dark:bg-[#121824] border border-slate-200/70 dark:border-white/5 shadow-xs flex items-center justify-between hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-all cursor-pointer rounded-2xl"
+                            onKeyDown={(event) => {
+                              if (event.key !== 'Enter' && event.key !== ' ') return;
+                              event.preventDefault();
+                              if (item.isGroupBill && item.groupId) {
+                                router.push(`/group/${item.groupId}`);
+                              } else if (item.id) {
+                                router.push(`/session/${item.id}`);
+                              }
+                            }}
+                            role="button"
+                            tabIndex={0}
+                            className="photo-card p-3.5 bg-white dark:bg-brand-900 border border-slate-200/70 dark:border-white/5 shadow-xs flex items-center justify-between hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-all cursor-pointer rounded-2xl"
                           >
                             <div className="flex items-center gap-3 min-w-0">
                               {/* Brand / Category Avatar Icon */}
@@ -1237,7 +1264,7 @@ export default function HomePage() {
 
             <form onSubmit={handleSaveSettings} className="space-y-4">
               {/* Personal Info Card */}
-              <div className="photo-card p-5 bg-white dark:bg-[#121824] border border-slate-200/80 dark:border-white/5 shadow-md shadow-slate-950/10 space-y-4 rounded-2xl">
+              <div className="photo-card p-5 bg-white dark:bg-brand-900 border border-slate-200/80 dark:border-white/5 shadow-md shadow-slate-950/10 space-y-4 rounded-2xl">
                 <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
                   <h3 className="font-extrabold text-slate-900 dark:text-white text-sm flex items-center gap-2">
                     <User className="w-4 h-4 text-slate-700 dark:text-slate-300" />
@@ -1282,7 +1309,7 @@ export default function HomePage() {
                 </div>
               </div>
 
-              <div className="photo-card p-4 bg-white dark:bg-[#121824] border border-slate-200/80 dark:border-white/5 shadow-md shadow-slate-950/10 space-y-5">
+              <div className="photo-card p-4 bg-white dark:bg-brand-900 border border-slate-200/80 dark:border-white/5 shadow-md shadow-slate-950/10 space-y-5">
                 <h3 className="font-bold text-slate-900 dark:text-white text-sm flex items-center gap-1.5">
                   <Globe className="w-4 h-4 text-slate-700 dark:text-slate-300" />
                   <span>{t('preferencesSection', undefined, 'Preferences')}</span>
@@ -1399,12 +1426,12 @@ export default function HomePage() {
       </div>
 
       {/* Ultra-Smooth LTR & RTL Animated Sliding Modern Navbar */}
-      <nav className="sticky bottom-0 left-0 right-0 w-full z-40 p-2.5 bg-white/95 dark:bg-[#0A0E17]/95 border-t border-slate-200/80 dark:border-slate-800/80 backdrop-blur-xl shadow-[0_-8px_24px_rgba(0,0,0,0.04)] dark:shadow-[0_-8px_24px_rgba(0,0,0,0.45)] mt-auto">
-        <div className="relative grid grid-cols-3 gap-2 p-1 bg-slate-100/80 dark:bg-[#121824]/90 rounded-full border border-slate-200/60 dark:border-[#222C3D]/80">
+      <nav className="sticky bottom-0 left-0 right-0 w-full z-40 p-2.5 bg-white/90 dark:bg-brand-950/92 border-t border-brand-100 dark:border-brand-800 backdrop-blur-xl shadow-[0_-8px_28px_rgba(37,33,111,0.08)] mt-auto">
+        <div className="relative grid grid-cols-3 gap-2 p-1 bg-brand-50/90 dark:bg-brand-900/90 rounded-full border border-brand-100 dark:border-brand-800">
           
           {/* Animated Sliding Pill Indicator */}
           <div
-            className="absolute top-1 bottom-1 rounded-full bg-slate-900 dark:bg-white shadow-md transition-all duration-350 ease-out nav-slider"
+            className="absolute top-1 bottom-1 rounded-full bg-brand-600 dark:bg-brand-300 shadow-brand transition-all duration-350 ease-out nav-slider"
             style={{
               width: 'calc((100% - 16px) / 3)',
               transform: `translateX(calc(${activeTabIndex * (isRtl ? -1 : 1)} * (100% + 8px)))`
@@ -1419,7 +1446,7 @@ export default function HomePage() {
             }}
             className={`relative z-10 flex flex-col items-center justify-center py-2 rounded-full transition-colors duration-200 font-bold active:scale-95 ${
               activeTab === 'history'
-                ? 'text-white dark:text-slate-900 font-extrabold'
+                ? 'text-white dark:text-brand-950 font-extrabold'
                 : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
             }`}
           >
@@ -1435,7 +1462,7 @@ export default function HomePage() {
             }}
             className={`relative z-10 flex flex-col items-center justify-center py-2 rounded-full transition-colors duration-200 font-bold active:scale-95 ${
               activeTab === 'sessions'
-                ? 'text-white dark:text-slate-900 font-extrabold'
+                ? 'text-white dark:text-brand-950 font-extrabold'
                 : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
             }`}
           >
@@ -1453,7 +1480,7 @@ export default function HomePage() {
             }}
             className={`relative z-10 flex flex-col items-center justify-center py-2 rounded-full transition-colors duration-200 font-bold active:scale-95 ${
               activeTab === 'settings'
-                ? 'text-white dark:text-slate-900 font-extrabold'
+                ? 'text-white dark:text-brand-950 font-extrabold'
                 : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
             }`}
           >
@@ -1488,7 +1515,7 @@ export default function HomePage() {
       {showStartSplitModal && (
         <div className="fixed inset-0 z-50 flex flex-col justify-end bg-slate-950/60 backdrop-blur-xs animate-fadeIn" onClick={() => setShowStartSplitModal(false)}>
           <div 
-            className="w-full max-w-md mx-auto rounded-t-[32px] p-6 bg-white dark:bg-[#121824] text-slate-900 dark:text-white space-y-4 shadow-2xl animate-slideUp"
+            className="w-full max-w-md mx-auto rounded-t-[32px] p-6 bg-white dark:bg-brand-900 text-slate-900 dark:text-white space-y-4 shadow-2xl animate-slideUp"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
@@ -1573,7 +1600,7 @@ export default function HomePage() {
       {showJoinSessionModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-fadeIn" onClick={() => setShowJoinSessionModal(false)}>
           <div 
-            className="w-full max-w-sm rounded-3xl p-5 bg-white dark:bg-[#121824] text-slate-900 dark:text-white space-y-4 shadow-2xl animate-scaleUp"
+            className="w-full max-w-sm rounded-3xl p-5 bg-white dark:bg-brand-900 text-slate-900 dark:text-white space-y-4 shadow-2xl animate-scaleUp"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
@@ -1623,10 +1650,10 @@ export default function HomePage() {
       {/* Active Group Context Modal */}
       {selectedGroupForModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md animate-fadeIn text-slate-900 dark:text-white">
-          <div className="relative w-full max-w-xs rounded-3xl bg-white dark:bg-[#0E131F] border border-slate-200 dark:border-slate-800 p-5 shadow-2xl space-y-4">
+          <div className="relative w-full max-w-xs rounded-3xl bg-white dark:bg-brand-950 border border-slate-200 dark:border-slate-800 p-5 shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-full bg-slate-950 dark:bg-white text-white dark:text-slate-950 flex items-center justify-center font-black text-xs">
+                <div className="w-8 h-8 rounded-full bg-brand-600 dark:bg-brand-300 text-white dark:text-brand-950 flex items-center justify-center font-black text-xs">
                   {(selectedGroupForModal.name || 'G').substring(0, 2).toUpperCase()}
                 </div>
                 <div>
@@ -1759,7 +1786,7 @@ export default function HomePage() {
                   className="w-full py-2.5 px-3 rounded-xl bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-900 dark:text-white text-xs font-bold flex items-center justify-between transition-colors"
                 >
                   <span className="flex items-center gap-2">
-                    <Share2 className="w-4 h-4 text-indigo-500" />
+                    <Share2 className="w-4 h-4 text-brand-500" />
                     <span>{t('shareGroupItem', undefined, 'Share Group')}</span>
                   </span>
                   <span className="text-[10px] text-slate-400">🔗</span>
