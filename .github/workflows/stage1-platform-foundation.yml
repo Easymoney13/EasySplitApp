@@ -1,4 +1,4 @@
-# Verification sync marker 3; removed before final Stage 1 commit.
+# Verification sync marker 4; removed before final Stage 1 commit.
 name: Stage 1 Platform Foundation Verify
 
 on:
@@ -28,6 +28,15 @@ jobs:
 
       - name: Apply Stage 1 foundation
         run: python3 .stage1/apply_foundation.py .
+
+      - name: Normalize generated text files
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('.env.example')
+          p.write_text(p.read_text(encoding='utf-8').rstrip() + '\n', encoding='utf-8')
+          PY
 
       - name: Install dependencies
         run: npm ci
