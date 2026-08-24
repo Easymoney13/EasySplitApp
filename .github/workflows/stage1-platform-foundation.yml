@@ -1,3 +1,4 @@
+# Verification sync marker; removed before final Stage 1 commit.
 name: Stage 1 Platform Foundation Verify
 
 on:
