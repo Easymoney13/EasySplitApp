@@ -1,0 +1,57 @@
+name: Temporary Groups Stage 2 Verification Gate
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  verify-and-materialize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout Groups Stage 2 branch
+        uses: actions/checkout@v4
+        with:
+          ref: groups-stage2-ui-flow
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Apply Groups Stage 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 -d .stage2/apply_stage2.py.gz.b64 | gzip -dc > /tmp/apply_stage2.py
+          python3 /tmp/apply_stage2.py
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Full EasySplit verification
+        run: npm run verify
+
+      - name: Strain regression
+        run: npm run test:strain
+
+      - name: Diff integrity
+        run: git diff --check
+
+      - name: Materialize verified Groups Stage 2 commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .stage2
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "Add Groups Stage 2 experience"
+          git push origin HEAD:groups-stage2-ui-flow
