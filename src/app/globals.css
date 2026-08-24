@@ -316,9 +316,13 @@ select:focus-visible {
   padding-bottom: max(0.625rem, env(safe-area-inset-bottom));
 }
 
-.session-scroll-clearance {
-  padding-bottom: calc(11rem + env(safe-area-inset-bottom));
-  scroll-padding-bottom: calc(11rem + env(safe-area-inset-bottom));
+.session-scroll-area {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+}
+
+.session-bottom-bar {
+  padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
 }
 
 /* Keyframe animations */

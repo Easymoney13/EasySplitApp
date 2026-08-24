@@ -700,8 +700,9 @@ function SessionWorkspaceInner() {
   }
 
   return (
-    <div className="app-surface session-scroll-clearance flex flex-col min-h-screen p-5 text-slate-900 dark:text-slate-100 space-y-6 transition-colors duration-300">
-      {/* Header Bar */}
+    <div className="app-surface flex flex-1 min-h-0 w-full flex-col text-slate-900 dark:text-slate-100 transition-colors duration-300">
+      <div className="session-scroll-area flex-1 min-h-0 overflow-y-auto p-5 pb-8 space-y-6">
+        {/* Header Bar */}
       <header className="flex items-center justify-between py-2 border-b border-slate-200/80 dark:border-slate-800">
         <button
           onClick={handleBackNavigation}
@@ -1067,6 +1068,7 @@ function SessionWorkspaceInner() {
           })}
         </div>
       </div>
+      </div>
 
       {/* Floating Add Item Button */}
       {isCurrentUserHost && !isAccountingLocked && <button
@@ -1077,8 +1079,8 @@ function SessionWorkspaceInner() {
         <Plus className="w-7 h-7" />
       </button>}
 
-      {/* Bottom Floating Settlement Banner */}
-      {!isSessionClosed && <div className="fixed bottom-0 left-0 right-0 max-w-md mx-auto z-40 p-5 bg-white/95 dark:bg-brand-950/90 border-t border-slate-100 dark:border-white/5 backdrop-blur-xl flex items-center justify-between shadow-2xl">
+      {/* Bottom settlement bar stays outside the receipt scroller so it never covers an item. */}
+      {!isSessionClosed && <div className="session-bottom-bar relative z-40 w-full shrink-0 p-5 bg-white/95 dark:bg-brand-950/90 border-t border-slate-100 dark:border-white/5 backdrop-blur-xl flex items-center justify-between shadow-2xl">
         <div>
           <span className="text-xs text-slate-500 dark:text-slate-400 block">{t('yourShareLabel', undefined, 'Your Share')}</span>
           {(() => {
