@@ -45,10 +45,13 @@ jobs:
               raise SystemExit('expected exactly one legacy group payment-target expectation')
           s = s.replace(old, new, 1)
           old_unrelated = "  assert.equal(unrelatedTarget.status, 403);"
-          new_unrelated = "  assert.equal(unrelatedTarget.status, 409);"
           if s.count(old_unrelated) != 1:
               raise SystemExit('expected exactly one legacy unrelated group payment-target expectation')
-          p.write_text(s.replace(old_unrelated, new_unrelated, 1))
+          s = s.replace(old_unrelated, "  assert.equal(unrelatedTarget.status, 409);", 1)
+          old_settled = "    assert.equal(settledTarget.status, 403);"
+          if s.count(old_settled) != 1:
+              raise SystemExit('expected exactly one legacy settled group payment-target expectation')
+          p.write_text(s.replace(old_settled, "    assert.equal(settledTarget.status, 409);", 1))
           PY
 
       - name: Install dependencies
