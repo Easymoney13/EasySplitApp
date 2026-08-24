@@ -203,7 +203,9 @@ export default function GroupWorkspacePage() {
       disposed = true;
       if (interval) clearInterval(interval);
       clearTimeout(timeoutTimer);
-      if (socketRef.current) socketRef.current.close();
+      const socket = socketRef.current;
+      socketRef.current = null;
+      if (socket) socket.close();
     };
   }, [groupId, profile.displayName, profile.phoneNumber]);
 
@@ -231,6 +233,9 @@ export default function GroupWorkspacePage() {
 
   const connectWebSocket = (id: string, accessToken: string) => {
     try {
+      if (socketRef.current) {
+        try { socketRef.current.close(); } catch (_) {}
+      }
       const ws = new WebSocket(realtimeUrl());
       socketRef.current = ws;
 
@@ -251,12 +256,23 @@ export default function GroupWorkspacePage() {
             setGroup(data.group);
             persistGroupToLocal(data.group);
           } else if (data.type === 'GROUP_DELETED') {
+            socketRef.current = null;
+            try { ws.close(); } catch (_) {}
             clearRoomCredentials('group', id);
             router.push('/');
           }
         } catch (e) {
           console.error(e);
         }
+      };
+
+      ws.onclose = () => {
+        setTimeout(() => {
+          if (socketRef.current === ws) connectWebSocket(id, accessToken);
+        }, 2500);
+      };
+      ws.onerror = () => {
+        try { ws.close(); } catch (_) {}
       };
     } catch (err) {
       console.error('WebSocket connection error:', err);
@@ -426,6 +442,7 @@ export default function GroupWorkspacePage() {
   }, [group?.balances]);
 
   const unassignedAmount = Number(group?.unassignedAmount || 0);
+  const isGroupBalanceConsistent = group?.isBalanced !== false;
   const isGroupHost = Boolean(validMembers.find((member: any) => member.id === currentMemberId)?.isHost);
   const groupStatus = String(group?.status || 'active').toLowerCase();
   const isGroupActive = groupStatus === 'active';
@@ -437,7 +454,10 @@ export default function GroupWorkspacePage() {
     ? settlement.balances
     : balances;
   const liveTransactions = minimizedTransactions;
-  const financiallyOpenBills = validBills.filter((bill: any) => !['settled', 'closed', 'complete', 'completed'].includes(String(bill?.status || '').toLowerCase()));
+  const financiallyOpenBills = validBills.filter((bill: any) => {
+    const status = String(bill?.status || '').toLowerCase();
+    return !status || status === 'active' || status === 'finalized';
+  });
   const allOpenSplitsFinalized = financiallyOpenBills.length > 0
     && financiallyOpenBills.every((bill: any) => String(bill?.status || '').toLowerCase() === 'finalized');
   const totalGroupSpent = validBills.reduce((sum: number, bill: any) => sum + (Number(bill?.amount) || 0), 0);
@@ -970,7 +990,14 @@ export default function GroupWorkspacePage() {
               </p>
             )}
 
-            {isGroupHost && allOpenSplitsFinalized && unassignedAmount <= 0.009 && (
+
+            {!isGroupBalanceConsistent && (
+              <p className="text-[10px] text-amber-600 dark:text-amber-300 font-bold text-center">
+                {isRtl ? 'מאזן הקבוצה דורש בדיקה. ודאו שבכל חלוקה מוגדר מי שילם לפני סגירת הקבוצה.' : 'The group balance needs review. Check who paid each split before settling the group.'}
+              </p>
+            )}
+
+            {isGroupHost && allOpenSplitsFinalized && unassignedAmount <= 0.009 && isGroupBalanceConsistent && (
               <button
                 type="button"
                 onClick={async () => {

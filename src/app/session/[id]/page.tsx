@@ -230,9 +230,9 @@ function SessionWorkspaceInner() {
     return () => {
       disposed = true;
       if (pollInterval) clearInterval(pollInterval);
-      if (socketRef.current) {
-        socketRef.current.close();
-      }
+      const socket = socketRef.current;
+      socketRef.current = null;
+      if (socket) socket.close();
     };
   }, [sessionId, profile.displayName, profile.phoneNumber]);
 
@@ -895,7 +895,7 @@ function SessionWorkspaceInner() {
         {isSessionClosed && (
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-center text-sm font-bold text-slate-800 dark:border-slate-700 dark:bg-slate-900/30 dark:text-slate-200">
             {isGroupDeferredComplete
-              ? (isRtl ? 'החלוקה הסתיימה ונכללת במאזן הקבוצה. התשלום יתבצע בסגירת הקבוצה.' : 'Split complete and included in the group balance. Payment happens when the group is settled.')
+              ? (isRtl ? 'החלוקה הסתיימה ונכללת במאזן הקבוצה. חזרו לקבוצה כדי לראות את מצב ההתחשבנות.' : 'Split complete and included in the group balance. Return to the group to see settlement status.')
               : t('sessionClosedNotice', undefined, 'This session is settled and is now read-only.')}
           </div>
         )}
