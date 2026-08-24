@@ -73,6 +73,17 @@ const {
   createExpiringPromiseCache,
 } = require('./lib/ocrControl');
 const { processGroupBillAction } = require('./lib/groupActions');
+const {
+  GROUP_STATUS,
+  BILL_STATUS,
+  getGroupStatus,
+  getBillStatus,
+  assertGroupActive,
+  normalizeGroupPayerId,
+  isValidPayerId,
+  summarizeGroup,
+  groupMatchesScope,
+} = require('./lib/groupLifecycle');
 const { trackAnalyticsEvent } = require('./lib/analytics');
 
 const admin = require('firebase-admin');
@@ -368,11 +379,33 @@ app.prepare().then(() => {
     });
   }
 
+  function groupDebtView(group) {
+    const status = getGroupStatus(group);
+    const settlement = group?.settlement;
+    if (
+      status !== GROUP_STATUS.ACTIVE
+      && settlement
+      && Array.isArray(settlement.balances)
+      && Array.isArray(settlement.transfers)
+    ) {
+      return {
+        balances: settlement.balances,
+        transactions: settlement.transfers.filter((transfer) => transfer?.paid !== true),
+        unassignedAmount: 0,
+        isBalanced: true,
+      };
+    }
+    return calculateDebtMinimization(group);
+  }
+
   function publicGroupWithDebt(group) {
     const cleanGroup = deduplicateRoomMembers(group);
-    const debtData = calculateDebtMinimization(cleanGroup);
+    const status = getGroupStatus(cleanGroup);
+    const debtData = groupDebtView(cleanGroup);
     return publicRoom({
       ...cleanGroup,
+      status,
+      summary: summarizeGroup(cleanGroup),
       balances: debtData.balances,
       minimizedTransactions: debtData.transactions,
       unassignedAmount: debtData.unassignedAmount || 0,
@@ -391,7 +424,9 @@ app.prepare().then(() => {
     return {
       id: room.id,
       code: room.code,
-      status: room.status,
+      status: Array.isArray(room?.bills)
+        ? getGroupStatus(room)
+        : room.status,
     };
   }
 
@@ -1336,12 +1371,15 @@ app.prepare().then(() => {
       });
 
       const newGroupId = createEntityId('grp');
+      const createdAt = Date.now();
       const newGroup = {
         id: newGroupId,
         code: await db.generateUniqueRoomCode('group', newGroupId),
         name: cleanName,
         currency: security.sanitizeString(currency || 'NIS', 5),
-        createdAt: Date.now(),
+        status: GROUP_STATUS.ACTIVE,
+        createdAt,
+        updatedAt: createdAt,
         members: [host.member],
         bills: []
       };
@@ -1387,12 +1425,22 @@ app.prepare().then(() => {
     const actor = authorizedRoomMember(req, group);
     if (!actor) return res.status(401).json({ error: 'A valid room membership is required' });
 
-    const debtData = calculateDebtMinimization(group);
-    const authorizedTransfer = debtData.transactions.find((transaction) => (
-      transaction.fromId === actor.id
-      && transaction.toId === memberId
-      && Number(transaction.amount) > 0
-    ));
+    const status = getGroupStatus(group);
+    if (status === GROUP_STATUS.CLOSED) {
+      return res.status(409).json({ error: 'This group is already closed' });
+    }
+    const authorizedTransfer = status === GROUP_STATUS.SETTLING
+      ? group.settlement?.transfers?.find((transaction) => (
+          transaction.fromId === actor.id
+          && transaction.toId === memberId
+          && transaction.paid !== true
+          && Number(transaction.amount) > 0
+        ))
+      : calculateDebtMinimization(group).transactions.find((transaction) => (
+          transaction.fromId === actor.id
+          && transaction.toId === memberId
+          && Number(transaction.amount) > 0
+        ));
     if (!authorizedTransfer) {
       return res.status(403).json({ error: 'No payment is due from this member to that recipient' });
     }
@@ -1416,13 +1464,16 @@ app.prepare().then(() => {
 
       let joined = null;
       const mutation = await db.transactGroupMembership(group.id, (currentGroup) => {
-        joined = joinRoom(currentGroup, {
+        const joinInput = {
           uid: req.user?.uid,
           accessToken: getRequestRoomToken(req),
           name: name || req.user?.name || 'Member',
           phone,
           avatarColor: getRandomAvatarColor(),
-        });
+        };
+        const existingMember = findRoomMember(currentGroup, joinInput);
+        if (!existingMember) assertGroupActive(currentGroup);
+        joined = joinRoom(currentGroup, joinInput);
         return currentGroup;
       });
       if (!mutation || !joined) return res.status(404).json({ error: 'Group not found' });
@@ -1449,6 +1500,7 @@ app.prepare().then(() => {
       const actor = authorizedRoomMember(req, group);
       const targetMemberId = actor?.id;
       if (!targetMemberId) return res.status(401).json({ error: 'A valid group membership is required' });
+      assertGroupActive(group);
       
       const updated = await db.leaveGroup(group.id, targetMemberId);
       if (updated) {
@@ -1468,6 +1520,9 @@ app.prepare().then(() => {
       const actor = authorizedRoomMember(req, group);
       if (!actor) return res.status(401).json({ error: 'A valid group membership is required' });
       if (!actor.isHost) return res.status(403).json({ error: 'Only the group host can delete this group' });
+      if (getGroupStatus(group) === GROUP_STATUS.SETTLING) {
+        return res.status(409).json({ error: 'Finish or reopen the group settlement before deleting this group' });
+      }
       await db.deleteGroup(group.id, actor.id);
       sendToRoom('group', group.id, { type: 'GROUP_DELETED', groupId: group.id }, group);
       return res.json({ success: true });
@@ -1486,6 +1541,7 @@ app.prepare().then(() => {
       }
       const actor = authorizedRoomMember(req, group);
       if (!actor) return res.status(401).json({ error: 'A valid group membership is required' });
+      assertGroupActive(group);
       if (!bill || typeof bill !== 'object' || Array.isArray(bill)) {
         throw new ValidationError('A bill is required');
       }
@@ -1500,8 +1556,8 @@ app.prepare().then(() => {
       const cleanTitle = security.sanitizeString(bill.title || 'Group Expense', 50);
       const groupHost = group.members.find((member) => member.isHost && member.active !== false)
         || group.members.find((member) => member.active !== false);
-      const cleanPayerId = bill.payerId || groupHost?.id;
-      if (!group.members.some((member) => member.id === cleanPayerId && member.active !== false)) {
+      const cleanPayerId = normalizeGroupPayerId(bill.payerId || groupHost?.id);
+      if (!isValidPayerId(group, cleanPayerId)) {
         throw new ValidationError('The selected payer is not an active group member');
       }
       const billDate = security.sanitizeString(bill.date || new Date().toISOString().split('T')[0], 20);
@@ -1530,8 +1586,13 @@ app.prepare().then(() => {
       const expectedRevision = existingBill && bill.expectedRevision !== undefined && bill.expectedRevision !== null
         ? Math.max(0, Math.round(Number(bill.expectedRevision) || 0))
         : null;
-      if (existingBill?.status === 'settled') {
-        return res.status(409).json({ error: 'A settled bill cannot be edited' });
+      const existingBillStatus = existingBill ? getBillStatus(existingBill) : BILL_STATUS.ACTIVE;
+      if (existingBill && existingBillStatus !== BILL_STATUS.ACTIVE) {
+        return res.status(409).json({
+          error: existingBillStatus === BILL_STATUS.FINALIZED
+            ? 'A finalized bill cannot be edited until it is reopened'
+            : 'A settled bill cannot be edited'
+        });
       }
       if (existingBill && !actor.isHost && existingBill.createdByMemberId !== actor.id) {
         return res.status(403).json({ error: 'Only the bill creator or group host can edit this bill' });
@@ -1736,6 +1797,7 @@ app.prepare().then(() => {
   server.post('/api/groups/bill/action', authenticateUser, mutationRateLimit, async (req, res) => {
     try {
       const groupId = security.sanitizeString(req.body?.groupId, 100);
+      const requestedAction = security.sanitizeString(req.body?.action || req.body?.type || '', 50);
       const billId = security.sanitizeString(req.body?.payload?.billId, 100);
       const mutation = await db.transactGroupAndLinkedSession(
         groupId,
@@ -1756,13 +1818,19 @@ app.prepare().then(() => {
             error.statusCode = 409;
             throw error;
           }
-          const previousRevision = Number(group.bills?.find((candidate) => candidate.id === billId)?.revision || 0);
-          const updatedGroup = processGroupBillAction(group, req.body?.action, req.body?.payload, actor);
+          const previousBill = group.bills?.find((candidate) => candidate.id === billId);
+          const previousRevision = Number(previousBill?.revision || 0);
+          const previousStatus = previousBill ? getBillStatus(previousBill) : null;
+          const updatedGroup = processGroupBillAction(group, requestedAction, req.body?.payload, actor);
           if (actionId) {
             updatedGroup.processedActionIds = [...new Set([...(updatedGroup.processedActionIds || []), actionId])].slice(-50);
           }
           const bill = updatedGroup.bills.find((candidate) => candidate.id === billId);
-          if (bill) bill.revision = previousRevision + 1;
+          const isIdempotentFinalize = requestedAction === 'FINALIZE_BILL'
+            && previousStatus === BILL_STATUS.FINALIZED;
+          const isIdempotentReopen = requestedAction === 'REOPEN_BILL'
+            && previousStatus === BILL_STATUS.ACTIVE;
+          if (bill && !isIdempotentFinalize && !isIdempotentReopen) bill.revision = previousRevision + 1;
           if (bill?.reconciliation) {
             bill.reconciliation = reconcileReceipt(bill);
             bill.assessment = assessReceipt(bill, {
@@ -1777,6 +1845,18 @@ app.prepare().then(() => {
             if (bill.reconciliation) {
               liveSession.reconciliation = bill.reconciliation;
               liveSession.assessment = bill.assessment;
+            }
+            if (requestedAction === 'FINALIZE_BILL' && getBillStatus(bill) === BILL_STATUS.FINALIZED) {
+              liveSession.status = 'settled';
+              liveSession.settledAt = bill.finalizedAt || Date.now();
+              liveSession.groupSettlementDeferred = true;
+              (liveSession.members || []).forEach((member) => { member.settled = false; });
+            }
+            if (requestedAction === 'REOPEN_BILL' && getBillStatus(bill) === BILL_STATUS.ACTIVE) {
+              liveSession.status = 'active';
+              delete liveSession.settledAt;
+              delete liveSession.groupSettlementDeferred;
+              (liveSession.members || []).forEach((member) => { member.settled = false; });
             }
           }
           return { group: updatedGroup, session: liveSession };
@@ -1953,25 +2033,26 @@ app.prepare().then(() => {
       const user = await db.getUserByUid(uid);
       const userName = user ? user.username : '';
       const phone = user ? user.phone : '';
+      const requestedScope = security.sanitizeString(String(req.query?.scope || 'active'), 10).toLowerCase();
+      const scope = ['active', 'closed', 'all'].includes(requestedScope) ? requestedScope : 'active';
 
       const cursor = Math.max(0, Math.min(200, Math.round(Number(req.query?.cursor) || 0)));
       const orderedGroupIds = [...(Array.isArray(user?.groups) ? user.groups : [])].reverse().slice(0, 200);
       const groupIds = orderedGroupIds.slice(cursor, cursor + 20);
       const userGroups = (await Promise.all(groupIds.map((groupId) => db.getGroup(groupId))))
-        .filter((group) => group && isUserMember(group.members, userName, phone, uid));
+        .filter((group) => (
+          group
+          && isUserMember(group.members, userName, phone, uid)
+          && groupMatchesScope(group, scope)
+        ));
       const nextCursor = cursor + groupIds.length < orderedGroupIds.length
         ? cursor + groupIds.length
         : null;
 
       return res.json({
         success: true,
-        groups: userGroups.map((g) => ({
-          id: g.id,
-          code: g.code,
-          name: g.name,
-          currency: g.currency,
-          membersCount: g.members ? g.members.length : 0
-        })),
+        groups: userGroups.map(summarizeGroup),
+        scope,
         nextCursor,
       });
     } catch (err) {
@@ -2129,8 +2210,17 @@ app.prepare().then(() => {
       if (!existingGroup) return res.status(404).json({ error: 'Group not found' });
       const actor = authorizedRoomMember(req, existingGroup);
       if (!actor) return res.status(401).json({ error: 'A valid group membership is required' });
+      assertGroupActive(existingGroup);
       const bill = existingGroup.bills?.find((candidate) => candidate.id === billId);
       if (!bill) return res.status(404).json({ error: 'Bill not found' });
+      const billStatus = getBillStatus(bill);
+      if (billStatus !== BILL_STATUS.ACTIVE) {
+        return res.status(409).json({
+          error: billStatus === BILL_STATUS.FINALIZED
+            ? 'A finalized bill cannot be deleted until it is reopened'
+            : 'A settled bill cannot be deleted'
+        });
+      }
       if (!actor.isHost && bill.createdByMemberId !== actor.id) {
         return res.status(403).json({ error: 'Only the bill creator or group host can delete this bill' });
       }
