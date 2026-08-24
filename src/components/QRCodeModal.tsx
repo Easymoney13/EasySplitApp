@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Copy, Check, Share2, QrCode, UserPlus, Link, Smartphone } from 'lucide-react';
 import { useLanguage } from './LanguageContext';
 import QRCode from 'qrcode';
+import { hasConfiguredApiOrigin, publicWebUrl } from '../../lib/platformTransport';
 
 interface QRCodeModalProps {
   isOpen: boolean;
@@ -33,12 +34,10 @@ export const QRCodeModal: React.FC<QRCodeModalProps> = ({
   const [qrDataUrl, setQrDataUrl] = useState('');
 
   const basePath = isGroup ? `/group/${sessionId}` : `/session/${sessionId}`;
-  const joinUrl = networkUrl || (typeof window !== 'undefined'
-    ? `${window.location.origin}${basePath}`
-    : basePath);
+  const joinUrl = networkUrl || publicWebUrl(basePath);
 
   useEffect(() => {
-    const isLocalhost = typeof window !== 'undefined' && 
+    const isLocalhost = !hasConfiguredApiOrigin() && typeof window !== 'undefined' &&
       (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
     if (isLocalhost) {

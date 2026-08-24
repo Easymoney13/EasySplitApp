@@ -1,5 +1,6 @@
 import { prepareReceiptImages, type ReceiptImageQuality } from './imageUtils';
 import { scanBillImagesInBrowser } from './ocrScanner';
+import { apiUrl } from './platformTransport';
 
 export interface ReceiptDraftResult {
   receipt: any;
@@ -60,7 +61,7 @@ export async function createReceiptDraft(
   let serverError = '';
 
   try {
-    const response = await fetch('/api/receipt/parse', {
+    const response = await fetch(apiUrl('/api/receipt/parse'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,

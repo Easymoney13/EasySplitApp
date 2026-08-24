@@ -5,8 +5,9 @@ import { Sparkles, Phone, User, Globe, LogOut } from 'lucide-react';
 import defaultTranslations, { translations as namedTranslations, formatCurrency, convertCurrency, formatDualPrice, updateLiveExchangeRates } from '../../lib/i18n';
 import { getCookie, setCookie, removeCookie } from '../../lib/cookies';
 import { clearAccountScopedStorage, transitionAccountScope } from '../../lib/accountIsolation';
-import { isProtectedSameOriginApi } from '../../lib/authFetch';
+import { isProtectedApi } from '../../lib/authFetch';
 import { cleanIsraeliPhone, isValidIsraeliPhone } from '../../lib/bitDeepLink';
+import { apiUrl, getApiOrigin } from '../../lib/platformTransport';
 
 const rawDictionary: any = defaultTranslations || namedTranslations || {};
 const i18nDictionary: Record<string, Record<string, string>> = 
@@ -81,7 +82,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   // 1. Fetch real-time live currency exchange rates on mount
   useEffect(() => {
-    fetch('/api/exchange-rates')
+    fetch(apiUrl('/api/exchange-rates'))
       .then((res) => res.json())
       .then((data) => {
         if (data && data.rates) {
@@ -98,7 +99,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     if (typeof window !== 'undefined') {
       const originalFetch = window.fetch;
       window.fetch = async (input, init) => {
-        if (isProtectedSameOriginApi(input, window.location.origin)) {
+        if (isProtectedApi(input, window.location.origin, getApiOrigin())) {
           try {
             const { auth } = await import('../../lib/firebase');
             const currentUser = auth.currentUser;
@@ -196,7 +197,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           if (user) {
             // Sync user settings and fetch DB record
             try {
-              const res = await fetch('/api/user/sync', {
+              const res = await fetch(apiUrl('/api/user/sync'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -276,7 +277,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     if (!isInitialized || authLoading || !firebaseUser) return;
 
     const timer = setTimeout(() => {
-      fetch('/api/user/sync', {
+      fetch(apiUrl('/api/user/sync'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

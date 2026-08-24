@@ -42,6 +42,7 @@ const parseReceiptImage = geminiModule.parseReceiptImage || geminiModule.default
 const parseReceiptTextWithGemini = geminiModule.parseReceiptTextWithGemini || geminiModule.default?.parseReceiptTextWithGemini;
 
 const security = require('./lib/security');
+const { createApiCorsMiddleware, isAllowedClientOrigin, parseAllowedOrigins } = require('./lib/platformSecurity');
 const debtMinimizer = require('./lib/debtMinimizer');
 const calculateDebtMinimization = debtMinimizer.calculateDebtMinimization;
 const allocateCentsProportionally = debtMinimizer.allocateCentsProportionally;
@@ -148,6 +149,7 @@ const dev = process.env.NODE_ENV !== 'production';
 const app = next({ dev });
 const handle = app.getRequestHandler();
 const PORT = process.env.PORT || 3000;
+const allowedMobileOrigins = parseAllowedOrigins(process.env.EASYSPLIT_ALLOWED_MOBILE_ORIGINS || '');
 
 function getLocalNetworkIp() {
   try {
@@ -199,6 +201,8 @@ app.prepare().then(() => {
     nextMiddleware();
   });
 
+  server.use(createApiCorsMiddleware(allowedMobileOrigins));
+
   const httpServer = http.createServer(server);
   const wss = new WebSocket.Server({ noServer: true, maxPayload: 10_000 });
   const wsConnectionsByIp = new Map();
@@ -228,7 +232,7 @@ app.prepare().then(() => {
     const host = String(request.headers.host || '');
     if (origin) {
       try {
-        if (new URL(origin).host !== host) return rejectUpgrade(socket, 403, 'Forbidden');
+        if (!isAllowedClientOrigin(origin, host, allowedMobileOrigins)) return rejectUpgrade(socket, 403, 'Forbidden');
       } catch (_) {
         return rejectUpgrade(socket, 403, 'Forbidden');
       }
