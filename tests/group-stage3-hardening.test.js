@@ -62,6 +62,19 @@ test('a split cannot finalize when a priced item is claimed only by an inactive 
   assert.throws(() => finalizeGroupBill(group, 'bill_bad_claim', group.members[0]), /Assign every priced item/);
 });
 
+test('a mixed active and inactive claim fails closed instead of reallocating the stale share', () => {
+  const group = groupFixture({
+    bills: [{
+      id: 'bill_mixed_claim', status: 'active', amount: 100, payerId: 'host', createdByMemberId: 'host',
+      items: [{ id: 'i1', price: 100, claimedBy: ['guest', 'inactive'] }],
+    }],
+  });
+  const debt = calculateDebtMinimization(group);
+  assert.equal(debt.unassignedAmount, 100);
+  assert.deepEqual(debt.transactions, []);
+  assert.throws(() => finalizeGroupBill(group, 'bill_mixed_claim', group.members[0]), /Assign every priced item/);
+});
+
 test('legacy claimant names remain valid only when they uniquely identify an active member', () => {
   const group = groupFixture({
     bills: [{
@@ -171,7 +184,7 @@ test('500 randomized mixed-state groups match an active-only canonical accountin
         .filter((b) => !b.status || ['active', 'finalized'].includes(String(b.status).toLowerCase()))
         .map((b) => ({
           ...b,
-          items: b.items.map((item) => ({ ...item, claimedBy: item.claimedBy.filter((id) => activeIds.includes(id)) })),
+          items: b.items.map((item) => ({ ...item, claimedBy: item.claimedBy.every((id) => activeIds.includes(id)) ? item.claimedBy : [] })),
         })),
     };
     assert.deepEqual(calculateDebtMinimization(group), calculateDebtMinimization(canonical));
