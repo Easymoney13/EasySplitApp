@@ -43,7 +43,12 @@ jobs:
           new = """  const paymentTarget = await fetch(\n    `${baseUrl}/api/groups/grp_invite_test/payment-target/${groupHost.member.id}`,\n    { headers: { 'x-room-token': groupGuest.accessToken } },\n  );\n  assert.equal(paymentTarget.status, 409);\n  assert.match((await paymentTarget.json()).error, /Start the final group settlement/);\n"""
           if s.count(old) != 1:
               raise SystemExit('expected exactly one legacy group payment-target expectation')
-          p.write_text(s.replace(old, new, 1))
+          s = s.replace(old, new, 1)
+          old_unrelated = "  assert.equal(unrelatedTarget.status, 403);"
+          new_unrelated = "  assert.equal(unrelatedTarget.status, 409);"
+          if s.count(old_unrelated) != 1:
+              raise SystemExit('expected exactly one legacy unrelated group payment-target expectation')
+          p.write_text(s.replace(old_unrelated, new_unrelated, 1))
           PY
 
       - name: Install dependencies
