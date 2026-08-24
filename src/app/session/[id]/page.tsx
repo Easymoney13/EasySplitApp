@@ -700,7 +700,7 @@ function SessionWorkspaceInner() {
   }
 
   return (
-    <div className="app-surface flex flex-col min-h-screen p-5 text-slate-900 dark:text-slate-100 space-y-6 transition-colors duration-300 pb-28">
+    <div className="app-surface session-scroll-clearance flex flex-col min-h-screen p-5 text-slate-900 dark:text-slate-100 space-y-6 transition-colors duration-300">
       {/* Header Bar */}
       <header className="flex items-center justify-between py-2 border-b border-slate-200/80 dark:border-slate-800">
         <button
