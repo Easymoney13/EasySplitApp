@@ -6,6 +6,7 @@ import defaultTranslations, { translations as namedTranslations, formatCurrency,
 import { getCookie, setCookie, removeCookie } from '../../lib/cookies';
 import { clearAccountScopedStorage, transitionAccountScope } from '../../lib/accountIsolation';
 import { isProtectedSameOriginApi } from '../../lib/authFetch';
+import { cleanIsraeliPhone, isValidIsraeliPhone } from '../../lib/bitDeepLink';
 
 const rawDictionary: any = defaultTranslations || namedTranslations || {};
 const i18nDictionary: Record<string, Record<string, string>> = 
@@ -54,13 +55,15 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [firebaseUser, setFirebaseUser] = useState<any>(null);
   const [authModules, setAuthModules] = useState<any>(null);
   const [guestName, setGuestName] = useState('');
+  const [guestPhone, setGuestPhone] = useState('');
   
   // Preload Firebase Auth modules on client mount to bypass popup blocker limitations on mobile
   useEffect(() => {
     const preload = async () => {
       try {
         const { auth, googleProvider } = await import('../../lib/firebase');
-        const { signInWithPopup, signInWithRedirect } = await import('firebase/auth');
+        const { signInWithPopup, signInWithRedirect, setPersistence, browserLocalPersistence } = await import('firebase/auth');
+        await setPersistence(auth, browserLocalPersistence);
         setAuthModules({ auth, googleProvider, signInWithPopup, signInWithRedirect });
       } catch (e) {
         console.error('Failed to preload auth modules:', e);
@@ -154,6 +157,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         };
         setProfile(savedLocalProfile);
         setGuestName(savedLocalProfile.displayName);
+        setGuestPhone(savedLocalProfile.phoneNumber || '');
       }
     } catch (_) {
       localStorage.removeItem('billsplit_local_profile');
@@ -183,6 +187,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             savedLocalProfile = null;
             setProfile({ displayName: '', avatarColor: '#4DE1A1', avatarUrl: undefined, phoneNumber: undefined });
             setGuestName('');
+            setGuestPhone('');
             // Cancel old-account requests before they can repopulate caches.
             window.location.reload();
             return;
@@ -196,6 +201,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                   username: user.displayName || 'Google User',
+                  phone: savedLocalProfile?.phoneNumber || '',
                   settings: {
                     language: savedLang || 'en',
                     currency: savedCurr || 'NIS',
@@ -208,7 +214,8 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 setProfile({
                   displayName: data.user.username || user.displayName || 'Google User',
                   avatarColor: data.user.avatarColor || '#4DE1A1',
-                  avatarUrl: savedLocalProfile?.avatarUrl || user.photoURL || undefined
+                  avatarUrl: savedLocalProfile?.avatarUrl || user.photoURL || undefined,
+                  phoneNumber: data.user.phone || savedLocalProfile?.phoneNumber || undefined,
                 });
 
                 // Pull preferences from DB user if they exist
@@ -222,7 +229,8 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               setProfile({
                 displayName: user.displayName || 'Google User',
                 avatarColor: '#4DE1A1',
-                avatarUrl: savedLocalProfile?.avatarUrl || user.photoURL || undefined
+                avatarUrl: savedLocalProfile?.avatarUrl || user.photoURL || undefined,
+                phoneNumber: savedLocalProfile?.phoneNumber,
               });
             }
           } else {
@@ -257,6 +265,12 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     localStorage.setItem('billsplit_local_profile', JSON.stringify(profile));
   }, [profile, isInitialized]);
 
+  useEffect(() => {
+    if (!firebaseUser) return;
+    setGuestName(profile.displayName === 'Google User' ? '' : profile.displayName || '');
+    setGuestPhone(profile.phoneNumber || '');
+  }, [firebaseUser, profile.displayName, profile.phoneNumber]);
+
   // Debounced effect to sync profile and settings to the backend
   useEffect(() => {
     if (!isInitialized || authLoading || !firebaseUser) return;
@@ -267,6 +281,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           username: profile.displayName,
+          phone: profile.phoneNumber || '',
           settings: {
             language,
             currency,
@@ -277,7 +292,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }, 500);
 
     return () => clearTimeout(timer);
-  }, [profile.displayName, language, currency, theme, isInitialized, authLoading, firebaseUser]);
+  }, [profile.displayName, profile.phoneNumber, language, currency, theme, isInitialized, authLoading, firebaseUser]);
 
   const setLanguage = (lang: Language) => {
     setLanguageState(lang);
@@ -320,28 +335,48 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         activeSignInWithRedirect = authModules.signInWithRedirect;
       } else {
         const { auth, googleProvider } = await import('../../lib/firebase');
-        const { signInWithPopup, signInWithRedirect } = await import('firebase/auth');
+        const { signInWithPopup, signInWithRedirect, setPersistence, browserLocalPersistence } = await import('firebase/auth');
+        await setPersistence(auth, browserLocalPersistence);
         activeAuth = auth;
         activeProvider = googleProvider;
         activeSignInWithPopup = signInWithPopup;
         activeSignInWithRedirect = signInWithRedirect;
       }
       
-      // Attempt signInWithPopup first. Because it's called synchronously within the click handler tick (no await yields before it if authModules is preloaded),
-      // the browser will allow the popup to open without blocking it.
       try {
         await activeSignInWithPopup(activeAuth, activeProvider);
       } catch (popupError: any) {
-        console.warn('signInWithPopup failed, falling back to signInWithRedirect:', popupError);
-        if (popupError.code === 'auth/popup-blocked' || popupError.code === 'auth/operation-not-supported') {
+        const cancelledPopupErrors = new Set([
+          'auth/popup-closed-by-user',
+          'auth/cancelled-popup-request',
+        ]);
+        if (cancelledPopupErrors.has(popupError?.code)) return;
+
+        const redirectFallbackErrors = new Set([
+          'auth/popup-blocked',
+          'auth/operation-not-supported',
+          'auth/operation-not-supported-in-this-environment',
+          'auth/web-storage-unsupported',
+        ]);
+        const terminalConfigurationErrors = new Set([
+          'auth/unauthorized-domain',
+          'auth/invalid-api-key',
+          'auth/operation-not-allowed',
+        ]);
+        if (redirectFallbackErrors.has(popupError?.code)) {
+          console.warn('Google popup is unavailable; falling back to redirect:', popupError);
           await activeSignInWithRedirect(activeAuth, activeProvider);
-        } else {
-          throw popupError;
+          return;
         }
+        if (terminalConfigurationErrors.has(popupError?.code)) throw popupError;
+        throw popupError;
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Google Sign-In failed:', e);
-      alert('Failed to sign in with Google. Please try again.');
+      const message = e?.code === 'auth/unauthorized-domain'
+        ? `Google Sign-In is not authorized for ${window.location.hostname}. Add this domain in Firebase Authentication > Settings > Authorized domains.`
+        : 'Failed to sign in with Google. Please try again.';
+      alert(message);
     }
   };
 
@@ -353,6 +388,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
       setProfile({ displayName: '', avatarColor: '#4DE1A1', avatarUrl: undefined, phoneNumber: undefined });
       setGuestName('');
+      setGuestPhone('');
       const { auth } = await import('../../lib/firebase');
       const { signOut } = await import('firebase/auth');
       await signOut(auth);
@@ -365,6 +401,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       console.error('Sign-Out failed:', e);
       setProfile({ displayName: '', avatarColor: '#4DE1A1', avatarUrl: undefined, phoneNumber: undefined });
       setGuestName('');
+      setGuestPhone('');
       if (typeof window !== 'undefined') {
         clearAccountScopedStorage(localStorage);
         removeCookie('billsplit_user_groups');
@@ -407,6 +444,13 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
 
   const showOnboarding = isInitialized && !authLoading && !firebaseUser && !profile.displayName;
+  const showAuthenticatedProfileCompletion = Boolean(
+    isInitialized
+    && !authLoading
+    && firebaseUser
+    && (!profile.displayName.trim() || !profile.phoneNumber || !isValidIsraeliPhone(profile.phoneNumber))
+  );
+  const showProfileModal = showOnboarding || showAuthenticatedProfileCompletion;
 
   return (
     <LanguageContext.Provider
@@ -432,7 +476,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       {children}
 
       {/* Global Onboarding Modal for New/Unauthenticated Users */}
-      {showOnboarding && (
+      {showProfileModal && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-md animate-fadeIn" dir={isRtl ? 'rtl' : 'ltr'}>
           <div role="dialog" aria-modal="true" aria-label={language === 'he' ? 'ברוכים הבאים ל-EasySplit' : 'Welcome to EasySplit'} className="w-full max-w-sm rounded-[24px] p-6 bg-white dark:bg-brand-900 border border-slate-200 dark:border-[#222C3D] text-slate-900 dark:text-white space-y-4 shadow-2xl transition-all">
             
@@ -456,7 +500,9 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 {language === 'he' ? 'ברוכים הבאים ל-EasySplit' : 'Welcome to EasySplit'}
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
-                {language === 'he' ? 'אפשר להתחיל מיד כאורח, או להתחבר כדי לסנכרן בין מכשירים.' : 'Start immediately as a guest, or sign in to sync across devices.'}
+                {firebaseUser
+                  ? (language === 'he' ? 'כדי להמשיך, יש להשלים שם ומספר טלפון להעברות תשלום.' : 'Complete your name and phone number to continue with payments.')
+                  : (language === 'he' ? 'מלא שם ומספר טלפון, או התחבר עם Google כדי לסנכרן בין מכשירים.' : 'Enter your name and phone number, or sign in with Google to sync across devices.')}
               </p>
             </div>
 
@@ -465,8 +511,16 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               onSubmit={(event) => {
                 event.preventDefault();
                 const displayName = guestName.trim();
-                if (!displayName) return;
-                setProfile({ displayName, avatarColor: '#0F172A', avatarUrl: undefined });
+                const phoneNumber = cleanIsraeliPhone(guestPhone);
+                if (!displayName || !isValidIsraeliPhone(phoneNumber)) return;
+                setProfile((current) => ({
+                  ...current,
+                  displayName,
+                  phoneNumber,
+                  avatarColor: current.avatarColor || '#4DE1A1',
+                  avatarUrl: current.avatarUrl || firebaseUser?.photoURL || undefined,
+                }));
+                localStorage.setItem('billsplit_phone', phoneNumber);
               }}
             >
               <input
@@ -478,15 +532,32 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold outline-none focus:border-slate-900 dark:focus:border-white dark:border-slate-700 dark:bg-slate-900"
                 required
               />
+              <div className="relative">
+                <Phone className="pointer-events-none absolute left-3.5 rtl:left-auto rtl:right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="tel"
+                  inputMode="tel"
+                  value={guestPhone}
+                  onChange={(event) => setGuestPhone(event.target.value)}
+                  maxLength={16}
+                  placeholder={language === 'he' ? 'מספר טלפון, למשל 0501234567' : 'Phone number, e.g. 0501234567'}
+                  aria-label={language === 'he' ? 'מספר טלפון' : 'Phone number'}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 rtl:pl-4 rtl:pr-10 text-sm font-semibold outline-none focus:border-brand-600 dark:focus:border-brand-300 dark:border-slate-700 dark:bg-slate-900"
+                  required
+                />
+              </div>
               <button
                 type="submit"
-                className="w-full rounded-xl bg-slate-900 dark:bg-white hover:bg-slate-800 dark:hover:bg-slate-200 py-3.5 text-sm font-extrabold text-white dark:text-slate-900 shadow-md transition-all active:scale-95"
+                disabled={!guestName.trim() || !isValidIsraeliPhone(guestPhone)}
+                className="w-full rounded-xl bg-brand-600 hover:bg-brand-700 py-3.5 text-sm font-extrabold text-white shadow-brand transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {language === 'he' ? 'המשך כאורח' : 'Continue as guest'}
+                {firebaseUser
+                  ? (language === 'he' ? 'שמירה והמשך' : 'Save and continue')
+                  : (language === 'he' ? 'המשך כאורח' : 'Continue as guest')}
               </button>
             </form>
 
-            <div className="pt-1">
+            {!firebaseUser && <div className="pt-1">
               <div className="mb-2 text-center text-[10px] font-bold uppercase tracking-wider text-slate-400">
                 {language === 'he' ? 'או' : 'or'}
               </div>
@@ -515,7 +586,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 </svg>
                 <span>{language === 'he' ? 'התחבר עם Google' : 'Sign in with Google'}</span>
               </button>
-            </div>
+            </div>}
           </div>
         </div>
       )}

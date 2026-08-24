@@ -336,6 +336,33 @@ test('group balances always sum to zero despite decimal rounding', () => {
   assert.equal(result.transactions.reduce((sum, transaction) => sum + Math.round(transaction.amount * 100), 0), 667);
 });
 
+test('settled group shares and bills no longer produce payment transfers', () => {
+  const members = [{ id: 'payer', name: 'Payer' }, { id: 'guest', name: 'Guest' }];
+  const settledMemberResult = calculateDebtMinimization({
+    members,
+    bills: [{
+      payerId: 'payer',
+      amount: 20,
+      settledMemberIds: ['guest'],
+      items: [{ price: 20, claimedBy: ['guest'] }],
+    }],
+  });
+  assert.deepEqual(settledMemberResult.transactions, []);
+  assert.equal(settledMemberResult.isBalanced, true);
+
+  const settledBillResult = calculateDebtMinimization({
+    members,
+    bills: [{
+      payerId: 'payer',
+      amount: 20,
+      status: 'settled',
+      items: [{ price: 20, claimedBy: ['guest'] }],
+    }],
+  });
+  assert.deepEqual(settledBillResult.transactions, []);
+  assert.equal(settledBillResult.isBalanced, true);
+});
+
 test('unassigned items are visible and never create phantom debt', () => {
   const result = calculateDebtMinimization({
     members: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }],

@@ -34,7 +34,7 @@ import { QRCodeModal } from '../../../components/QRCodeModal';
 import { AttachToGroupModal } from '../../../components/AttachToGroupModal';
 import { ReceiptSkeleton } from '../../../components/SkeletonLoader';
 import { getCookie, setCookie } from '../../../../lib/cookies';
-import { isValidIsraeliPhone, triggerBitPayment } from '../../../../lib/bitDeepLink';
+import { cleanIsraeliPhone, isValidIsraeliPhone, triggerBitPayment } from '../../../../lib/bitDeepLink';
 import { triggerHaptic } from '../../../../lib/haptics';
 import { getRoomMemberId, getRoomToken, roomHeaders, saveRoomCredentials } from '../../../../lib/roomTokens';
 import { getReceiptPayableTotal } from '../../../../lib/receiptMath';
@@ -116,6 +116,8 @@ function SessionWorkspaceInner() {
   const [showEditItemModal, setShowEditItemModal] = useState<boolean>(false);
   const [showSettleModal, setShowSettleModal] = useState<boolean>(false);
   const [showCompletionReaction, setShowCompletionReaction] = useState<boolean>(false);
+  const [isFinishing, setIsFinishing] = useState<boolean>(false);
+  const [paymentLaunchMethod, setPaymentLaunchMethod] = useState<'bit' | 'paybox' | null>(null);
   const [isRounded, setIsRounded] = useState<boolean>(false);
   const [showQrModal, setShowQrModal] = useState<boolean>(false);
   const [showAttachGroupModal, setShowAttachGroupModal] = useState<boolean>(false);
@@ -149,6 +151,12 @@ function SessionWorkspaceInner() {
   };
 
   const socketRef = useRef<WebSocket | null>(null);
+  const paymentLaunchRef = useRef(false);
+  const finishTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (finishTimerRef.current) clearTimeout(finishTimerRef.current);
+  }, []);
 
   useEffect(() => {
     if (!sessionId || !profile.displayName) return;
@@ -182,7 +190,10 @@ function SessionWorkspaceInner() {
         const joinRes = await fetch(`/api/session/${resolvedId}/join`, {
           method: 'POST',
           headers: roomHeaders('session', resolvedId),
-          body: JSON.stringify({ name: profile?.displayName || 'Guest' }),
+          body: JSON.stringify({
+            name: profile?.displayName || 'Guest',
+            phone: profile?.phoneNumber || '',
+          }),
         });
         const joined = await joinRes.json();
         if (!joinRes.ok || !joined.session || !joined.accessToken) {
@@ -221,7 +232,7 @@ function SessionWorkspaceInner() {
         socketRef.current.close();
       }
     };
-  }, [sessionId, profile.displayName]);
+  }, [sessionId, profile.displayName, profile.phoneNumber]);
 
   useEffect(() => {
     if (!profile.displayName) {
@@ -261,7 +272,11 @@ function SessionWorkspaceInner() {
         const joinRes = await fetch('/api/groups/join', {
           method: 'POST',
           headers: roomHeaders('group', targetGroupId),
-          body: JSON.stringify({ groupId: resolvedGroupId, name: profile.displayName || 'Member' }),
+          body: JSON.stringify({
+            groupId: resolvedGroupId,
+            name: profile.displayName || 'Member',
+            phone: profile.phoneNumber || '',
+          }),
         });
         const joined = await joinRes.json();
         if (!joinRes.ok || !joined.accessToken) throw new Error(joined.error || 'Could not join group');
@@ -533,6 +548,7 @@ function SessionWorkspaceInner() {
   };
 
   const validMembers = Array.isArray(session?.members) ? session.members : [];
+  const activeMembers = validMembers.filter((member: any) => member?.id && member.active !== false);
   const validItems = Array.isArray(session?.items) ? session.items : [];
 
   // Bulletproof Calculations
@@ -586,7 +602,7 @@ function SessionWorkspaceInner() {
   }, [session, validItems, currentMemberId, tipPercentage]);
 
   const currentMember = validMembers.find((m: any) => m?.id === currentMemberId);
-  const hostMember = validMembers.find((m: any) => m?.isHost) || validMembers[0];
+  const hostMember = activeMembers.find((m: any) => m?.isHost) || activeMembers[0];
   const isCurrentUserHost = Boolean(currentMember?.isHost);
   const isSessionClosed = session?.status === 'settled';
   const hasSettledMembers = validMembers.some((member: any) => member?.settled === true);
@@ -595,11 +611,60 @@ function SessionWorkspaceInner() {
 
   const activePayerId = session?.payerId || 'each';
   const isEachPaid = activePayerId === 'each';
-  const payerMember = !isEachPaid ? validMembers.find((m: any) => m?.id === activePayerId) : null;
+  const payerMember = !isEachPaid ? activeMembers.find((m: any) => m?.id === activePayerId) : null;
   const activePayerName = payerMember?.name || (isEachPaid ? t('eachPaidShare', undefined, 'Each paid their own share') : (session?.hostName || hostMember?.name || 'Host'));
-  const activePayerPhone = payerMember?.phone || (payerMember?.isHost ? session?.hostPhone : (hostMember?.phone || ''));
   const isMePayer = !isEachPaid && activePayerId === currentMemberId;
-  const canPayPayer = isValidIsraeliPhone(activePayerPhone);
+
+  const launchSessionPayment = async (method: 'bit' | 'paybox') => {
+    if (paymentLaunchRef.current || !session?.id || isEachPaid || isMePayer || !activePayerId) return;
+    paymentLaunchRef.current = true;
+    setPaymentLaunchMethod(method);
+    try {
+      const response = await fetch(
+        `/api/session/${encodeURIComponent(session.id)}/payment-target/${encodeURIComponent(activePayerId)}?round=${isRounded ? 'true' : 'false'}`,
+        { headers: roomHeaders('session', session.id, false) },
+      );
+      const data = await response.json().catch(() => ({}));
+      const phone = cleanIsraeliPhone(data.phone || '');
+      const serverAmount = Number(data.amount);
+      if (!response.ok || !isValidIsraeliPhone(phone) || !Number.isFinite(serverAmount) || serverAmount <= 0) {
+        alert(t('payerPhoneNotSetNote', { name: activePayerName }, `${activePayerName} has not added a valid payment phone number yet.`));
+        return;
+      }
+
+      const amount = serverAmount;
+      if (method === 'bit') {
+        triggerBitPayment({
+          phone,
+          amount,
+          storeName: session?.storeName || 'EasySplit Room',
+        });
+        return;
+      }
+
+      const formattedAmount = amount.toFixed(2);
+      try {
+        await navigator.clipboard.writeText(`${phone} ${formattedAmount}`);
+      } catch (error) {
+        console.warn('Could not copy Paybox details:', error);
+      }
+      const isMobile = typeof window !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      if (isMobile) {
+        window.location.href = `paybox://pay?phone=${phone}&amount=${formattedAmount}`;
+        setTimeout(() => {
+          window.open(`https://payboxapp.page.link/pay?phone=${phone}&amount=${formattedAmount}`, '_blank');
+        }, 800);
+      } else {
+        window.open(`https://payboxapp.page.link/pay?phone=${phone}&amount=${formattedAmount}`, '_blank');
+      }
+    } catch (error) {
+      console.error('Payment target lookup failed:', error);
+      alert(t('payerPhoneNotSetNote', { name: activePayerName }, `${activePayerName} has not added a valid payment phone number yet.`));
+    } finally {
+      paymentLaunchRef.current = false;
+      setPaymentLaunchMethod(null);
+    }
+  };
 
   const triggerCelebration = () => {
     setShowCompletionReaction(true);
@@ -781,7 +846,7 @@ function SessionWorkspaceInner() {
             className="py-1.5 px-3 rounded-lg bg-white dark:bg-brand-900 text-xs font-bold border border-slate-200 dark:border-white/10 text-slate-900 dark:text-white shadow-2xs focus:ring-2 focus:ring-brand-500/30 cursor-pointer max-w-[220px] truncate"
           >
             <option value="each">👥 {t('eachPaidShareOption', undefined, 'Each paid their share')}</option>
-            {validMembers.map((m: any) => (
+            {activeMembers.map((m: any) => (
               <option key={m.id} value={m.id}>
                 👤 {m.name} {m.id === currentMemberId ? t('youSuffix', undefined, '(You)') : ''} {m.isHost ? `[${t('hostBadge', undefined, 'HOST')}]` : ''}
               </option>
@@ -1224,6 +1289,7 @@ function SessionWorkspaceInner() {
         const adjustmentDual: DualRes = formatDual ? formatDual(adjustmentVal, session.currency || 'NIS') : { primary: `${adjustmentVal.toFixed(2)} ${session.currency || 'NIS'}` };
         const tipDual: DualRes = formatDual ? formatDual(tipVal, session.currency || 'NIS') : { primary: `${tipVal.toFixed(2)} ${session.currency || 'NIS'}` };
         const dueDual: DualRes = formatDual ? formatDual(finalDueVal, session.currency || 'NIS') : { primary: `${finalDueVal.toFixed(2)} ${session.currency || 'NIS'}` };
+        const canLaunchPayment = !isEachPaid && !isMePayer && finalDueVal > 0;
 
         return (
           <div className="fixed inset-0 z-50 flex flex-col justify-end bg-slate-950/60 backdrop-blur-sm animate-fadeIn">
@@ -1352,10 +1418,11 @@ function SessionWorkspaceInner() {
                   <select
                     value={activePayerId}
                     onChange={(e) => sendAction('SET_PAYER', { payerId: e.target.value })}
-                    className="py-1 px-2.5 rounded-lg bg-white dark:bg-slate-800 text-xs font-bold border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white cursor-pointer"
+                    disabled={!isCurrentUserHost || isAccountingLocked}
+                    className="py-1 px-2.5 rounded-lg bg-white dark:bg-slate-800 text-xs font-bold border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <option value="each">👥 {t('eachPaidShareOption', undefined, 'Each paid their share')}</option>
-                    {validMembers.map((m: any) => (
+                    {activeMembers.map((m: any) => (
                       <option key={m.id} value={m.id}>
                         👤 {m.name} {m.id === currentMemberId ? t('youSuffix', undefined, '(You)') : ''}
                       </option>
@@ -1371,57 +1438,41 @@ function SessionWorkspaceInner() {
                 </p>
               </div>
 
-              {/* Instant Payment Transfer Options to Payer (when someone specific paid upfront) */}
-              {!isEachPaid && !isMePayer && (
-                <div className="space-y-2">
-                  <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 block">
-                    {t('payPayerTitle', { name: activePayerName }, `Pay ${activePayerName}`)}
-                  </label>
-                  {canPayPayer ? (
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          triggerBitPayment({
-                            phone: activePayerPhone,
-                            amount: finalDueVal,
-                            storeName: session?.storeName || 'EasySplit Room'
-                          });
-                        }}
-                        className="py-3 px-3 rounded-xl bg-slate-900 text-white font-black text-xs shadow-sm hover:opacity-90 active:scale-95 transition-all text-center flex items-center justify-center gap-1.5"
-                      >
-                        <span>Bit (₪{finalDueVal.toFixed(2)})</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const phone = activePayerPhone.replace(/\D/g, '');
-                          const amount = finalDueVal.toFixed(2);
-                          try {
-                            navigator.clipboard.writeText(`${phone} ${amount}`);
-                          } catch (e) {}
-                          const isMobile = typeof window !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-                          if (isMobile) {
-                            window.location.href = `paybox://pay?phone=${phone}&amount=${amount}`;
-                            setTimeout(() => {
-                              window.open(`https://payboxapp.page.link/pay?phone=${phone}&amount=${amount}`, '_blank');
-                            }, 800);
-                          } else {
-                            window.open(`https://payboxapp.page.link/pay?phone=${phone}&amount=${amount}`, '_blank');
-                          }
-                        }}
-                        className="py-3 px-3 rounded-xl bg-slate-800 text-white font-black text-xs shadow-sm hover:opacity-90 active:scale-95 transition-all text-center flex items-center justify-center gap-1.5"
-                      >
-                        <span>Paybox (₪{finalDueVal.toFixed(2)})</span>
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] text-slate-600 dark:text-slate-300 font-medium text-center">
-                      {t('payerPhoneNotSetNote', { name: activePayerName }, `${activePayerName} has not added a payment phone number yet. Please settle in person.`)}
-                    </div>
-                  )}
+              {/* Payment integrations stay visible in the settlement flow. */}
+              <div className="space-y-2">
+                <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 block">
+                  {t('paymentMethodsTitle', undefined, 'Choose payment method')}
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    disabled={!canLaunchPayment || paymentLaunchMethod !== null}
+                    onClick={() => launchSessionPayment('bit')}
+                    className="brand-tap py-3 px-3 rounded-xl bg-brand-600 text-white font-black text-xs shadow-brand hover:bg-brand-700 transition-all text-center flex items-center justify-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {paymentLaunchMethod === 'bit' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    <span>Bit (₪{finalDueVal.toFixed(2)})</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!canLaunchPayment || paymentLaunchMethod !== null}
+                    onClick={() => launchSessionPayment('paybox')}
+                    className="brand-tap py-3 px-3 rounded-xl bg-mint-500 text-brand-950 font-black text-xs shadow-sm hover:bg-mint-600 transition-all text-center flex items-center justify-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {paymentLaunchMethod === 'paybox' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    <span>Paybox (₪{finalDueVal.toFixed(2)})</span>
+                  </button>
                 </div>
-              )}
+                {!canLaunchPayment && (
+                  <p className="text-center text-[10px] font-medium text-slate-500 dark:text-slate-400">
+                    {isEachPaid
+                      ? t('selectPayerForPaymentNote', undefined, 'Select a participant who paid to enable Bit and Paybox.')
+                      : isMePayer
+                        ? t('payerDoesNotPaySelfNote', undefined, 'You are marked as the payer; the other participants can pay you.')
+                        : t('payerPhoneNotSetNote', { name: activePayerName }, `${activePayerName} has not added a payment phone number yet.`)}
+                  </p>
+                )}
+              </div>
 
               {/* Settle Action Button - Matching Picture 2 Specification */}
               <div className="pt-2">
@@ -1486,10 +1537,9 @@ function SessionWorkspaceInner() {
                       setShowSettleModal(false);
                       if (isCurrentUserHost) {
                         localStorage.removeItem('billsplit_active_session');
-                        router.push('/?tab=history');
                       }
                       setIsSettling('idle');
-                    }, 1400);
+                    }, 700);
                   }}
                   className={`w-full py-4 rounded-full bg-white dark:bg-white text-black dark:text-black font-black text-sm border border-slate-200 dark:border-white/20 hover:bg-slate-100 dark:hover:bg-slate-100 shadow-2xl flex items-center justify-center gap-2.5 transition-all duration-300 active:scale-[0.98] text-center relative overflow-hidden group select-none ${
                     isSettling === 'success' ? 'ring-4 ring-black/20 dark:ring-white/30 bg-white' : ''
@@ -1533,7 +1583,9 @@ function SessionWorkspaceInner() {
       {showCompletionReaction && (
         <div 
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn"
-          onClick={() => setShowCompletionReaction(false)}
+          onClick={() => {
+            if (!isFinishing) setShowCompletionReaction(false);
+          }}
         >
           <div 
             className="w-full max-w-xs rounded-3xl p-6 bg-white dark:bg-brand-900 border border-slate-200 dark:border-white/10 text-center space-y-4 shadow-[0_20px_60px_rgba(0,0,0,0.5)] animate-scaleUp"
@@ -1557,11 +1609,40 @@ function SessionWorkspaceInner() {
 
             <button
               type="button"
+              disabled={isFinishing}
               onClick={() => {
+                if (isFinishing) return;
+                setIsFinishing(true);
+                triggerHaptic('success');
+                finishTimerRef.current = setTimeout(() => {
+                  finishTimerRef.current = null;
+                  setShowCompletionReaction(false);
+                  setIsFinishing(false);
+                  router.push('/');
+                }, 900);
+              }}
+              className="brand-tap w-full py-3.5 px-4 rounded-xl bg-mint-500 hover:bg-mint-600 text-brand-950 font-extrabold text-sm shadow-[0_14px_30px_-16px_rgba(43,199,137,0.75)] transition-all disabled:pointer-events-none"
+            >
+              <span className="inline-flex items-center justify-center gap-2">
+                <CheckCircle2 className={`h-5 w-5 ${isFinishing ? 'animate-scaleUp' : ''}`} />
+                {isFinishing
+                  ? t('finishingLabel', undefined, 'Finished!')
+                  : t('finishContinueBtn', undefined, 'Finish / Continue')}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              disabled={isFinishing}
+              onClick={() => {
+                if (finishTimerRef.current) {
+                  clearTimeout(finishTimerRef.current);
+                  finishTimerRef.current = null;
+                }
                 setShowCompletionReaction(false);
                 router.push('/?tab=history');
               }}
-              className="brand-tap w-full py-3 px-4 rounded-xl bg-brand-600 hover:bg-brand-700 dark:bg-brand-300 text-white dark:text-brand-950 font-extrabold text-xs shadow-brand transition-all"
+              className="brand-tap w-full py-3 px-4 rounded-xl bg-brand-50 hover:bg-brand-100 dark:bg-brand-800 text-brand-700 dark:text-brand-100 border border-brand-100 dark:border-brand-700 font-extrabold text-xs transition-all disabled:cursor-not-allowed disabled:opacity-50"
             >
               <span>{t('viewHistoryBtn', undefined, 'View in History')}</span>
             </button>

@@ -41,8 +41,10 @@ function waitForServer(child, timeoutMs = 45_000) {
 test('legacy four-digit invite codes remain compatible and responses include security headers', { timeout: 60_000 }, async (t) => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'easysplit-invite-'));
   const dbPath = path.join(tempDir, 'db.json');
-  const sessionHost = createRoomMember({ name: 'Session Host', isHost: true });
-  const groupHost = createRoomMember({ name: 'Group Host', isHost: true });
+  const sessionHost = createRoomMember({ name: 'Session Host', phone: '0501111111', isHost: true });
+  const sessionGuest = createRoomMember({ name: 'Session Guest', phone: '0504444444' });
+  const groupHost = createRoomMember({ name: 'Group Host', phone: '0502222222', isHost: true });
+  const groupGuest = createRoomMember({ name: 'Group Guest', phone: '0503333333' });
   fs.writeFileSync(dbPath, JSON.stringify({
     users: {},
     history: [],
@@ -51,8 +53,10 @@ test('legacy four-digit invite codes remain compatible and responses include sec
         id: 'sess_invite_test',
         code: '4321',
         status: 'active',
-        members: [sessionHost.member],
-        items: [],
+        currency: 'NIS',
+        payerId: sessionHost.member.id,
+        members: [sessionHost.member, sessionGuest.member],
+        items: [{ id: 'session_item_1', name: 'Lunch', price: 20, claimedBy: [sessionGuest.member.id] }],
       },
     },
     groups: {
@@ -61,8 +65,41 @@ test('legacy four-digit invite codes remain compatible and responses include sec
         code: '6789',
         status: 'active',
         currency: 'NIS',
-        members: [groupHost.member],
-        bills: [],
+        members: [groupHost.member, groupGuest.member],
+        bills: [{
+          id: 'bill_payment_target',
+          payerId: groupHost.member.id,
+          amount: 20,
+          items: [{ id: 'item_1', name: 'Dinner', price: 20, claimedBy: [groupGuest.member.id] }],
+        }],
+      },
+      'grp_member_settled_test': {
+        id: 'grp_member_settled_test',
+        code: '6790',
+        status: 'active',
+        currency: 'NIS',
+        members: [groupHost.member, groupGuest.member],
+        bills: [{
+          id: 'bill_member_settled',
+          payerId: groupHost.member.id,
+          amount: 20,
+          settledMemberIds: [groupGuest.member.id],
+          items: [{ id: 'item_2', name: 'Dinner', price: 20, claimedBy: [groupGuest.member.id] }],
+        }],
+      },
+      'grp_bill_settled_test': {
+        id: 'grp_bill_settled_test',
+        code: '6791',
+        status: 'active',
+        currency: 'NIS',
+        members: [groupHost.member, groupGuest.member],
+        bills: [{
+          id: 'bill_fully_settled',
+          payerId: groupHost.member.id,
+          amount: 20,
+          status: 'settled',
+          items: [{ id: 'item_3', name: 'Dinner', price: 20, claimedBy: [groupGuest.member.id] }],
+        }],
       },
     },
   }));
@@ -111,11 +148,31 @@ test('legacy four-digit invite codes remain compatible and responses include sec
 
   const sessionJoin = await fetch(`${baseUrl}/api/session/4321/join`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ name: 'Session Guest' }),
+    headers: { 'content-type': 'application/json', 'x-room-token': sessionGuest.accessToken },
+    body: JSON.stringify({ name: 'Session Guest', phone: '0504444444' }),
   });
   assert.equal(sessionJoin.status, 200);
-  assert.equal((await sessionJoin.json()).session.members.length, 2);
+  const sessionJoinBody = await sessionJoin.json();
+  assert.equal(sessionJoinBody.session.members.length, 2);
+  assert.equal(sessionJoinBody.session.members.every((member) => member.phone === undefined), true);
+  assert.equal(sessionJoinBody.session.paymentPhone, undefined);
+
+  const sessionPaymentTarget = await fetch(
+    `${baseUrl}/api/session/sess_invite_test/payment-target/${sessionHost.member.id}`,
+    { headers: { 'x-room-token': sessionGuest.accessToken } },
+  );
+  assert.equal(sessionPaymentTarget.status, 200);
+  assert.deepEqual(await sessionPaymentTarget.json(), {
+    memberId: sessionHost.member.id,
+    phone: '0501111111',
+    amount: 20,
+  });
+
+  const sessionUnrelatedTarget = await fetch(
+    `${baseUrl}/api/session/sess_invite_test/payment-target/${sessionGuest.member.id}`,
+    { headers: { 'x-room-token': sessionHost.accessToken } },
+  );
+  assert.equal(sessionUnrelatedTarget.status, 403);
 
   const groupDiscovery = await fetch(`${baseUrl}/api/groups/6789`);
   assert.equal(groupDiscovery.status, 200);
@@ -125,9 +182,37 @@ test('legacy four-digit invite codes remain compatible and responses include sec
 
   const groupJoin = await fetch(`${baseUrl}/api/groups/join`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ groupId: '6789', name: 'Group Guest' }),
+    headers: { 'content-type': 'application/json', 'x-room-token': groupGuest.accessToken },
+    body: JSON.stringify({ groupId: '6789', name: 'Group Guest', phone: '0503333333' }),
   });
   assert.equal(groupJoin.status, 200);
-  assert.equal((await groupJoin.json()).group.members.length, 2);
+  const groupJoinBody = await groupJoin.json();
+  assert.equal(groupJoinBody.group.members.length, 2);
+  assert.equal(groupJoinBody.group.members.every((member) => member.phone === undefined), true);
+  assert.equal(groupJoinBody.group.minimizedTransactions.every((transaction) => transaction.toPhone === undefined), true);
+
+  const paymentTarget = await fetch(
+    `${baseUrl}/api/groups/grp_invite_test/payment-target/${groupHost.member.id}`,
+    { headers: { 'x-room-token': groupGuest.accessToken } },
+  );
+  assert.equal(paymentTarget.status, 200);
+  assert.deepEqual(await paymentTarget.json(), {
+    memberId: groupHost.member.id,
+    phone: '0502222222',
+    amount: 20,
+  });
+
+  const unrelatedTarget = await fetch(
+    `${baseUrl}/api/groups/grp_invite_test/payment-target/${groupGuest.member.id}`,
+    { headers: { 'x-room-token': groupHost.accessToken } },
+  );
+  assert.equal(unrelatedTarget.status, 403);
+
+  for (const settledGroupId of ['grp_member_settled_test', 'grp_bill_settled_test']) {
+    const settledTarget = await fetch(
+      `${baseUrl}/api/groups/${settledGroupId}/payment-target/${groupHost.member.id}`,
+      { headers: { 'x-room-token': groupGuest.accessToken } },
+    );
+    assert.equal(settledTarget.status, 403);
+  }
 });

@@ -40,6 +40,8 @@ fs.writeFileSync(dbPath, JSON.stringify({
 }));
 
 const db = require('../lib/db');
+const { validateUserSyncBody } = require('../lib/validation');
+const { createRoomMember, joinRoom, publicRoom, syncRoomMember } = require('../lib/roomAuth');
 
 test.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
 
@@ -85,4 +87,63 @@ test('client-controlled account settings cannot persist unrelated user fields', 
   assert.equal(user.settings.isAdmin, undefined);
   assert.equal(user.settings.groups, undefined);
   assert.equal(user.settings.bills, undefined);
+});
+
+test('profile sync accepts only a sanitized phone field alongside approved account fields', () => {
+  const clean = validateUserSyncBody({
+    username: '  Alice  ',
+    phone: '050-123 4567<script>',
+    email: 'forged@example.com',
+    isAdmin: true,
+    settings: { language: 'he' },
+  });
+
+  assert.equal(clean.username, 'Alice');
+  assert.equal(clean.phone, '0501234567');
+  assert.equal(clean.email, undefined);
+  assert.equal(clean.isAdmin, undefined);
+  assert.deepEqual(clean.settings, { language: 'he' });
+});
+
+test('room membership keeps the participant phone current for payment routing', () => {
+  const host = createRoomMember({ name: 'Host', phone: '050-111 2233', isHost: true });
+  assert.equal(host.member.phone, '0501112233');
+  const room = { members: [host.member], items: [] };
+  const joined = joinRoom(room, { accessToken: host.accessToken, name: 'Host', phone: '0509998877' });
+
+  assert.equal(joined.member.phone, '0509998877');
+  assert.equal(room.members.length, 1);
+});
+
+test('public room state strips all payment phone PII', () => {
+  const host = createRoomMember({ name: 'Host', phone: '0501112233', isHost: true });
+  const guest = createRoomMember({ name: 'Guest', phone: '0509998877' });
+  const room = {
+    members: [host.member, guest.member],
+    payerId: host.member.id,
+    hostPhone: host.member.phone,
+    minimizedTransactions: [{ fromId: guest.member.id, toId: host.member.id, toPhone: host.member.phone, amount: 20 }],
+  };
+
+  const publicState = publicRoom(room);
+  assert.equal(publicState.paymentPhone, undefined);
+  assert.equal(publicState.hostPhone, undefined);
+  assert.equal(publicState.members.every((member) => member.phone === undefined), true);
+  assert.equal(publicState.minimizedTransactions[0].toPhone, undefined);
+});
+
+test('linked session member synchronization refreshes the payment phone', () => {
+  const target = createRoomMember({ name: 'Member', phone: '0501111111' }).member;
+  const source = createRoomMember({ name: 'Member', phone: '+972 50-999-8877' }).member;
+
+  syncRoomMember(target, source);
+  assert.equal(target.phone, '0509998877');
+  assert.equal(target.accessTokenHash, source.accessTokenHash);
+});
+
+test('profile sync rejects malformed non-empty phone numbers', () => {
+  assert.throws(
+    () => validateUserSyncBody({ username: 'Alice', phone: '12345', settings: {} }),
+    /valid Israeli mobile number/,
+  );
 });

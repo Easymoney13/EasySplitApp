@@ -169,6 +169,11 @@ export const translations: Record<string, Record<string, string>> = {
     settledBadge: "Settled ✓",
     archiveSessionBtn: "Close & Archive Session to History",
     settleAndCloseSessionBtn: "Settle Payment & Close Session",
+    paymentMethodsTitle: "Choose payment method",
+    selectPayerForPaymentNote: "Select a participant who paid to enable Bit and Paybox.",
+    payerDoesNotPaySelfNote: "You are marked as the payer; the other participants can pay you.",
+    finishContinueBtn: "Finish / Continue",
+    finishingLabel: "Finished!",
 
     // QR Code Modal
     scanToJoinTitle: "Scan to Join Room",
@@ -459,6 +464,11 @@ export const translations: Record<string, Record<string, string>> = {
     settledBadge: "שולם ✓",
     archiveSessionBtn: "סגור והעבר להיסטוריה",
     settleAndCloseSessionBtn: "סיכום תשלום וסגירת חדר",
+    paymentMethodsTitle: "בחירת אמצעי תשלום",
+    selectPayerForPaymentNote: "יש לבחור מי מהמשתתפים שילם כדי להפעיל Bit ו-Paybox.",
+    payerDoesNotPaySelfNote: "סומנת כמי ששילם; שאר המשתתפים יכולים להעביר אליך.",
+    finishContinueBtn: "סיום / המשך",
+    finishingLabel: "החשבון נסגר!",
 
     // QR Code Modal
     scanToJoinTitle: "סרקו להצטרפות לחדר",

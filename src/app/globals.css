@@ -294,6 +294,28 @@ select:focus-visible {
   background: radial-gradient(circle, rgba(255, 180, 150, 0.8) 0%, rgba(255, 152, 116, 0) 70%);
 }
 
+.brand-start-glow {
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.20) 0%, rgba(255, 255, 255, 0) 70%);
+}
+
+.app-viewport,
+.app-phone-shell {
+  height: 100vh;
+  height: 100dvh;
+}
+
+@media (min-width: 768px) {
+  .app-phone-shell {
+    height: calc(100vh - 3rem);
+    height: calc(100dvh - 3rem);
+    max-height: 844px;
+  }
+}
+
+.safe-bottom-nav {
+  padding-bottom: max(0.625rem, env(safe-area-inset-bottom));
+}
+
 /* Keyframe animations */
 @keyframes fadeIn {
   from {

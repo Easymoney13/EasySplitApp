@@ -57,6 +57,7 @@ const {
   deduplicateRoomMembers,
   getRequestRoomToken,
   joinRoom,
+  syncRoomMember,
   publicRoom,
 } = require('./lib/roomAuth');
 const { broadcastToRoom, subscribeClient } = require('./lib/realtimeRooms');
@@ -394,6 +395,7 @@ app.prepare().then(() => {
     return {
       id: user.id,
       username: user.username || 'User',
+      phone: user.phone || '',
       avatarColor: user.avatarColor || '#7C3AED',
       ...(user.avatarUrl ? { avatarUrl: user.avatarUrl } : {}),
       settings: {
@@ -978,6 +980,7 @@ app.prepare().then(() => {
           const host = createRoomMember({
             uid: req.user?.uid,
             name: rawHostName,
+            phone: req.body?.hostPhone,
             isHost: true,
             avatarColor: '#A3E635',
           });
@@ -1005,7 +1008,7 @@ app.prepare().then(() => {
             inputDigest: parsedReceipt.inputDigest || undefined,
             contentDigest: confirmedContentDigest,
             confirmedByUserAt: parsedReceipt.confirmedByUserAt || undefined,
-            hostPhone: '',
+            hostPhone: host.member.phone || '',
             status: 'active',
             createdAt: Date.now(),
             members: [host.member],
@@ -1093,6 +1096,45 @@ app.prepare().then(() => {
     return res.json({ session: actor ? publicRoom(session) : roomDiscovery(session) });
   });
 
+  server.get('/api/session/:sessionId/payment-target/:memberId', authenticateUser, roomLookupRateLimit, async (req, res) => {
+    const sessionId = security.sanitizeString(req.params.sessionId, 100);
+    const memberId = security.sanitizeString(req.params.memberId, 100);
+    const session = await db.getSession(sessionId);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+
+    const actor = authorizedRoomMember(req, session);
+    if (!actor) return res.status(401).json({ error: 'A valid room membership is required' });
+    if (session.status === 'settled') return res.status(409).json({ error: 'This session is already closed' });
+    if (actor.settled === true || !session.payerId || session.payerId === 'each' || session.payerId !== memberId || actor.id === memberId) {
+      return res.status(403).json({ error: 'No payment is due from this member to that recipient' });
+    }
+
+    const recipient = session.members.find((member) => member.id === memberId && member.active !== false);
+    const amount = calculateUserShareForSession(
+      session.items,
+      session.members,
+      actor.id,
+      actor.name,
+      actor.phone,
+      Number(session.tipPercentage || 0),
+      getReceiptPayableTotal(session),
+    );
+    if (!recipient || amount <= 0) {
+      return res.status(403).json({ error: 'No payment is due from this member to that recipient' });
+    }
+
+    const paymentAmount = req.query?.round === 'true' ? Math.round(amount) : amount;
+    if (paymentAmount <= 0) {
+      return res.status(403).json({ error: 'No payment is due from this member to that recipient' });
+    }
+
+    return res.json({
+      memberId,
+      phone: recipient.phone || (recipient.isHost ? session.hostPhone || '' : ''),
+      amount: paymentAmount,
+    });
+  });
+
   server.post('/api/session/:idOrCode/join', authenticateUser, roomJoinRateLimit, async (req, res) => {
     try {
       const session = await db.getSession(security.sanitizeString(req.params.idOrCode, 100));
@@ -1108,6 +1150,7 @@ app.prepare().then(() => {
           uid: req.user?.uid,
           accessToken: getRequestRoomToken(req),
           name: req.body?.name || req.user?.name || 'Guest',
+          phone: req.body?.phone,
           avatarColor: getRandomAvatarColor(),
         };
         if (currentGroup) {
@@ -1124,11 +1167,7 @@ app.prepare().then(() => {
             sessionMember = { ...groupJoin.member, settled: false };
             currentSession.members.push(sessionMember);
           } else {
-            sessionMember.name = groupJoin.member.name;
-            sessionMember.isHost = groupJoin.member.isHost;
-            sessionMember.active = groupJoin.member.active;
-            sessionMember.accessTokenHash = groupJoin.member.accessTokenHash;
-            sessionMember.accessTokenHashes = groupJoin.member.accessTokenHashes;
+            syncRoomMember(sessionMember, groupJoin.member);
           }
           joined = { member: sessionMember, accessToken: groupJoin.accessToken, changed: true };
           return { session: currentSession, group: currentGroup };
@@ -1281,12 +1320,13 @@ app.prepare().then(() => {
   // 1. Create Group
   server.post('/api/groups', authenticateUser, sessionCreateRateLimit, async (req, res) => {
     try {
-      const { name, currency, hostName } = req.body;
+      const { name, currency, hostName, hostPhone } = req.body;
       const cleanName = security.sanitizeString(name || 'Trip Group', 40);
       const rawHostName = hostName || (req.user ? req.user.name : 'Host');
       const host = createRoomMember({
         uid: req.user?.uid,
         name: rawHostName,
+        phone: hostPhone,
         isHost: true,
         avatarColor: '#A3E635',
       });
@@ -1334,10 +1374,37 @@ app.prepare().then(() => {
     return res.json({ group: actor ? publicGroupWithDebt(group) : roomDiscovery(group) });
   });
 
+  server.get('/api/groups/:groupId/payment-target/:memberId', authenticateUser, roomLookupRateLimit, async (req, res) => {
+    const groupId = security.sanitizeString(req.params.groupId, 100);
+    const memberId = security.sanitizeString(req.params.memberId, 100);
+    const group = await db.getGroup(groupId);
+    if (!group) return res.status(404).json({ error: 'Group not found' });
+
+    const actor = authorizedRoomMember(req, group);
+    if (!actor) return res.status(401).json({ error: 'A valid room membership is required' });
+
+    const debtData = calculateDebtMinimization(group);
+    const authorizedTransfer = debtData.transactions.find((transaction) => (
+      transaction.fromId === actor.id
+      && transaction.toId === memberId
+      && Number(transaction.amount) > 0
+    ));
+    if (!authorizedTransfer) {
+      return res.status(403).json({ error: 'No payment is due from this member to that recipient' });
+    }
+
+    const recipient = group.members.find((member) => member.id === memberId && member.active !== false);
+    return res.json({
+      memberId,
+      phone: recipient?.phone || '',
+      amount: authorizedTransfer.amount,
+    });
+  });
+
   // 3. Join Group by Code
   server.post('/api/groups/join', authenticateUser, roomJoinRateLimit, async (req, res) => {
     try {
-      const { groupId, name } = req.body;
+      const { groupId, name, phone } = req.body;
       const group = await db.getGroup(groupId);
       if (!group) {
         return res.status(404).json({ error: 'Group not found' });
@@ -1349,6 +1416,7 @@ app.prepare().then(() => {
           uid: req.user?.uid,
           accessToken: getRequestRoomToken(req),
           name: name || req.user?.name || 'Member',
+          phone,
           avatarColor: getRandomAvatarColor(),
         });
         return currentGroup;
@@ -1851,10 +1919,10 @@ app.prepare().then(() => {
       }
 
       const { uid, name, picture } = req.user;
-      const { username, settings } = validateUserSyncBody(req.body || {});
+      const { username, phone, settings } = validateUserSyncBody(req.body || {});
       const finalName = security.sanitizeName(username || name || 'User', 'User');
 
-      const user = await db.findOrCreateUser(uid, finalName, '', settings || {});
+      const user = await db.findOrCreateUser(uid, finalName, phone, settings || {});
 
       // Sync avatar URL from Google if available
       if (picture && user.avatarUrl !== picture) {

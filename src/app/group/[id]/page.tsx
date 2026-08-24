@@ -36,7 +36,7 @@ import { SwipeableCard } from '../../../components/SwipeableCard';
 import { createReceiptDraft, receiptConfirmationPayload, receiptScanUserMessage } from '../../../../lib/receiptScanClient';
 import { getCookie, setCookie } from '../../../../lib/cookies';
 import { formatCurrency } from '../../../../lib/i18n';
-import { isValidIsraeliPhone, triggerBitPayment } from '../../../../lib/bitDeepLink';
+import { cleanIsraeliPhone, isValidIsraeliPhone, triggerBitPayment } from '../../../../lib/bitDeepLink';
 import { triggerHaptic } from '../../../../lib/haptics';
 import { clearRoomCredentials, getRoomMemberId, getRoomToken, roomHeaders, saveRoomCredentials } from '../../../../lib/roomTokens';
 
@@ -60,6 +60,7 @@ export default function GroupWorkspacePage() {
   const [isUploading, setIsUploading] = useState(false);
   const [showStartSplitModal, setShowStartSplitModal] = useState(false);
   const [copiedInvite, setCopiedInvite] = useState(false);
+  const [paymentLookupKey, setPaymentLookupKey] = useState('');
 
   // Edit Bill State
   const [editingBill, setEditingBill] = useState<any>(null);
@@ -70,6 +71,7 @@ export default function GroupWorkspacePage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  const paymentLookupRef = useRef(false);
 
   const persistGroupToLocal = (grp: any) => {
     if (!grp || !grp.id) return;
@@ -153,6 +155,7 @@ export default function GroupWorkspacePage() {
           body: JSON.stringify({
             groupId: resolvedId,
             name: profile.displayName || 'Member',
+            phone: profile.phoneNumber || '',
           }),
         });
         const joined = await joinRes.json();
@@ -190,7 +193,7 @@ export default function GroupWorkspacePage() {
       clearTimeout(timeoutTimer);
       if (socketRef.current) socketRef.current.close();
     };
-  }, [groupId, profile.displayName]);
+  }, [groupId, profile.displayName, profile.phoneNumber]);
 
   const fetchGroupData = async (id: string) => {
     try {
@@ -254,7 +257,6 @@ export default function GroupWorkspacePage() {
     if (!group) return;
 
     try {
-      setIsUploading(true);
       const res = await fetch('/api/groups/bill', {
         method: 'POST',
         headers: roomHeaders('group', group.id),
@@ -296,8 +298,6 @@ export default function GroupWorkspacePage() {
     } catch (err) {
       console.error(err);
       alert('Failed to save bill to group.');
-    } finally {
-      setIsUploading(false);
     }
   };
 
@@ -497,7 +497,7 @@ export default function GroupWorkspacePage() {
             setPendingScanId('');
           }}
           onLaunchSession={(data) => {
-            handleAddBillToGroup({
+            return handleAddBillToGroup({
               id: editingBill?.id,
               title: data.storeName,
               date: data.date || pendingReceiptDraft?.date || editingBill?.date,
@@ -800,33 +800,71 @@ export default function GroupWorkspacePage() {
         ) : (
           <div className="space-y-1.5 pt-0.5">
             {minimizedTransactions.map((tx: any, idx: number) => {
-              const hasPaymentPhone = isValidIsraeliPhone(tx.toPhone || '');
-              const handleOpenBit = () => {
-                triggerBitPayment({
-                  phone: tx.toPhone || '',
-                  amount: tx.amount || 0,
-                  title: `Settlement to ${tx.toName} (${group.name})`
-                });
+              const canPayTransaction = tx.fromId === currentMemberId && Number(tx.amount) > 0;
+              const paymentKey = `${tx.fromId}:${tx.toId}`;
+              const fetchPaymentTarget = async () => {
+                try {
+                  const response = await fetch(
+                    `/api/groups/${encodeURIComponent(group.id)}/payment-target/${encodeURIComponent(tx.toId)}`,
+                    { headers: roomHeaders('group', group.id, false) },
+                  );
+                  const data = await response.json().catch(() => ({}));
+                  const phone = cleanIsraeliPhone(data.phone || '');
+                  const amount = Number(data.amount);
+                  if (!response.ok || !isValidIsraeliPhone(phone) || !Number.isFinite(amount) || amount <= 0) {
+                    alert(t('payerPhoneNotSetNote', { name: tx.toName }, `${tx.toName} has not added a valid payment phone number yet.`));
+                    return null;
+                  }
+                  return { phone, amount };
+                } catch (error) {
+                  console.error('Payment target lookup failed:', error);
+                  alert(t('payerPhoneNotSetNote', { name: tx.toName }, `${tx.toName} has not added a valid payment phone number yet.`));
+                  return null;
+                }
               };
 
-              const handleOpenPaybox = () => {
-                let cleanPhone = (tx.toPhone || '').replace(/\D/g, '');
-                if (cleanPhone.startsWith('972')) {
-                  cleanPhone = '0' + cleanPhone.substring(3);
-                }
-                const amt = (tx.amount || 0).toFixed(2);
+              const handleOpenBit = async () => {
+                if (paymentLookupRef.current) return;
+                paymentLookupRef.current = true;
+                setPaymentLookupKey(paymentKey);
                 try {
-                  navigator.clipboard.writeText(`${cleanPhone} ${amt}`);
-                } catch (e) {}
-                alert(`Opening Paybox!\nRecipient: ${tx.toName} (${cleanPhone})\nAmount: ${formatCurrency(tx.amount || 0, group.currency || 'NIS')}\n(Copied to clipboard 📋)`);
-                const isMobile = typeof window !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-                if (isMobile) {
-                  window.location.href = `paybox://pay?phone=${cleanPhone}&amount=${amt}`;
-                  setTimeout(() => {
-                    window.open(`https://payboxapp.page.link/pay?phone=${cleanPhone}&amount=${amt}`, '_blank');
-                  }, 800);
-                } else {
-                  window.open(`https://payboxapp.page.link/pay?phone=${cleanPhone}&amount=${amt}`, '_blank');
+                  const target = await fetchPaymentTarget();
+                  if (!target) return;
+                  triggerBitPayment({
+                    phone: target.phone,
+                    amount: target.amount,
+                    title: `Settlement to ${tx.toName} (${group.name})`
+                  });
+                } finally {
+                  paymentLookupRef.current = false;
+                  setPaymentLookupKey('');
+                }
+              };
+
+              const handleOpenPaybox = async () => {
+                if (paymentLookupRef.current) return;
+                paymentLookupRef.current = true;
+                setPaymentLookupKey(paymentKey);
+                try {
+                  const target = await fetchPaymentTarget();
+                  if (!target) return;
+                  const amt = target.amount.toFixed(2);
+                  try {
+                    navigator.clipboard.writeText(`${target.phone} ${amt}`);
+                  } catch (e) {}
+                  alert(`Opening Paybox!\nRecipient: ${tx.toName} (${target.phone})\nAmount: ${formatCurrency(target.amount, group.currency || 'NIS')}\n(Copied to clipboard 📋)`);
+                  const isMobile = typeof window !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+                  if (isMobile) {
+                    window.location.href = `paybox://pay?phone=${target.phone}&amount=${amt}`;
+                    setTimeout(() => {
+                      window.open(`https://payboxapp.page.link/pay?phone=${target.phone}&amount=${amt}`, '_blank');
+                    }, 800);
+                  } else {
+                    window.open(`https://payboxapp.page.link/pay?phone=${target.phone}&amount=${amt}`, '_blank');
+                  }
+                } finally {
+                  paymentLookupRef.current = false;
+                  setPaymentLookupKey('');
                 }
               };
 
@@ -847,17 +885,19 @@ export default function GroupWorkspacePage() {
                   </div>
 
                   {/* Payment settlement quick actions */}
-                  {hasPaymentPhone && (
+                  {canPayTransaction && (
                     <div className="flex items-center gap-1.5">
                       <button
                         onClick={handleOpenBit}
-                        className="py-1 px-2.5 rounded-lg bg-[#7026FF] hover:bg-[#5C1FD4] text-white font-extrabold text-[10px] shadow-xs active:scale-95 transition-transform"
+                        disabled={Boolean(paymentLookupKey)}
+                        className="py-1 px-2.5 rounded-lg bg-[#7026FF] hover:bg-[#5C1FD4] text-white font-extrabold text-[10px] shadow-xs active:scale-95 transition-transform disabled:cursor-wait disabled:opacity-50"
                       >
                         Bit
                       </button>
                       <button
                         onClick={handleOpenPaybox}
-                        className="py-1 px-2.5 rounded-lg bg-[#005082] hover:bg-[#003E66] text-white font-extrabold text-[10px] shadow-xs active:scale-95 transition-transform"
+                        disabled={Boolean(paymentLookupKey)}
+                        className="py-1 px-2.5 rounded-lg bg-[#005082] hover:bg-[#003E66] text-white font-extrabold text-[10px] shadow-xs active:scale-95 transition-transform disabled:cursor-wait disabled:opacity-50"
                       >
                         Paybox
                       </button>

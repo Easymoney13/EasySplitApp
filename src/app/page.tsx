@@ -453,7 +453,6 @@ export default function HomePage() {
 
   const handleLaunchManualSession = async (billData: { storeName: string; date?: string; currency: string; items: any[] }) => {
     try {
-      setIsUploading(true);
       const res = await fetch('/api/receipt/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -463,6 +462,7 @@ export default function HomePage() {
             ...receiptConfirmationPayload(pendingReceiptDraft),
           },
           hostName: profile.displayName || 'Host',
+          hostPhone: profile.phoneNumber || '',
           scanId: pendingScanId || undefined,
           recoveryToken: pendingRecoveryToken || undefined,
           confirmedByUser: true,
@@ -494,8 +494,6 @@ export default function HomePage() {
     } catch (err) {
       console.error(err);
       alert('Error creating manual session.');
-    } finally {
-      setIsUploading(false);
     }
   };
 
@@ -528,7 +526,8 @@ export default function HomePage() {
         body: JSON.stringify({
           name: groupData.name,
           currency: groupData.currency,
-          hostName: profile.displayName || 'Host'
+          hostName: profile.displayName || 'Host',
+          hostPhone: profile.phoneNumber || '',
         })
       });
 
@@ -610,7 +609,7 @@ export default function HomePage() {
   const activeTabIndex = activeTab === 'history' ? 0 : activeTab === 'sessions' ? 1 : 2;
 
   return (
-    <div className="app-surface flex flex-col min-h-full flex-1 p-4 pb-2 transition-colors duration-300 dark:text-white">
+    <div className="app-surface flex flex-col h-full min-h-0 flex-1 p-4 pb-0 transition-colors duration-300 dark:text-white">
       {/* OCR Animated Progress Screen */}
       <OCRProgressOverlay isVisible={isUploading} />
 
@@ -643,7 +642,7 @@ export default function HomePage() {
       )}
 
       {/* Main Content Area */}
-      <div className="flex-1 space-y-6">
+      <div className="flex-1 min-h-0 overflow-y-auto space-y-6 pb-4">
         {/* TAB 2: SESSIONS (Middle tab) */}
         {activeTab === 'sessions' && (
           <div className="space-y-6 animate-fadeIn">
@@ -759,7 +758,7 @@ export default function HomePage() {
                 className="brand-tap relative rounded-[28px] bg-brand-600 hover:bg-brand-700 active:bg-brand-800 p-5 flex flex-col justify-between overflow-hidden shadow-brand hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer group min-h-[256px] select-none text-left rtl:text-right"
               >
                 {/* Decorative Subtle Receipt Bill Outline Pattern */}
-                <div className="brand-peach-glow absolute -top-14 -right-12 w-52 h-52 rounded-full pointer-events-none group-hover:scale-110 transition-transform duration-700" />
+                <div className="brand-start-glow absolute -top-14 -right-12 w-52 h-52 rounded-full pointer-events-none group-hover:scale-110 transition-transform duration-700" />
                 <div className="absolute top-1/3 right-3 -translate-y-1/2 w-24 h-32 opacity-10 pointer-events-none group-hover:rotate-6 group-hover:scale-105 transition-transform duration-700 ease-out">
                   <svg viewBox="0 0 100 120" fill="none" stroke="currentColor" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" className="w-full h-full text-white">
                     <rect x="10" y="10" width="80" height="100" rx="8" />
@@ -771,7 +770,7 @@ export default function HomePage() {
                 </div>
 
                 {/* Interactive Top-Left Bill Icon Badge */}
-                <div className="relative z-10 w-12 h-12 rounded-2xl bg-peach-300 text-brand-950 border border-white/30 flex items-center justify-center shadow-peach group-hover:scale-110 group-hover:rotate-3 transition-all duration-300">
+                <div className="relative z-10 w-12 h-12 rounded-2xl bg-mint-300 text-brand-950 border border-white/30 flex items-center justify-center shadow-[0_14px_32px_-18px_rgba(77,225,161,0.85)] group-hover:scale-110 group-hover:rotate-3 transition-all duration-300">
                   <Receipt className="w-6 h-6 text-brand-950" />
                 </div>
 
@@ -1426,7 +1425,7 @@ export default function HomePage() {
       </div>
 
       {/* Ultra-Smooth LTR & RTL Animated Sliding Modern Navbar */}
-      <nav className="sticky bottom-0 left-0 right-0 w-full z-40 p-2.5 bg-white/90 dark:bg-brand-950/92 border-t border-brand-100 dark:border-brand-800 backdrop-blur-xl shadow-[0_-8px_28px_rgba(37,33,111,0.08)] mt-auto">
+      <nav className="safe-bottom-nav shrink-0 w-full z-40 p-2.5 bg-white/90 dark:bg-brand-950/92 border-t border-brand-100 dark:border-brand-800 backdrop-blur-xl shadow-[0_-8px_28px_rgba(37,33,111,0.08)] mt-auto">
         <div className="relative grid grid-cols-3 gap-2 p-1 bg-brand-50/90 dark:bg-brand-900/90 rounded-full border border-brand-100 dark:border-brand-800">
           
           {/* Animated Sliding Pill Indicator */}
