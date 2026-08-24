@@ -39,6 +39,7 @@ import { formatCurrency } from '../../../../lib/i18n';
 import { cleanIsraeliPhone, isValidIsraeliPhone, triggerBitPayment } from '../../../../lib/bitDeepLink';
 import { triggerHaptic } from '../../../../lib/haptics';
 import { clearRoomCredentials, getRoomMemberId, getRoomToken, roomHeaders, saveRoomCredentials } from '../../../../lib/roomTokens';
+import { apiUrl, realtimeUrl } from '../../../../lib/platformTransport';
 
 function createClientActionId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -128,7 +129,7 @@ export default function GroupWorkspacePage() {
 
     const initializeGroup = async () => {
       try {
-        const initialRes = await fetch(`/api/groups/${groupId}`, { headers: roomHeaders('group', groupId, false) });
+        const initialRes = await fetch(apiUrl(`/api/groups/${groupId}`), { headers: roomHeaders('group', groupId, false) });
         const initialData = await initialRes.json();
         if (!initialRes.ok || !initialData.group) throw new Error(initialData.error || 'Group not found');
         const resolvedId = initialData.group.id;
@@ -149,7 +150,7 @@ export default function GroupWorkspacePage() {
           return;
         }
 
-        const joinRes = await fetch('/api/groups/join', {
+        const joinRes = await fetch(apiUrl('/api/groups/join'), {
           method: 'POST',
           headers: roomHeaders('group', resolvedId),
           body: JSON.stringify({
@@ -197,7 +198,7 @@ export default function GroupWorkspacePage() {
 
   const fetchGroupData = async (id: string) => {
     try {
-      const res = await fetch(`/api/groups/${id}`, { headers: roomHeaders('group', id, false) });
+      const res = await fetch(apiUrl(`/api/groups/${id}`), { headers: roomHeaders('group', id, false) });
       if (res.ok) {
         const data = await res.json();
         if (data.group) {
@@ -219,9 +220,7 @@ export default function GroupWorkspacePage() {
 
   const connectWebSocket = (id: string, accessToken: string) => {
     try {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}`;
-      const ws = new WebSocket(wsUrl);
+      const ws = new WebSocket(realtimeUrl());
       socketRef.current = ws;
 
       ws.onopen = () => {
@@ -257,7 +256,7 @@ export default function GroupWorkspacePage() {
     if (!group) return;
 
     try {
-      const res = await fetch('/api/groups/bill', {
+      const res = await fetch(apiUrl('/api/groups/bill'), {
         method: 'POST',
         headers: roomHeaders('group', group.id),
         body: JSON.stringify({
@@ -310,7 +309,7 @@ export default function GroupWorkspacePage() {
     }
     const resolvedId = group.id || groupId;
     try {
-      const res = await fetch(`/api/groups/bill/${resolvedId}/${billId}`, {
+      const res = await fetch(apiUrl(`/api/groups/bill/${resolvedId}/${billId}`), {
         method: 'DELETE',
         headers: roomHeaders('group', resolvedId),
       });
@@ -329,7 +328,7 @@ export default function GroupWorkspacePage() {
   const sendGroupBillAction = async (type: string, payload: any) => {
     if (!group) return;
     try {
-      const res = await fetch('/api/groups/bill/action', {
+      const res = await fetch(apiUrl('/api/groups/bill/action'), {
         method: 'POST',
         headers: roomHeaders('group', group.id),
         body: JSON.stringify({
@@ -642,7 +641,7 @@ export default function GroupWorkspacePage() {
                 : t('confirmLeaveGroup', undefined, 'Are you sure you want to leave this group?');
               if (confirm(confirmation)) {
                 try {
-                  const res = await fetch(`/api/groups/${group.id}${isGroupHost ? '' : '/leave'}`, {
+                  const res = await fetch(apiUrl(`/api/groups/${group.id}${isGroupHost ? '' : '/leave'}`), {
                     method: isGroupHost ? 'DELETE' : 'POST',
                     headers: {
                       'Content-Type': 'application/json',

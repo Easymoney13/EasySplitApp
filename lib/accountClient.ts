@@ -1,3 +1,5 @@
+import { apiUrl } from './platformTransport';
+
 export async function fetchPaginatedAccountData(
   endpoint: string,
   baseQuery: string,
@@ -11,7 +13,7 @@ export async function fetchPaginatedAccountData(
   for (let page = 0; page < maxPages; page += 1) {
     const params = new URLSearchParams(baseQuery);
     if (cursor) params.set('cursor', cursor);
-    const response = await fetch(`${endpoint}?${params.toString()}`);
+    const response = await fetch(apiUrl(`${endpoint}?${params.toString()}`));
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Could not load account data');
     if (Array.isArray(data[responseKey])) collected.push(...data[responseKey]);

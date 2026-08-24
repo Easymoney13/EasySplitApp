@@ -40,6 +40,7 @@ import { getRoomMemberId, getRoomToken, roomHeaders, saveRoomCredentials } from 
 import { getReceiptPayableTotal } from '../../../../lib/receiptMath';
 import { allocateCentsProportionally, allocateTipAdjustedCents, splitCents, toCents } from '../../../../lib/debtMinimizer';
 import { fetchPaginatedAccountData } from '../../../../lib/accountClient';
+import { apiUrl, realtimeUrl } from '../../../../lib/platformTransport';
 
 function createClientActionId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -165,7 +166,7 @@ function SessionWorkspaceInner() {
 
     const initializeSession = async () => {
       try {
-        const initialRes = await fetch(`/api/session/${sessionId}`, { headers: roomHeaders('session', sessionId, false) });
+        const initialRes = await fetch(apiUrl(`/api/session/${sessionId}`), { headers: roomHeaders('session', sessionId, false) });
         if (initialRes.status === 404) {
           if (!disposed) setSessionNotFound(true);
           return;
@@ -187,7 +188,7 @@ function SessionWorkspaceInner() {
           return;
         }
 
-        const joinRes = await fetch(`/api/session/${resolvedId}/join`, {
+        const joinRes = await fetch(apiUrl(`/api/session/${resolvedId}/join`), {
           method: 'POST',
           headers: roomHeaders('session', resolvedId),
           body: JSON.stringify({
@@ -264,12 +265,12 @@ function SessionWorkspaceInner() {
   const handleAttachToGroup = async (targetGroupId: string) => {
     if (!session) return;
     try {
-      const groupRes = await fetch(`/api/groups/${targetGroupId}`, { headers: roomHeaders('group', targetGroupId, false) });
+      const groupRes = await fetch(apiUrl(`/api/groups/${targetGroupId}`), { headers: roomHeaders('group', targetGroupId, false) });
       const groupData = await groupRes.json();
       if (!groupRes.ok || !groupData.group) throw new Error(groupData.error || 'Group not found');
       const resolvedGroupId = groupData.group.id;
       if (!getRoomToken('group', resolvedGroupId)) {
-        const joinRes = await fetch('/api/groups/join', {
+        const joinRes = await fetch(apiUrl('/api/groups/join'), {
           method: 'POST',
           headers: roomHeaders('group', targetGroupId),
           body: JSON.stringify({
@@ -282,7 +283,7 @@ function SessionWorkspaceInner() {
         if (!joinRes.ok || !joined.accessToken) throw new Error(joined.error || 'Could not join group');
         saveRoomCredentials('group', resolvedGroupId, joined.memberId, joined.accessToken);
       }
-      const res = await fetch('/api/groups/bill', {
+      const res = await fetch(apiUrl('/api/groups/bill'), {
         method: 'POST',
         headers: roomHeaders('group', resolvedGroupId),
         body: JSON.stringify({
@@ -345,7 +346,7 @@ function SessionWorkspaceInner() {
       const deletedIds = localDeleted ? JSON.parse(localDeleted) : [];
       if (deletedIds.includes(targetGroupId)) return;
 
-      fetch(`/api/groups/${targetGroupId}`)
+      fetch(apiUrl(`/api/groups/${targetGroupId}`))
         .then((res) => res.json())
         .then((data) => {
           if (data.success && data.group) {
@@ -375,7 +376,7 @@ function SessionWorkspaceInner() {
 
   const fetchSessionData = async (id: string) => {
     try {
-      const res = await fetch(`/api/session/${id}`, { headers: roomHeaders('session', id, false) });
+      const res = await fetch(apiUrl(`/api/session/${id}`), { headers: roomHeaders('session', id, false) });
       if (res.ok) {
         const data = await res.json();
         if (data.session) {
@@ -396,9 +397,7 @@ function SessionWorkspaceInner() {
         try { socketRef.current.close(); } catch (_) {}
       }
 
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}`;
-      const ws = new WebSocket(wsUrl);
+      const ws = new WebSocket(realtimeUrl());
       socketRef.current = ws;
 
       ws.onopen = () => {
@@ -464,7 +463,7 @@ function SessionWorkspaceInner() {
     }
 
     try {
-      const res = await fetch('/api/session/action', {
+      const res = await fetch(apiUrl('/api/session/action'), {
         method: 'POST',
         headers: roomHeaders('session', session?.id || sessionId),
         body: JSON.stringify({

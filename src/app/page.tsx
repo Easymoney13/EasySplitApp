@@ -48,6 +48,7 @@ import { getCookie, setCookie } from '../../lib/cookies';
 import { triggerHaptic } from '../../lib/haptics';
 import { clearRoomCredentials, roomHeaders, saveRoomCredentials } from '../../lib/roomTokens';
 import { fetchPaginatedAccountData } from '../../lib/accountClient';
+import { apiUrl, publicWebUrl } from '../../lib/platformTransport';
 
 const PASTEL_COLORS = [
   { bg: 'bg-slate-100 dark:bg-slate-800', text: 'text-slate-800 dark:text-slate-200' },
@@ -170,7 +171,7 @@ export default function HomePage() {
     if (lastSession) {
       try {
         const parsed = JSON.parse(lastSession);
-        fetch(`/api/session/${parsed.id}`, { headers: roomHeaders('session', parsed.id, false) })
+        fetch(apiUrl(`/api/session/${parsed.id}`), { headers: roomHeaders('session', parsed.id, false) })
           .then((res) => res.json())
           .then((data) => {
             if (data && data.session && data.session.status !== 'settled' && !data.session.groupId) {
@@ -378,7 +379,7 @@ export default function HomePage() {
     setIsUploading(true);
     try {
       // Prefer groups for legacy codes that were previously reused by group bills.
-      const grpRes = await fetch(`/api/groups/${code}`);
+      const grpRes = await fetch(apiUrl(`/api/groups/${code}`));
       const grpData = await grpRes.json();
       if (grpData.group) {
         saveGroupToLocalList({
@@ -395,7 +396,7 @@ export default function HomePage() {
     }
 
     try {
-      const sessRes = await fetch(`/api/session/${code}`);
+      const sessRes = await fetch(apiUrl(`/api/session/${code}`));
       const sessData = await sessRes.json();
       if (sessData.session) {
         localStorage.setItem(
@@ -453,7 +454,7 @@ export default function HomePage() {
 
   const handleLaunchManualSession = async (billData: { storeName: string; date?: string; currency: string; items: any[] }) => {
     try {
-      const res = await fetch('/api/receipt/scan', {
+      const res = await fetch(apiUrl('/api/receipt/scan'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -520,7 +521,7 @@ export default function HomePage() {
   const handleCreateGroup = async (groupData: { name: string; currency: string }) => {
     try {
       setIsUploading(true);
-      const res = await fetch('/api/groups', {
+      const res = await fetch(apiUrl('/api/groups'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -565,7 +566,7 @@ export default function HomePage() {
       setHistoryList((prev) => prev.filter((item) => item.id !== id));
 
       // Attempt backend deletion
-      await fetch(`/api/history/${id}`, { method: 'DELETE' });
+      await fetch(apiUrl(`/api/history/${id}`), { method: 'DELETE' });
       return true;
     } catch (err) {
       console.error(err);
@@ -1676,7 +1677,7 @@ export default function HomePage() {
                     if (confirm(`Are you sure you want to leave group "${selectedGroupForModal.name}"?`)) {
                       try {
                         const groupId = selectedGroupForModal.id;
-                        const res = await fetch(`/api/groups/${groupId}/leave`, {
+                        const res = await fetch(apiUrl(`/api/groups/${groupId}/leave`), {
                           method: 'POST',
                           headers: {
                             'Content-Type': 'application/json',
@@ -1726,7 +1727,7 @@ export default function HomePage() {
                     if (confirm(`Are you sure you want to delete group "${selectedGroupForModal.name}"?`)) {
                       try {
                         const groupId = selectedGroupForModal.id;
-                        const res = await fetch(`/api/groups/${groupId}`, {
+                        const res = await fetch(apiUrl(`/api/groups/${groupId}`), {
                           method: 'DELETE',
                           headers: roomHeaders('group', groupId, false),
                         });
@@ -1767,7 +1768,7 @@ export default function HomePage() {
 
                 <button
                   onClick={async () => {
-                    const groupUrl = `${window.location.origin}/group/${selectedGroupForModal.id}`;
+                    const groupUrl = publicWebUrl(`/group/${selectedGroupForModal.id}`);
                     if (navigator.share) {
                       try {
                         await navigator.share({
