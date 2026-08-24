@@ -1,9 +1,9 @@
 name: Stage 1 Platform Foundation Verify
 
 on:
-  push:
+  pull_request:
     branches:
-      - stage1-platform-foundation
+      - main
 
 permissions:
   contents: write
@@ -13,9 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Checkout
+      - name: Checkout Stage 1 branch
         uses: actions/checkout@v4
         with:
+          ref: stage1-platform-foundation
           fetch-depth: 0
 
       - name: Setup Node
