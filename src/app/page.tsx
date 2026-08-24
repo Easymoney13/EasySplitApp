@@ -104,6 +104,7 @@ export default function HomePage() {
   const [selectedGroupForModal, setSelectedGroupForModal] = useState<any | null>(null);
   const [groupModalTab, setGroupModalTab] = useState<'options' | 'details'>('options');
   const [userGroups, setUserGroups] = useState<any[]>([]);
+  const [closedGroups, setClosedGroups] = useState<any[]>([]);
   const [activeSession, setActiveSession] = useState<any>(null);
   const [historyList, setHistoryList] = useState<any[]>([]);
   const [showQrModal, setShowQrModal] = useState(false);
@@ -246,7 +247,11 @@ export default function HomePage() {
           const filtered = groups.filter((g: any) => !deletedIds.includes(g.id));
           setUserGroups((prev) => {
             const serverIds = new Set(filtered.map((g) => g.id));
-            const localOnly = prev.filter((g) => !serverIds.has(g.id) && !deletedIds.includes(g.id));
+            const localOnly = prev.filter((g) => (
+              !serverIds.has(g.id)
+              && !deletedIds.includes(g.id)
+              && String(g.status || 'active').toLowerCase() !== 'closed'
+            ));
             const merged = [...filtered, ...localOnly];
             localStorage.setItem(userGroupsKey, JSON.stringify(merged));
             localStorage.setItem(`billsplit_user_groups_${rawName}`, JSON.stringify(merged));
@@ -309,6 +314,25 @@ export default function HomePage() {
         }
       });
   }, [profile.displayName]);
+
+
+  useEffect(() => {
+    if (activeTab !== 'history') return;
+    if (!profile.displayName) {
+      setClosedGroups([]);
+      return;
+    }
+
+    const queryParams = new URLSearchParams({
+      userName: profile.displayName.trim(),
+      phone: profile.phoneNumber || '',
+      scope: 'closed',
+    }).toString();
+
+    fetchPaginatedAccountData('/api/user/groups', queryParams, 'groups')
+      .then((groups) => setClosedGroups(Array.isArray(groups) ? groups : []))
+      .catch(() => setClosedGroups([]));
+  }, [activeTab, profile.displayName, profile.phoneNumber]);
 
   const currentMonthName = useMemo(() => {
     return new Date().toLocaleString(language === 'he' ? 'he-IL' : 'en-US', { month: 'long' });
@@ -892,17 +916,33 @@ export default function HomePage() {
                             <GroupIcon className={`w-5 h-5 ${colorPalette.text}`} />
                           </div>
 
-                          <div className="min-w-0">
-                            <h4 className="font-extrabold text-sm text-slate-900 dark:text-white leading-tight truncate">
-                              {g.name}{' '}
-                              <span className="font-semibold text-slate-400 text-xs">
-                                ({g.membersCount || 1} members)
-                              </span>
-                            </h4>
-                            {g.code && (
-                              <span className="text-[10px] font-mono text-slate-400 block mt-0.5">
-                                #{g.code}
-                              </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <h4 className="font-extrabold text-sm text-slate-900 dark:text-white leading-tight truncate">
+                                {g.name}
+                              </h4>
+                              {g.status === 'settling' && (
+                                <span className="shrink-0 px-2 py-0.5 rounded-full bg-brand-50 dark:bg-brand-900 text-brand-700 dark:text-brand-200 border border-brand-100 dark:border-brand-800 text-[9px] font-black">
+                                  {isRtl ? 'בסגירה' : 'Settling'}
+                                </span>
+                              )}
+                            </div>
+                            {g.billsCount !== undefined ? (() => {
+                              const total = formatDual ? formatDual(Number(g.totalSpent || 0), g.currency || currency) : { primary: `${Number(g.totalSpent || 0).toFixed(2)} ${g.currency || currency}` };
+                              return (
+                                <p className="text-[10px] text-slate-500 dark:text-slate-400 font-semibold mt-1 truncate">
+                                  {g.membersCount || 1} {isRtl ? 'משתתפים' : 'members'} · {g.billsCount || 0} {isRtl ? 'חלוקות' : 'splits'} · {total.primary}
+                                </p>
+                              );
+                            })() : (
+                              <p className="text-[10px] text-slate-500 dark:text-slate-400 font-semibold mt-1">
+                                {g.membersCount || 1} {isRtl ? 'משתתפים' : 'members'}
+                              </p>
+                            )}
+                            {g.status === 'settling' && Number(g.paymentsRemaining || 0) > 0 && (
+                              <p className="text-[9px] text-brand-600 dark:text-brand-300 font-bold mt-0.5">
+                                {Number(g.paymentsRemaining || 0)} {isRtl ? 'תשלומים נותרו' : 'payments left'}
+                              </p>
                             )}
                           </div>
                         </div>
@@ -1066,6 +1106,44 @@ export default function HomePage() {
                   })}
                 </div>
               </div>
+
+
+              {closedGroups.length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between px-1">
+                    <h3 className="font-extrabold text-base text-slate-900 dark:text-white">
+                      {isRtl ? 'קבוצות שהסתיימו' : 'Closed groups'}
+                    </h3>
+                    <span className="text-[11px] font-extrabold text-slate-400">{closedGroups.length}</span>
+                  </div>
+                  <div className="space-y-2.5">
+                    {closedGroups.map((closedGroup: any) => {
+                      const total = formatDual ? formatDual(Number(closedGroup.totalSpent || 0), closedGroup.currency || currency) : { primary: `${Number(closedGroup.totalSpent || 0).toFixed(2)} ${closedGroup.currency || currency}` };
+                      return (
+                        <button
+                          key={closedGroup.id}
+                          type="button"
+                          onClick={() => router.push(`/group/${closedGroup.id}`)}
+                          className="brand-tap w-full p-3.5 rounded-2xl brand-card flex items-center justify-between text-left rtl:text-right hover:bg-brand-50 dark:hover:bg-brand-900 transition-all shadow-xs"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-10 h-10 rounded-full bg-mint-500/10 text-mint-600 dark:text-mint-400 border border-mint-500/20 flex items-center justify-center shrink-0">
+                              <Check className="w-4 h-4" />
+                            </div>
+                            <div className="min-w-0">
+                              <h4 className="font-extrabold text-sm text-slate-900 dark:text-white truncate">{closedGroup.name}</h4>
+                              <p className="text-[10px] text-slate-500 dark:text-slate-400 font-semibold mt-0.5">
+                                {closedGroup.billsCount || 0} {isRtl ? 'חלוקות' : 'splits'} · {total.primary}
+                              </p>
+                            </div>
+                          </div>
+                          <span className="text-[9px] font-black text-mint-600 dark:text-mint-400">{isRtl ? 'נסגרה' : 'Closed'}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Recent Bills Section */}
               <div className="space-y-3">

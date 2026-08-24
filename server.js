@@ -81,6 +81,8 @@ const {
   assertGroupActive,
   normalizeGroupPayerId,
   isValidPayerId,
+  assertGroupSettlementPaymentPhase,
+  assertSessionSettlementNotDeferredToGroup,
   summarizeGroup,
   groupMatchesScope,
 } = require('./lib/groupLifecycle');
@@ -1143,6 +1145,11 @@ app.prepare().then(() => {
 
     const actor = authorizedRoomMember(req, session);
     if (!actor) return res.status(401).json({ error: 'A valid room membership is required' });
+    try {
+      assertSessionSettlementNotDeferredToGroup(session);
+    } catch (error) {
+      return res.status(error.statusCode || 409).json({ error: error.message });
+    }
     if (session.status === 'settled') return res.status(409).json({ error: 'This session is already closed' });
     if (actor.settled === true || !session.payerId || session.payerId === 'each' || session.payerId !== memberId || actor.id === memberId) {
       return res.status(403).json({ error: 'No payment is due from this member to that recipient' });
@@ -1251,6 +1258,9 @@ app.prepare().then(() => {
             const error = new Error('A valid linked-group membership is required');
             error.statusCode = 403;
             throw error;
+          }
+          if (action === 'SETTLE_ALL' || (action === 'TOGGLE_SETTLED' && payload?.settled !== false)) {
+            assertSessionSettlementNotDeferredToGroup(session);
           }
         }
         const actionId = security.sanitizeString(req.body?.actionId || '', 100);
@@ -1425,22 +1435,17 @@ app.prepare().then(() => {
     const actor = authorizedRoomMember(req, group);
     if (!actor) return res.status(401).json({ error: 'A valid room membership is required' });
 
-    const status = getGroupStatus(group);
-    if (status === GROUP_STATUS.CLOSED) {
-      return res.status(409).json({ error: 'This group is already closed' });
+    try {
+      assertGroupSettlementPaymentPhase(group);
+    } catch (error) {
+      return res.status(error.statusCode || 409).json({ error: error.message });
     }
-    const authorizedTransfer = status === GROUP_STATUS.SETTLING
-      ? group.settlement?.transfers?.find((transaction) => (
-          transaction.fromId === actor.id
-          && transaction.toId === memberId
-          && transaction.paid !== true
-          && Number(transaction.amount) > 0
-        ))
-      : calculateDebtMinimization(group).transactions.find((transaction) => (
-          transaction.fromId === actor.id
-          && transaction.toId === memberId
-          && Number(transaction.amount) > 0
-        ));
+    const authorizedTransfer = group.settlement?.transfers?.find((transaction) => (
+      transaction.fromId === actor.id
+      && transaction.toId === memberId
+      && transaction.paid !== true
+      && Number(transaction.amount) > 0
+    ));
     if (!authorizedTransfer) {
       return res.status(403).json({ error: 'No payment is due from this member to that recipient' });
     }
@@ -1819,6 +1824,11 @@ app.prepare().then(() => {
             throw error;
           }
           const previousBill = group.bills?.find((candidate) => candidate.id === billId);
+          if (requestedAction === 'FINALIZE_BILL' && Array.isArray(previousBill?.settledMemberIds) && previousBill.settledMemberIds.length > 0) {
+            const error = new Error('Reopen legacy paid shares before finishing this split');
+            error.statusCode = 409;
+            throw error;
+          }
           const previousRevision = Number(previousBill?.revision || 0);
           const previousStatus = previousBill ? getBillStatus(previousBill) : null;
           const updatedGroup = processGroupBillAction(group, requestedAction, req.body?.payload, actor);

@@ -85,6 +85,17 @@ export default function GroupWorkspacePage() {
       const localGroups = localStorage.getItem('billsplit_user_groups');
       const rawGroups = cookieGroups || (localGroups ? JSON.parse(localGroups) : []);
       const list = Array.isArray(rawGroups) ? rawGroups : [];
+      if (String(grp.status || '').toLowerCase() === 'closed') {
+        const updated = list.filter((g: any) => g.id !== grp.id);
+        setCookie('billsplit_user_groups', updated);
+        localStorage.setItem('billsplit_user_groups', JSON.stringify(updated));
+        const rawName = (profile?.displayName || '').trim();
+        const userKey = rawName.toLowerCase();
+        if (rawName) localStorage.setItem(`billsplit_user_groups_${rawName}`, JSON.stringify(updated));
+        if (userKey) localStorage.setItem(`billsplit_user_groups_${userKey}`, JSON.stringify(updated));
+        return;
+      }
+
       const exists = list.some((g: any) => g.id === grp.id);
       const item = {
         id: grp.id,
@@ -345,8 +356,10 @@ export default function GroupWorkspacePage() {
         setGroup(data.group);
         persistGroupToLocal(data.group);
       }
+      return true;
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Could not update bill');
+      return false;
     }
   };
 
@@ -414,6 +427,58 @@ export default function GroupWorkspacePage() {
 
   const unassignedAmount = Number(group?.unassignedAmount || 0);
   const isGroupHost = Boolean(validMembers.find((member: any) => member.id === currentMemberId)?.isHost);
+  const groupStatus = String(group?.status || 'active').toLowerCase();
+  const isGroupActive = groupStatus === 'active';
+  const isGroupSettling = groupStatus === 'settling';
+  const isGroupClosed = groupStatus === 'closed';
+  const settlement = group?.settlement && typeof group.settlement === 'object' ? group.settlement : null;
+  const settlementTransfers = Array.isArray(settlement?.transfers) ? settlement.transfers : [];
+  const displayBalances = (isGroupSettling || isGroupClosed) && Array.isArray(settlement?.balances)
+    ? settlement.balances
+    : balances;
+  const liveTransactions = minimizedTransactions;
+  const financiallyOpenBills = validBills.filter((bill: any) => !['settled', 'closed', 'complete', 'completed'].includes(String(bill?.status || '').toLowerCase()));
+  const allOpenSplitsFinalized = financiallyOpenBills.length > 0
+    && financiallyOpenBills.every((bill: any) => String(bill?.status || '').toLowerCase() === 'finalized');
+  const totalGroupSpent = validBills.reduce((sum: number, bill: any) => sum + (Number(bill?.amount) || 0), 0);
+
+  const openGroupTransferPayment = async (tx: any, method: 'bit' | 'paybox') => {
+    if (!group?.id || tx?.paid || paymentLookupRef.current) return;
+    paymentLookupRef.current = true;
+    const paymentKey = `${tx.fromId}:${tx.toId}`;
+    setPaymentLookupKey(paymentKey);
+    try {
+      const response = await fetch(
+        apiUrl(`/api/groups/${encodeURIComponent(group.id)}/payment-target/${encodeURIComponent(tx.toId)}`),
+        { headers: roomHeaders('group', group.id, false) },
+      );
+      const data = await response.json().catch(() => ({}));
+      const phone = cleanIsraeliPhone(data.phone || '');
+      const amount = Number(data.amount);
+      if (!response.ok || !isValidIsraeliPhone(phone) || !Number.isFinite(amount) || amount <= 0) {
+        alert(isRtl ? 'למקבל עדיין אין מספר טלפון תקין לתשלום.' : 'The recipient does not have a valid payment phone number yet.');
+        return;
+      }
+      if (method === 'bit') {
+        triggerBitPayment({ phone, amount, title: `${group.name} settlement` });
+        return;
+      }
+      const formattedAmount = amount.toFixed(2);
+      try { await navigator.clipboard.writeText(`${phone} ${formattedAmount}`); } catch (_) {}
+      const isMobile = typeof window !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      if (isMobile) {
+        window.location.href = `paybox://pay?phone=${phone}&amount=${formattedAmount}`;
+        setTimeout(() => {
+          window.open(`https://payboxapp.page.link/pay?phone=${phone}&amount=${formattedAmount}`, '_blank');
+        }, 800);
+      } else {
+        window.open(`https://payboxapp.page.link/pay?phone=${phone}&amount=${formattedAmount}`, '_blank');
+      }
+    } finally {
+      paymentLookupRef.current = false;
+      setPaymentLookupKey('');
+    }
+  };
 
   // Stable memoized modal data
   const initialModalData = useMemo(() => {
@@ -604,16 +669,8 @@ export default function GroupWorkspacePage() {
           <ChevronLeft className={`w-5 h-5 ${isRtl ? 'rotate-180' : ''}`} />
         </button>
 
-        <div className="text-center">
-          <h1 className="font-extrabold text-base text-slate-900 dark:text-white tracking-tight">{group.name}</h1>
-          <button
-            onClick={() => setShowQrModal(true)}
-            className="inline-flex items-center gap-1 text-xs font-mono text-brand-600 dark:text-brand-400 font-bold hover:underline"
-            title="Tap to Share Group"
-          >
-            <QrCode className="w-3 h-3" />
-            <span>#{group.code}</span>
-          </button>
+        <div className="text-center min-w-0 px-2">
+          <h1 className="font-extrabold text-base text-slate-900 dark:text-white tracking-tight truncate">{group.name}</h1>
         </div>
 
         <div className="flex items-center gap-2">
@@ -692,438 +749,325 @@ export default function GroupWorkspacePage() {
         </div>
       </header>
 
-      {/* Action Header Card — Add Bill to Group */}
+      {/* Group Overview — keep the same visual language, but lead with the event instead of debt math. */}
       <div className="relative overflow-hidden rounded-[24px] p-5 bg-gradient-to-br from-brand-500 via-brand-700 to-brand-950 text-white border border-brand-700 shadow-brand space-y-4">
         <div className="brand-peach-glow absolute -top-16 -right-10 h-52 w-52 rounded-full opacity-70" aria-hidden="true" />
-        <div className="flex items-center justify-between">
-          <span className="px-2.5 py-0.5 rounded-full bg-brand-500/20 text-brand-300 border border-brand-500/30 text-[10px] font-extrabold uppercase tracking-wider">
-            {t('tripExpenseTracker', undefined, 'Group Expense Tracker')}
-          </span>
-          <Sparkles className="w-4 h-4 text-brand-400" />
+        <div className="relative z-10 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[10px] font-extrabold uppercase tracking-wider text-white/65">
+              {isGroupClosed ? (isRtl ? 'קבוצה שהסתיימה' : 'Closed group') : isGroupSettling ? (isRtl ? 'התחשבנות סופית' : 'Final settlement') : (isRtl ? 'קבוצה פעילה' : 'Active group')}
+            </p>
+            <h2 className="text-2xl font-black text-white tracking-tight leading-tight mt-1">{formatCurrency(totalGroupSpent, group.currency || 'NIS')}</h2>
+          </div>
+          <div className="shrink-0 rounded-2xl bg-white/10 border border-white/15 px-3 py-2 text-center">
+            <span className="block text-base font-black">{validBills.length}</span>
+            <span className="block text-[9px] font-bold text-white/60">{isRtl ? 'חלוקות' : 'splits'}</span>
+          </div>
         </div>
 
-        <div>
-          <h2 className="text-lg font-black text-white tracking-tight leading-snug">
-            {t('addBillsToGroup', { groupName: group.name }, `Add Bills to ${group.name}`)}
-          </h2>
+        <div className="relative z-10 flex items-center gap-2 text-[10px] font-bold text-white/75">
+          <span>{validMembers.length} {isRtl ? 'משתתפים' : 'members'}</span>
+          {isGroupSettling && Number(settlement?.paymentsRemaining || 0) > 0 && <><span>•</span><span>{settlement.paymentsRemaining} {isRtl ? 'תשלומים נותרו' : 'payments left'}</span></>}
         </div>
 
-        <div className="pt-1">
-          <input
-            type="file"
-            ref={cameraInputRef}
-            accept="image/*"
-            capture="environment"
-            onChange={handlePhotoUpload}
-            className="hidden"
-          />
-
+        {isGroupActive && (
           <button
+            type="button"
             onClick={() => {
               setShowStartSplitModal(true);
               triggerHaptic('medium');
             }}
-            className="w-full py-3.5 px-6 rounded-full bg-white hover:bg-slate-100 text-slate-950 font-black text-xs shadow-md active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+            className="relative z-10 w-full py-3.5 px-6 rounded-full bg-white hover:bg-slate-100 text-slate-950 font-black text-xs shadow-md active:scale-[0.98] transition-all flex items-center justify-center gap-2"
           >
-            <Sparkles className="w-4 h-4 text-brand-600" />
-            <span>{t('startSplitBtn', undefined, 'Start Split')}</span>
+            <Plus className="w-4 h-4 text-brand-600" />
+            <span>{isRtl ? 'חלוקה חדשה' : 'New Split'}</span>
           </button>
-        </div>
-      </div>
+        )}
 
-      {/* SECTION 1: DEBT MINIMIZATION SUMMARY */}
-      <div className="rounded-[24px] p-4 bg-white dark:bg-brand-950 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-3">
-        <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800/80 pb-2">
-          <div className="flex items-center gap-2">
-            <div className="p-1.5 rounded-lg bg-brand-50 dark:bg-brand-950/50 text-brand-600 dark:text-brand-400">
-              <Users className="w-4 h-4" />
-            </div>
-            <h3 className="font-extrabold text-xs text-slate-900 dark:text-white">
-              {t('debtMinimizationTitle', undefined, 'Debt Minimization Settlement')}
-            </h3>
-          </div>
-        </div>
-
-        {/* Member Avatars Live Net Balance Badges */}
-        <div className="space-y-1.5">
-          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block">
-            {t('memberNetBalances', undefined, 'MEMBER NET BALANCES')}
-          </span>
-          <div className="grid grid-cols-2 gap-2.5 pt-0.5">
-            {balances.map((b: any) => {
-              const isCreditor = b.netBalance > 0.01;
-              const isDebtor = b.netBalance < -0.01;
-
-              return (
-                <div
-                  key={b.memberId}
-                  className="flex items-center gap-2.5 p-3 rounded-2xl bg-slate-50 dark:bg-[#131B2A] border border-slate-200/80 dark:border-slate-800/80 shadow-xs transition-all duration-200"
-                >
-                  <div className="w-9 h-9 rounded-full flex items-center justify-center bg-white dark:bg-[#1B263B] text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 shrink-0 font-bold text-xs shadow-xs">
-                    {(b.name || 'M').substring(0, 2).toUpperCase()}
-                  </div>
-                  <div className="flex flex-col min-w-0">
-                    <span className="text-xs font-black text-slate-900 dark:text-white leading-tight truncate">
-                      {b.name}
-                    </span>
-                    <span
-                      className={`text-[10px] font-extrabold font-mono mt-1 px-1.5 py-0.5 rounded-md leading-none border w-max ${
-                        isCreditor
-                          ? 'bg-mint-500/10 text-mint-600 dark:text-mint-400 border-mint-500/20'
-                          : isDebtor
-                          ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20'
-                          : 'bg-slate-200/60 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-transparent'
-                      }`}
-                    >
-                      {isCreditor ? `+${formatCurrency(b.netBalance, group.currency || 'NIS')}` : isDebtor ? `-${formatCurrency(Math.abs(b.netBalance), group.currency || 'NIS')}` : formatCurrency(0, group.currency || 'NIS')}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Minimized Transactions List */}
-        {minimizedTransactions.length === 0 ? (
-          <div className="flex items-center justify-center gap-1.5 text-xs text-slate-400 font-medium text-center py-2">
-            {unassignedAmount > 0 ? (
-              <span>{t('assignItemsToCalculate', undefined, 'Claim the remaining items to complete the settlement calculation.')}</span>
-            ) : (
-              <>
-                <CheckCircle2 className="w-4 h-4 text-mint-500" />
-                <span>{t('allExpensesSettled', undefined, 'All group expenses are settled! No debts owed.')}</span>
-              </>
-            )}
-          </div>
-        ) : (
-          <div className="space-y-1.5 pt-0.5">
-            {minimizedTransactions.map((tx: any, idx: number) => {
-              const canPayTransaction = tx.fromId === currentMemberId && Number(tx.amount) > 0;
-              const paymentKey = `${tx.fromId}:${tx.toId}`;
-              const fetchPaymentTarget = async () => {
-                try {
-                  const response = await fetch(
-                    `/api/groups/${encodeURIComponent(group.id)}/payment-target/${encodeURIComponent(tx.toId)}`,
-                    { headers: roomHeaders('group', group.id, false) },
-                  );
-                  const data = await response.json().catch(() => ({}));
-                  const phone = cleanIsraeliPhone(data.phone || '');
-                  const amount = Number(data.amount);
-                  if (!response.ok || !isValidIsraeliPhone(phone) || !Number.isFinite(amount) || amount <= 0) {
-                    alert(t('payerPhoneNotSetNote', { name: tx.toName }, `${tx.toName} has not added a valid payment phone number yet.`));
-                    return null;
-                  }
-                  return { phone, amount };
-                } catch (error) {
-                  console.error('Payment target lookup failed:', error);
-                  alert(t('payerPhoneNotSetNote', { name: tx.toName }, `${tx.toName} has not added a valid payment phone number yet.`));
-                  return null;
-                }
-              };
-
-              const handleOpenBit = async () => {
-                if (paymentLookupRef.current) return;
-                paymentLookupRef.current = true;
-                setPaymentLookupKey(paymentKey);
-                try {
-                  const target = await fetchPaymentTarget();
-                  if (!target) return;
-                  triggerBitPayment({
-                    phone: target.phone,
-                    amount: target.amount,
-                    title: `Settlement to ${tx.toName} (${group.name})`
-                  });
-                } finally {
-                  paymentLookupRef.current = false;
-                  setPaymentLookupKey('');
-                }
-              };
-
-              const handleOpenPaybox = async () => {
-                if (paymentLookupRef.current) return;
-                paymentLookupRef.current = true;
-                setPaymentLookupKey(paymentKey);
-                try {
-                  const target = await fetchPaymentTarget();
-                  if (!target) return;
-                  const amt = target.amount.toFixed(2);
-                  try {
-                    navigator.clipboard.writeText(`${target.phone} ${amt}`);
-                  } catch (e) {}
-                  alert(`Opening Paybox!\nRecipient: ${tx.toName} (${target.phone})\nAmount: ${formatCurrency(target.amount, group.currency || 'NIS')}\n(Copied to clipboard 📋)`);
-                  const isMobile = typeof window !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-                  if (isMobile) {
-                    window.location.href = `paybox://pay?phone=${target.phone}&amount=${amt}`;
-                    setTimeout(() => {
-                      window.open(`https://payboxapp.page.link/pay?phone=${target.phone}&amount=${amt}`, '_blank');
-                    }, 800);
-                  } else {
-                    window.open(`https://payboxapp.page.link/pay?phone=${target.phone}&amount=${amt}`, '_blank');
-                  }
-                } finally {
-                  paymentLookupRef.current = false;
-                  setPaymentLookupKey('');
-                }
-              };
-
-              return (
-                <div
-                  key={idx}
-                  className="p-2.5 rounded-xl bg-slate-50 dark:bg-[#131B2A] border border-slate-200/80 dark:border-slate-800/80 flex items-center justify-between"
-                >
-                  <div className="space-y-0.5">
-                    <div className="flex items-center gap-1.5 text-xs font-bold">
-                      <span className="text-rose-500 font-extrabold">{tx.fromName}</span>
-                      <ArrowRight className="w-3 h-3 text-slate-400" />
-                      <span className="text-slate-900 dark:text-white font-extrabold">{tx.toName}</span>
-                    </div>
-                    <span className="text-xs font-mono font-black text-slate-900 dark:text-white block">
-                      {formatCurrency(tx.amount || 0, group.currency || 'NIS')}
-                    </span>
-                  </div>
-
-                  {/* Payment settlement quick actions */}
-                  {canPayTransaction && (
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={handleOpenBit}
-                        disabled={Boolean(paymentLookupKey)}
-                        className="py-1 px-2.5 rounded-lg bg-[#7026FF] hover:bg-[#5C1FD4] text-white font-extrabold text-[10px] shadow-xs active:scale-95 transition-transform disabled:cursor-wait disabled:opacity-50"
-                      >
-                        Bit
-                      </button>
-                      <button
-                        onClick={handleOpenPaybox}
-                        disabled={Boolean(paymentLookupKey)}
-                        className="py-1 px-2.5 rounded-lg bg-[#005082] hover:bg-[#003E66] text-white font-extrabold text-[10px] shadow-xs active:scale-95 transition-transform disabled:cursor-wait disabled:opacity-50"
-                      >
-                        Paybox
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+        {isGroupClosed && (
+          <div className="relative z-10 flex items-center justify-center gap-2 rounded-xl bg-mint-400/15 border border-mint-300/20 py-2.5 text-xs font-black text-mint-100">
+            <CheckCircle2 className="w-4 h-4" />
+            <span>{isRtl ? 'הקבוצה נסגרה והתשלומים הושלמו' : 'Group closed and payments completed'}</span>
           </div>
         )}
       </div>
 
-      {/* SECTION 2: PAST BILLS TIMELINE & INTERACTIVE CLAIMING */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
+      {/* Splits — the group is an overview; item claiming stays in the live Split screen. */}
+      <section className="space-y-3">
+        <div className="flex items-center justify-between px-1">
           <h2 className="font-extrabold text-sm text-slate-900 dark:text-white flex items-center gap-2">
             <FileText className="w-4 h-4 text-brand-500" />
-            <span>{t('groupPastBills', { n: validBills.length }, `Group Past Bills (${validBills.length})`)}</span>
+            <span>{isRtl ? `חלוקות (${validBills.length})` : `Splits (${validBills.length})`}</span>
           </h2>
-          <span className="text-[11px] text-slate-400 font-medium">{t('tapPastBillNotice', undefined, 'Tap past bill to claim items')}</span>
+          {isGroupActive && <span className="text-[10px] text-slate-400 font-semibold">{isRtl ? 'פתחו חלוקה כדי לבחור פריטים' : 'Open a split to claim items'}</span>}
         </div>
 
         {validBills.length === 0 ? (
-          <div className="rounded-[24px] p-6 bg-white dark:bg-brand-950 border border-slate-200/80 dark:border-slate-800 text-center text-slate-400 space-y-2 shadow-xs">
-            <FileText className="w-8 h-8 mx-auto text-slate-300 dark:text-slate-600 mb-1" />
+          <div className="rounded-[24px] p-6 bg-white dark:bg-brand-950 border border-slate-200/80 dark:border-slate-800 text-center space-y-2 shadow-xs">
+            <FileText className="w-8 h-8 mx-auto text-slate-300 dark:text-slate-600" />
             <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
-              {t('noBillsYetGroup', undefined, 'No bills added to this group yet. Use the buttons above to scan or create a bill!')}
+              {isRtl ? 'עוד אין חלוקות בקבוצה. התחילו מהכפתור למעלה.' : 'No splits yet. Start the first one from the button above.'}
             </p>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-2.5">
             {validBills.map((bill: any) => {
-              const isExpanded = expandedBillId === bill.id;
-              const activePayerMember = validMembers.find((m: any) => 
-                m.id === bill.payerId || 
-                (m.name && bill.payerId && m.name.trim().toLowerCase() === String(bill.payerId).trim().toLowerCase())
-              ) || validMembers[0];
-              const payerName = activePayerMember?.name || 'Group Member';
-              const itemsList = Array.isArray(bill.items) ? bill.items : [];
-              const isPaymentLocked = bill.status === 'settled'
-                || (Array.isArray(bill.settledMemberIds) && bill.settledMemberIds.length > 0);
-              const canManageBill = !isPaymentLocked && (isGroupHost || bill.createdByMemberId === currentMemberId);
-
-              const handleToggleItemClaim = (itemId: string, memberIdToToggle: string, claimed: boolean) => {
-                if (isPaymentLocked || memberIdToToggle !== currentMemberId) return;
-                sendGroupBillAction('TOGGLE_CLAIM', { billId: bill.id, itemId, claimed });
+              const rawStatus = String(bill?.status || 'active').toLowerCase();
+              const billStatus = rawStatus === 'finalized' ? 'finalized' : rawStatus === 'active' ? 'active' : 'settled';
+              const payer = validMembers.find((member: any) => member.id === bill.payerId) || validMembers[0];
+              const canManageBill = isGroupActive && (isGroupHost || bill.createdByMemberId === currentMemberId);
+              const hasLegacyPaidMembers = Array.isArray(bill.settledMemberIds) && bill.settledMemberIds.length > 0;
+              const targetSessionId = bill.sessionId || `sess_g_${bill.id}`;
+              const openLiveSplit = () => {
+                saveRoomCredentials('session', targetSessionId, currentMemberId, getRoomToken('group', group.id));
+                router.push(`/session/${targetSessionId}?groupId=${group.id}`);
               };
 
-              const handleSetPayer = (newPayerId: string) => {
-                sendGroupBillAction('SET_PAYER', { billId: bill.id, payerId: newPayerId });
-              };
-
-              const handleSplitAllItems = () => {
-                sendGroupBillAction('SPLIT_ALL', { billId: bill.id });
-              };
-
-              return (
-                <SwipeableCard
-                  key={bill.id}
-                  onDelete={() => isPaymentLocked ? false : handleDeleteBill(bill.id)}
-                  className="shadow-xs"
-                >
-                  <div
-                    className="rounded-[20px] bg-white dark:bg-brand-950 border border-slate-200/80 dark:border-slate-800 overflow-hidden transition-all shadow-xs"
-                  >
-                    <div
-                      onClick={() => setExpandedBillId(isExpanded ? null : bill.id)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault();
-                          setExpandedBillId(isExpanded ? null : bill.id);
-                        }
-                      }}
-                      role="button"
-                      tabIndex={0}
-                      aria-expanded={isExpanded}
-                      className="p-4 space-y-3 cursor-pointer hover:bg-slate-50/50 dark:hover:bg-[#131B2A]/50 transition-colors"
-                    >
-                      {/* Row 1: Title & Total Amount */}
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="space-y-0.5 min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            {isPaymentLocked ? (
-                              <span className="w-2 h-2 rounded-full bg-mint-500 shrink-0" />
-                            ) : (
-                              <span className="w-2 h-2 rounded-full bg-brand-500 animate-pulse shrink-0" />
-                            )}
-                            <h4 className="font-extrabold text-slate-900 dark:text-white text-xs leading-tight truncate">
-                              {bill.title}
-                            </h4>
-                          </div>
-                          <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium leading-tight">
-                            {bill.date} • {t('paidByLabel', { name: payerName }, `Paid by ${payerName}`)}
-                          </p>
+              const card = (
+                <div className="rounded-[20px] bg-white dark:bg-brand-950 border border-slate-200/80 dark:border-slate-800 p-4 shadow-xs space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className={`w-2 h-2 rounded-full shrink-0 ${billStatus === 'active' ? 'bg-brand-500' : billStatus === 'finalized' ? 'bg-amber-400' : 'bg-mint-500'}`} />
+                          <h3 className="font-extrabold text-sm text-slate-900 dark:text-white truncate">{bill.title}</h3>
                         </div>
-
-                        <div className="shrink-0 text-right">
-                          <span className="font-mono font-black text-slate-900 dark:text-white text-xs">
-                            {formatCurrency(bill.amount || 0, group.currency || 'NIS')}
-                          </span>
-                        </div>
+                        <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium mt-1">
+                          {bill.date} · {isRtl ? 'שולם ע״י' : 'Paid by'} {payer?.name || (isRtl ? 'חבר בקבוצה' : 'Group member')}
+                        </p>
                       </div>
-
-                      {/* Row 2: Bigger Centered Live Session Button */}
-                      <div className="pt-0.5 flex items-center justify-center">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const targetSessionId = bill.sessionId || `sess_g_${bill.id}`;
-                            saveRoomCredentials('session', targetSessionId, currentMemberId, getRoomToken('group', group.id));
-                            router.push(`/session/${targetSessionId}?groupId=${group.id}`);
-                          }}
-                          className="w-full py-2.5 px-4 rounded-xl bg-slate-950 hover:bg-slate-900 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-100 text-white font-extrabold text-xs shadow-xs transition-all flex items-center justify-center gap-2 active:scale-[0.98]"
-                          title="Open Live Claiming Session"
-                        >
-                          <Sparkles className="w-3.5 h-3.5 text-brand-400 dark:text-brand-600" />
-                          <span>{t('liveSessionBtn', undefined, 'Live Session')}</span>
-                          <ArrowRight className={`w-3.5 h-3.5 ${isRtl ? 'rotate-180' : ''}`} />
-                        </button>
-                      </div>
+                      <span className="font-mono font-black text-sm text-slate-900 dark:text-white shrink-0">
+                        {formatCurrency(Number(bill.amount || 0), group.currency || 'NIS')}
+                      </span>
                     </div>
 
-                    {/* Expanded Interactive Item Claiming & Payer Selector */}
-                    {isExpanded && (
-                      <div className="p-3 bg-slate-50/80 dark:bg-[#131B2A]/60 border-t border-slate-100 dark:border-slate-800 space-y-2.5 text-xs">
-                        {/* Payer Selector & Edit Action */}
-                        <div className="flex items-center justify-between bg-white dark:bg-[#1A2333] p-2 rounded-xl border border-slate-200/80 dark:border-slate-700">
-                          <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">{t('whoPaidUpfront', undefined, 'Who paid this bill upfront?')}</span>
-                          <div className="flex items-center gap-1.5">
-                            <select
-                              value={activePayerMember?.id || validMembers[0]?.id}
-                              onChange={(e) => handleSetPayer(e.target.value)}
-                              disabled={!canManageBill}
-                              className="py-1 px-2 rounded-lg bg-slate-100 dark:bg-slate-900 text-xs font-bold border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
-                            >
-                              {validMembers.map((m: any) => (
-                                <option key={m.id} value={m.id}>
-                                  {m.name}
-                                </option>
-                              ))}
-                            </select>
+                    {billStatus === 'active' && (
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={openLiveSplit}
+                          className="flex-1 py-2.5 px-4 rounded-xl bg-slate-950 hover:bg-slate-900 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-100 text-white font-extrabold text-xs shadow-xs transition-all flex items-center justify-center gap-2 active:scale-[0.98]"
+                        >
+                          <span>{isRtl ? 'המשך חלוקה' : 'Continue Split'}</span>
+                          <ArrowRight className={`w-3.5 h-3.5 ${isRtl ? 'rotate-180' : ''}`} />
+                        </button>
+                        {canManageBill && !hasLegacyPaidMembers && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const ok = await sendGroupBillAction('FINALIZE_BILL', { billId: bill.id });
+                              if (ok) triggerHaptic('success');
+                            }}
+                            className="py-2.5 px-3.5 rounded-xl bg-brand-50 dark:bg-brand-900 text-brand-700 dark:text-brand-200 border border-brand-100 dark:border-brand-800 font-extrabold text-[10px] active:scale-95 transition-all"
+                          >
+                            {isRtl ? 'סיים חלוקה' : 'Finish Split'}
+                          </button>
+                        )}
+                      </div>
+                    )}
 
-                            {canManageBill && (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setPendingReceiptDraft(null);
-                                  setPendingScanId('');
-                                  setEditingBill(bill);
-                                  setShowCreateBillModal(true);
-                                }}
-                                className="p-1 rounded-lg text-slate-500 hover:text-brand-600 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-                                title="Edit Bill Details"
-                              >
-                                <Pencil className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        </div>
+                    {billStatus === 'active' && hasLegacyPaidMembers && (
+                      <p className="text-[10px] font-bold text-amber-600 dark:text-amber-300">
+                        {isRtl ? 'יש סימוני תשלום ישנים בחלוקה הזו. פתחו אותה ובטלו אותם לפני סיום החלוקה.' : 'This split has legacy paid markers. Open it and reopen those shares before finishing the split.'}
+                      </p>
+                    )}
 
-                        <div className="flex items-center justify-between">
-                          <span className="font-extrabold uppercase text-[10px] text-slate-400 tracking-wider">
-                            {t('tapMemberChipNotice', undefined, 'Tap member chip on an item to claim item share:')}
-                          </span>
+                    {billStatus === 'finalized' && (
+                      <div className="flex items-center justify-between gap-2 rounded-xl bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200/70 dark:border-amber-900/40 px-3 py-2">
+                        <span className="inline-flex items-center gap-1.5 text-[10px] font-black text-amber-700 dark:text-amber-300 min-w-0">
+                          <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                          <span className="truncate">{isRtl ? 'החלוקה הסתיימה ונכללת במאזן' : 'Split complete · included in group balance'}</span>
+                        </span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button type="button" onClick={openLiveSplit} className="text-[10px] font-extrabold text-slate-600 dark:text-slate-300 hover:text-brand-600">
+                            {isRtl ? 'צפה' : 'View'}
+                          </button>
                           {canManageBill && (
                             <button
-                              onClick={handleSplitAllItems}
-                              className="px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 text-[10px] font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-300 transition-colors"
+                              type="button"
+                              onClick={() => sendGroupBillAction('REOPEN_BILL', { billId: bill.id })}
+                              className="text-[10px] font-extrabold text-slate-600 dark:text-slate-300 hover:text-brand-600"
                             >
-                              {t('splitAllEqually', undefined, 'Split All Equally')}
+                              {isRtl ? 'פתח מחדש' : 'Reopen'}
                             </button>
                           )}
                         </div>
-
-                        {/* Items List with Interactive Member Claim Chips */}
-                        <div className="space-y-2">
-                          {itemsList.map((item: any) => {
-                            const itemClaimants = Array.isArray(item.claimedBy) ? item.claimedBy : [];
-
-                            return (
-                              <div
-                                key={item.id}
-                                className="p-2.5 rounded-xl bg-white dark:bg-[#1A2333] border border-slate-200/80 dark:border-slate-700 space-y-2"
-                              >
-                                <div className="flex justify-between items-center text-slate-900 dark:text-white">
-                                  <span className="font-bold">{item.name}</span>
-                                  <span className="font-mono font-extrabold">{formatCurrency(item.price || 0, group.currency || 'NIS')}</span>
-                                </div>
-
-                                {/* Member Claim Chips */}
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                  {validMembers.map((m: any) => {
-                                    const isClaimed = itemClaimants.includes(m.id);
-                                    const isMe = m.id === currentMemberId;
-
-                                    return (
-                                      <button
-                                        key={m.id}
-                                        onClick={() => handleToggleItemClaim(item.id, m.id, !isClaimed)}
-                                        disabled={!isMe || isPaymentLocked}
-                                        className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold flex items-center gap-1 transition-all ${
-                                          isClaimed
-                                            ? 'bg-brand-600 dark:bg-brand-300 text-white dark:text-brand-950 shadow-xs'
-                                            : 'bg-slate-100 dark:bg-slate-900 text-slate-500 border border-slate-200 dark:border-slate-700 hover:bg-slate-200'
-                                        } ${!isMe ? 'cursor-default opacity-70' : ''}`}
-                                      >
-                                        <span>{m.name}</span>
-                                        {isClaimed && <CheckCircle2 className="w-3 h-3 text-mint-400 dark:text-mint-600" />}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
                       </div>
                     )}
-                  </div>
+
+                    {billStatus === 'settled' && (
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="inline-flex items-center gap-1.5 text-[10px] font-black text-mint-600 dark:text-mint-400">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>{isRtl ? 'שולם במסגרת הקבוצה' : 'Settled with the group'}</span>
+                        </div>
+                        <button type="button" onClick={openLiveSplit} className="text-[10px] font-extrabold text-slate-500 hover:text-brand-600">
+                          {isRtl ? 'צפה' : 'View'}
+                        </button>
+                      </div>
+                    )}
+                </div>
+              );
+
+              return billStatus === 'active' && canManageBill ? (
+                <SwipeableCard key={bill.id} onDelete={() => handleDeleteBill(bill.id)} className="shadow-xs">
+                  {card}
                 </SwipeableCard>
+              ) : (
+                <React.Fragment key={bill.id}>{card}</React.Fragment>
               );
             })}
           </div>
         )}
-      </div>
+      </section>
+
+      {/* Group Balance / Final Settlement — secondary to the splits, never the first thing users see. */}
+      <section className="rounded-[24px] p-4 bg-white dark:bg-brand-950 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-3">
+        <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800/80 pb-2">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 rounded-lg bg-brand-50 dark:bg-brand-900 text-brand-600 dark:text-brand-300">
+              <Users className="w-4 h-4" />
+            </div>
+            <h3 className="font-extrabold text-xs text-slate-900 dark:text-white">
+              {isGroupSettling || isGroupClosed ? (isRtl ? 'התחשבנות סופית' : 'Final Group Settlement') : (isRtl ? 'מאזן הקבוצה' : 'Group Balance')}
+            </h3>
+          </div>
+          {(isGroupSettling || isGroupClosed) && settlement && (
+            <span className="text-[9px] font-black text-slate-400">{settlement.paymentsRemaining || 0} {isRtl ? 'נותרו' : 'left'}</span>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 gap-2.5">
+          {displayBalances.map((balance: any) => {
+            const isCreditor = Number(balance.netBalance || 0) > 0.01;
+            const isDebtor = Number(balance.netBalance || 0) < -0.01;
+            return (
+              <div key={balance.memberId} className="p-3 rounded-2xl bg-slate-50 dark:bg-[#131B2A] border border-slate-200/80 dark:border-slate-800/80 min-w-0">
+                <span className="text-xs font-black text-slate-900 dark:text-white truncate block">{balance.name}</span>
+                <span className={`text-[10px] font-extrabold font-mono mt-1 inline-block ${isCreditor ? 'text-mint-600 dark:text-mint-400' : isDebtor ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'}`}>
+                  {isCreditor ? '+' : isDebtor ? '-' : ''}{formatCurrency(Math.abs(Number(balance.netBalance || 0)), group.currency || 'NIS')}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+
+        {isGroupActive && (
+          <>
+            {liveTransactions.length > 0 && (
+              <div className="space-y-1.5 pt-1">
+                {liveTransactions.map((tx: any, index: number) => (
+                  <div key={`${tx.fromId}:${tx.toId}:${index}`} className="flex items-center justify-between rounded-xl bg-slate-50 dark:bg-[#131B2A] border border-slate-200/80 dark:border-slate-800 px-3 py-2.5">
+                    <span className="text-[10px] font-bold text-slate-700 dark:text-slate-300">{tx.fromName} → {tx.toName}</span>
+                    <span className="text-xs font-black font-mono text-slate-900 dark:text-white">{formatCurrency(tx.amount || 0, group.currency || 'NIS')}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {unassignedAmount > 0.009 && (
+              <p className="text-[10px] text-amber-600 dark:text-amber-300 font-bold text-center">
+                {isRtl ? 'יש עדיין פריטים שלא נבחרו. השלימו את החלוקות לפני סגירת הקבוצה.' : 'Some items are still unassigned. Finish the splits before settling the group.'}
+              </p>
+            )}
+
+            {isGroupHost && allOpenSplitsFinalized && unassignedAmount <= 0.009 && (
+              <button
+                type="button"
+                onClick={async () => {
+                  const ok = await sendGroupBillAction('START_GROUP_SETTLEMENT', {});
+                  if (ok) triggerHaptic('success');
+                }}
+                className="brand-tap w-full py-3.5 px-5 rounded-full bg-brand-600 hover:bg-brand-700 dark:bg-brand-300 dark:hover:bg-brand-200 text-white dark:text-brand-950 font-black text-xs shadow-brand transition-all active:scale-[0.98]"
+              >
+                {isRtl ? 'סגור קבוצה וחשב התחשבנות סופית' : 'Settle Group'}
+              </button>
+            )}
+
+            {isGroupHost && financiallyOpenBills.length > 0 && !allOpenSplitsFinalized && (
+              <p className="text-[10px] text-slate-400 font-semibold text-center">
+                {isRtl ? 'סיימו את כל החלוקות הפעילות כדי לפתוח התחשבנות סופית.' : 'Finish every active split to start the final settlement.'}
+              </p>
+            )}
+          </>
+        )}
+
+        {(isGroupSettling || isGroupClosed) && settlement && (
+          <div className="space-y-2 pt-1">
+            {settlementTransfers.length === 0 ? (
+              <div className="flex items-center justify-center gap-2 py-2 text-xs font-bold text-mint-600 dark:text-mint-400">
+                <CheckCircle2 className="w-4 h-4" />
+                <span>{isRtl ? 'אין צורך בהעברות בין החברים' : 'No transfers needed'}</span>
+              </div>
+            ) : settlementTransfers.map((tx: any) => {
+              const canPay = !isGroupClosed && !tx.paid && tx.fromId === currentMemberId;
+              const canUpdate = !isGroupClosed && (isGroupHost || tx.fromId === currentMemberId || tx.toId === currentMemberId);
+              const paymentKey = `${tx.fromId}:${tx.toId}`;
+              return (
+                <div key={tx.id} className="rounded-xl bg-slate-50 dark:bg-[#131B2A] border border-slate-200/80 dark:border-slate-800 p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-xs font-bold min-w-0">
+                      <span className="text-rose-500 font-extrabold">{tx.fromName}</span>
+                      <span className="text-slate-400 mx-1.5">→</span>
+                      <span className="text-slate-900 dark:text-white font-extrabold">{tx.toName}</span>
+                    </div>
+                    <span className="font-mono font-black text-xs text-slate-900 dark:text-white">{formatCurrency(tx.amount || 0, group.currency || 'NIS')}</span>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2">
+                    <span className={`text-[9px] font-black ${tx.paid ? 'text-mint-600 dark:text-mint-400' : 'text-amber-600 dark:text-amber-300'}`}>
+                      {tx.paid ? (isRtl ? 'שולם ✓' : 'Paid ✓') : (isRtl ? 'ממתין לתשלום' : 'Pending')}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      {canPay && (
+                        <>
+                          <button disabled={Boolean(paymentLookupKey)} onClick={() => openGroupTransferPayment(tx, 'bit')} className="py-1.5 px-2.5 rounded-lg bg-[#7026FF] text-white font-extrabold text-[10px] disabled:opacity-50">Bit</button>
+                          <button disabled={Boolean(paymentLookupKey)} onClick={() => openGroupTransferPayment(tx, 'paybox')} className="py-1.5 px-2.5 rounded-lg bg-[#005082] text-white font-extrabold text-[10px] disabled:opacity-50">Paybox</button>
+                        </>
+                      )}
+                      {canUpdate && (
+                        <button
+                          type="button"
+                          onClick={() => sendGroupBillAction('SET_GROUP_TRANSFER_PAID', { transferId: tx.id, paid: !tx.paid })}
+                          className="py-1.5 px-2.5 rounded-lg bg-white dark:bg-brand-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-extrabold text-[10px]"
+                        >
+                          {tx.paid ? (isRtl ? 'בטל סימון' : 'Undo') : (isRtl ? 'סמן ששולם' : 'Mark paid')}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            {isGroupSettling && isGroupHost && !settlement.paymentActivityAt && (
+              <button
+                type="button"
+                onClick={() => sendGroupBillAction('REOPEN_GROUP_SETTLEMENT', {})}
+                className="w-full text-center text-[10px] font-extrabold text-slate-500 hover:text-brand-600 py-1"
+              >
+                {isRtl ? 'פתח את הקבוצה מחדש' : 'Reopen group'}
+              </button>
+            )}
+
+            {isGroupSettling && isGroupHost && Number(settlement.paymentsRemaining || 0) === 0 && (
+              <button
+                type="button"
+                onClick={async () => {
+                  const ok = await sendGroupBillAction('CLOSE_GROUP', {});
+                  if (ok) {
+                    triggerHaptic('success');
+                    router.push('/?tab=history');
+                  }
+                }}
+                className="brand-tap w-full py-3.5 px-5 rounded-full bg-mint-500 hover:bg-mint-600 text-brand-950 font-black text-xs shadow-sm transition-all active:scale-[0.98]"
+              >
+                {isRtl ? 'סגור קבוצה' : 'Close Group'}
+              </button>
+            )}
+          </div>
+        )}
+      </section>
+
     </div>
   );
 }

@@ -202,6 +202,7 @@ function SessionWorkspaceInner() {
         }
         saveRoomCredentials('session', resolvedId, joined.memberId, joined.accessToken);
         if (resolvedId !== sessionId) saveRoomCredentials('session', sessionId, joined.memberId, joined.accessToken);
+        if (linkedGroupId) saveRoomCredentials('group', linkedGroupId, joined.memberId, joined.accessToken);
 
         if (!disposed) {
           setCurrentMemberId(joined.memberId);
@@ -603,6 +604,8 @@ function SessionWorkspaceInner() {
   const currentMember = validMembers.find((m: any) => m?.id === currentMemberId);
   const hostMember = activeMembers.find((m: any) => m?.isHost) || activeMembers[0];
   const isCurrentUserHost = Boolean(currentMember?.isHost);
+  const isGroupLinked = Boolean(session?.groupId && session?.billId);
+  const isGroupDeferredComplete = Boolean(session?.groupSettlementDeferred);
   const isSessionClosed = session?.status === 'settled';
   const hasSettledMembers = validMembers.some((member: any) => member?.settled === true);
   const isCurrentMemberSettled = Boolean(currentMember?.settled);
@@ -620,7 +623,7 @@ function SessionWorkspaceInner() {
     setPaymentLaunchMethod(method);
     try {
       const response = await fetch(
-        `/api/session/${encodeURIComponent(session.id)}/payment-target/${encodeURIComponent(activePayerId)}?round=${isRounded ? 'true' : 'false'}`,
+        apiUrl(`/api/session/${encodeURIComponent(session.id)}/payment-target/${encodeURIComponent(activePayerId)}?round=${isRounded ? 'true' : 'false'}`),
         { headers: roomHeaders('session', session.id, false) },
       );
       const data = await response.json().catch(() => ({}));
@@ -662,6 +665,37 @@ function SessionWorkspaceInner() {
     } finally {
       paymentLaunchRef.current = false;
       setPaymentLaunchMethod(null);
+    }
+  };
+
+
+  const finishGroupSplit = async () => {
+    if (!session?.groupId || !session?.billId || !isCurrentUserHost || isSettling !== 'idle') return;
+    const groupId = String(session.groupId);
+    const groupToken = getRoomToken('group', groupId) || getRoomToken('session', session.id);
+    if (groupToken && !getRoomToken('group', groupId)) {
+      saveRoomCredentials('group', groupId, currentMemberId, groupToken);
+    }
+    setIsSettling('loading');
+    try {
+      const response = await fetch(apiUrl('/api/groups/bill/action'), {
+        method: 'POST',
+        headers: roomHeaders('group', groupId),
+        body: JSON.stringify({
+          groupId,
+          action: 'FINALIZE_BILL',
+          actionId: createClientActionId(),
+          payload: { billId: session.billId },
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Could not finish this split');
+      setIsSettling('success');
+      triggerHaptic('success');
+      router.push(`/group/${groupId}`);
+    } catch (error) {
+      setIsSettling('idle');
+      alert(error instanceof Error ? error.message : 'Could not finish this split');
     }
   };
 
@@ -860,7 +894,9 @@ function SessionWorkspaceInner() {
       <div className="flex-1 space-y-4 pt-1">
         {isSessionClosed && (
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-center text-sm font-bold text-slate-800 dark:border-slate-700 dark:bg-slate-900/30 dark:text-slate-200">
-            {t('sessionClosedNotice', undefined, 'This session is settled and is now read-only.')}
+            {isGroupDeferredComplete
+              ? (isRtl ? 'החלוקה הסתיימה ונכללת במאזן הקבוצה. התשלום יתבצע בסגירת הקבוצה.' : 'Split complete and included in the group balance. Payment happens when the group is settled.')
+              : t('sessionClosedNotice', undefined, 'This session is settled and is now read-only.')}
           </div>
         )}
         {!isSessionClosed && hasSettledMembers && (
@@ -1078,7 +1114,7 @@ function SessionWorkspaceInner() {
         <Plus className="w-7 h-7" />
       </button>}
 
-      {/* Bottom settlement bar stays outside the receipt scroller so it never covers an item. */}
+      {/* Bottom action bar stays outside the receipt scroller so it never covers an item. */}
       {!isSessionClosed && <div className="session-bottom-bar relative z-40 w-full shrink-0 p-5 bg-white/95 dark:bg-brand-950/90 border-t border-slate-100 dark:border-white/5 backdrop-blur-xl flex items-center justify-between shadow-2xl">
         <div>
           <span className="text-xs text-slate-500 dark:text-slate-400 block">{t('yourShareLabel', undefined, 'Your Share')}</span>
@@ -1087,33 +1123,49 @@ function SessionWorkspaceInner() {
             const shareDual: DualPriceResult = formatDual ? formatDual(memberCalculations.myShare || 0, session?.currency || 'NIS') : { primary: `${memberCalculations.myShare || 0}` };
             return (
               <div className="flex items-baseline gap-1.5">
-                <span className="text-xl font-bold text-slate-900 dark:text-white">
-                  {shareDual?.primary || '0.00'}
-                </span>
-                {shareDual?.secondary && (
-                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                    ({shareDual.secondary})
-                  </span>
-                )}
+                <span className="text-xl font-bold text-slate-900 dark:text-white">{shareDual?.primary || '0.00'}</span>
+                {shareDual?.secondary && <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">({shareDual.secondary})</span>}
               </div>
             );
           })()}
+          {isGroupLinked && <span className="text-[9px] font-bold text-brand-600 dark:text-brand-300">{isRtl ? 'ייכלל במאזן הקבוצה' : 'Included in group balance'}</span>}
         </div>
 
-        <button
-          onClick={() => {
-            if (isCurrentMemberSettled && !isCurrentUserHost) {
-              void sendAction('TOGGLE_SETTLED', { memberId: currentMemberId, settled: false });
-              return;
-            }
-            setShowSettleModal(true);
-          }}
-          className="brand-tap py-3.5 px-6 rounded-xl bg-brand-600 hover:bg-brand-700 dark:bg-brand-300 dark:hover:bg-brand-200 text-white dark:text-brand-950 font-bold shadow-brand text-sm transition-all"
-        >
-          {isCurrentMemberSettled && !isCurrentUserHost
-            ? t('reopenMyShareBtn', undefined, 'Reopen My Share')
-            : t('settleAndPayBtn', undefined, 'Settle & Pay')}
-        </button>
+        {isGroupLinked ? (
+          <button
+            onClick={() => {
+              if (isCurrentMemberSettled) {
+                void sendAction('TOGGLE_SETTLED', { memberId: currentMemberId, settled: false });
+                return;
+              }
+              if (isCurrentUserHost) finishGroupSplit();
+              else handleBackNavigation();
+            }}
+            disabled={!isCurrentMemberSettled && isCurrentUserHost && isSettling !== 'idle'}
+            className="brand-tap py-3.5 px-6 rounded-xl bg-brand-600 hover:bg-brand-700 dark:bg-brand-300 dark:hover:bg-brand-200 text-white dark:text-brand-950 font-bold shadow-brand text-sm transition-all disabled:opacity-60"
+          >
+            {isCurrentMemberSettled
+              ? t('reopenMyShareBtn', undefined, 'Reopen My Share')
+              : isCurrentUserHost
+                ? (isSettling === 'loading' ? (isRtl ? 'מסיים...' : 'Finishing...') : (isRtl ? 'סיים חלוקה' : 'Finish Split'))
+                : (isRtl ? 'חזרה לקבוצה' : 'Back to Group')}
+          </button>
+        ) : (
+          <button
+            onClick={() => {
+              if (isCurrentMemberSettled && !isCurrentUserHost) {
+                void sendAction('TOGGLE_SETTLED', { memberId: currentMemberId, settled: false });
+                return;
+              }
+              setShowSettleModal(true);
+            }}
+            className="brand-tap py-3.5 px-6 rounded-xl bg-brand-600 hover:bg-brand-700 dark:bg-brand-300 dark:hover:bg-brand-200 text-white dark:text-brand-950 font-bold shadow-brand text-sm transition-all"
+          >
+            {isCurrentMemberSettled && !isCurrentUserHost
+              ? t('reopenMyShareBtn', undefined, 'Reopen My Share')
+              : t('settleAndPayBtn', undefined, 'Settle & Pay')}
+          </button>
+        )}
       </div>}
 
 
@@ -1275,7 +1327,7 @@ function SessionWorkspaceInner() {
       )}
 
       {/* --- MODAL 4: SETTLE BREAKDOWN --- */}
-      {showSettleModal && (() => {
+      {showSettleModal && !isGroupLinked && (() => {
         type DualRes = { primary: string; secondary?: string };
         const rawItemSub = typeof memberCalculations.itemSubtotal === 'number' ? memberCalculations.itemSubtotal : parseFloat(memberCalculations.itemSubtotal as any) || 0;
         const itemSubVal = Math.round((rawItemSub + Number.EPSILON) * 100) / 100;
