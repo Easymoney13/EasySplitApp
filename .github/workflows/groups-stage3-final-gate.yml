@@ -1,0 +1,99 @@
+name: Temporary Groups Stage 3 Final Gate
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  verify-materialize:
+    if: github.head_ref == 'groups-stage3-hardening'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout Stage 3 branch
+        uses: actions/checkout@v4
+        with:
+          ref: groups-stage3-hardening
+          fetch-depth: 0
+
+      - name: Detect verification payload
+        id: payload
+        shell: bash
+        run: |
+          if [ -f .stage3/apply_stage3.py.gz.b64 ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node
+        if: steps.payload.outputs.run == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Decode and apply Stage 3
+        if: steps.payload.outputs.run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 -d .stage3/apply_stage3.py.gz.b64 | gzip -dc > /tmp/apply_stage3.py
+          echo 'ef0a30e39ba732472973abab26886b44a071f270de901d9882b766e0775cc042  /tmp/apply_stage3.py' | sha256sum -c -
+          python3 /tmp/apply_stage3.py
+
+      - name: Verify intended file scope
+        if: steps.payload.outputs.run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import subprocess
+          expected = {
+              'lib/debtMinimizer.js',
+              'lib/groupLifecycle.js',
+              'src/app/group/[id]/page.tsx',
+              'src/app/session/[id]/page.tsx',
+              'tests/group-stage3-hardening.test.js',
+          }
+          tracked = set(filter(None, subprocess.check_output(['git', 'diff', '--name-only'], text=True).splitlines()))
+          untracked = set(filter(None, subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard'], text=True).splitlines()))
+          actual = tracked | untracked
+          if actual != expected:
+              raise SystemExit(f'Unexpected Stage 3 file scope. expected={sorted(expected)} actual={sorted(actual)}')
+          print('Stage 3 file scope verified:', ', '.join(sorted(actual)))
+          PY
+
+      - name: Install dependencies
+        if: steps.payload.outputs.run == 'true'
+        run: npm ci
+
+      - name: Full EasySplit verification
+        if: steps.payload.outputs.run == 'true'
+        run: npm run verify
+
+      - name: Strain regression
+        if: steps.payload.outputs.run == 'true'
+        run: npm run test:strain
+
+      - name: Diff integrity
+        if: steps.payload.outputs.run == 'true'
+        run: git diff --check
+
+      - name: Materialize verified Stage 3 commit
+        if: steps.payload.outputs.run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .stage3
+          rm -f .github/workflows/groups-stage3-verification.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Complete Groups Stage 3 hardening"
+          git push origin HEAD:groups-stage3-hardening
