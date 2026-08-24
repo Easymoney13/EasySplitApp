@@ -29,7 +29,7 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
     e.preventDefault();
     if (isSubmitting || isLoading) return;
 
-    const finalName = groupName.trim() || 'Trip Group';
+    const finalName = groupName.trim() || 'Group';
     try {
       setIsSubmitting(true);
       await onCreateGroup({
@@ -56,10 +56,10 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
             </div>
             <div>
               <h3 className="font-extrabold text-base leading-tight">
-                {t('createGroupTitle', undefined, 'Create Trip / Expense Group')}
+                {t('createGroupTitle', undefined, 'Create Group')}
               </h3>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                {t('createGroupSub', undefined, 'Share bills with friends & minimize debts')}
+                {t('createGroupSub', undefined, 'Keep multiple splits with the same people in one place')}
               </p>
             </div>
           </div>
@@ -84,7 +84,7 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
               type="text"
               value={groupName}
               onChange={(e) => setGroupName(e.target.value)}
-              placeholder={t('groupNamePlaceholder', undefined, 'e.g. Eilat Trip or Roommates')}
+              placeholder={t('groupNamePlaceholder', undefined, 'e.g. Eilat Weekend')}
               className="w-full py-2.5 px-3.5 rounded-xl text-xs font-semibold bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 focus:outline-none focus:border-brand-500 text-slate-900 dark:text-white"
               required
               disabled={isBusy}

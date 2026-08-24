@@ -14,6 +14,8 @@ const {
   setGroupTransferPaid,
   closeSettledGroup,
   reopenGroupSettlement,
+  assertGroupSettlementPaymentPhase,
+  assertSessionSettlementNotDeferredToGroup,
   summarizeGroup,
   groupMatchesScope,
 } = require('../lib/groupLifecycle');
@@ -343,4 +345,36 @@ test('group-level lifecycle actions work through the existing action processor w
   const reopenedSettlement = processGroupBillAction(settling, 'REOPEN_GROUP_SETTLEMENT', {}, settling.members[0]);
   const reopenedBill = processGroupBillAction(reopenedSettlement, 'REOPEN_BILL', { billId: 'bill_dinner' }, reopenedSettlement.members[0]);
   assert.equal(reopenedBill.bills[0].status, BILL_STATUS.ACTIVE);
+});
+
+
+test('group-linked sessions defer every financial settlement action to the group', () => {
+  assert.doesNotThrow(() => assertSessionSettlementNotDeferredToGroup({ id: 'session_regular' }));
+  assert.throws(
+    () => assertSessionSettlementNotDeferredToGroup({ id: 'session_group', groupId: 'grp_test' }),
+    /settled at the group level/,
+  );
+});
+
+
+test('group payment targets are available only after the final settlement snapshot is frozen', () => {
+  assert.throws(
+    () => assertGroupSettlementPaymentPhase(sampleGroup({ status: 'active' })),
+    /Start the final group settlement/,
+  );
+  assert.doesNotThrow(() => assertGroupSettlementPaymentPhase(sampleGroup({ status: 'settling' })));
+  assert.throws(
+    () => assertGroupSettlementPaymentPhase(sampleGroup({ status: 'closed' })),
+    /already closed/,
+  );
+});
+
+
+test('finalizing a cleaned legacy bill drops stale paid-member markers', () => {
+  const group = sampleGroup({
+    bills: [{ ...sampleGroup().bills[0], settledMemberIds: ['guest'] }],
+  });
+  const finalized = finalizeGroupBill(group, 'bill_dinner', group.members[0], () => 500);
+  assert.deepEqual(finalized.bills[0].settledMemberIds, []);
+  assert.equal(finalized.bills[0].status, BILL_STATUS.FINALIZED);
 });

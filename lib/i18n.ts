@@ -12,7 +12,7 @@ export const translations: Record<string, Record<string, string>> = {
     seeAll: "See All",
     yourActiveGroupsHeader: "Your active groups",
     noActiveGroupsYet: "No active groups yet",
-    createOrJoinGroupPrompt: "Create a group or join via code to split bills together",
+    createOrJoinGroupPrompt: "Create a group when the same people will split more than one bill",
     
     // Tabs
     tabSessions: "Sessions",
@@ -49,10 +49,10 @@ export const translations: Record<string, Record<string, string>> = {
     manualSplitDesc: "Type in the items and prices yourself",
 
     // Create Group Modal
-    createGroupTitle: "Create Trip / Expense Group",
-    createGroupSub: "Share bills with friends & minimize debts",
+    createGroupTitle: "Create Group",
+    createGroupSub: "Keep multiple splits with the same people in one place",
     groupNameLabel: "Group Name",
-    groupNamePlaceholder: "e.g. Eilat Trip 🌴 or Roommates",
+    groupNamePlaceholder: "e.g. Eilat Weekend",
     creatingGroup: "Creating Group...",
     processingBill: "Creating Bill...",
 
@@ -61,7 +61,7 @@ export const translations: Record<string, Record<string, string>> = {
     groupsTitle: "Groups",
     groupFallbackLabel: "Group",
     createGroupBtn: "Create Group",
-    groupsSub: "Create a group to split shared bills and minimize debts with friends.",
+    groupsSub: "Use a group when the same people will split more than one bill.",
     noGroupsYetHint: "💡 Create a group above to start a shared expense tracker with friends!",
     joinGroupBtn: "Join Group",
     enterGroupCodePlaceholder: "Enter 8-digit group code",
@@ -307,7 +307,7 @@ export const translations: Record<string, Record<string, string>> = {
     seeAll: "הצג הכל",
     yourActiveGroupsHeader: "הקבוצות הפעילות שלך",
     noActiveGroupsYet: "אין קבוצות פעילות עדיין",
-    createOrJoinGroupPrompt: "צרו קבוצה או הצטרפו באמצעות קוד כדי לחלק חשבונות יחד",
+    createOrJoinGroupPrompt: "צרו קבוצה כשאותה חבורה עומדת לבצע כמה חלוקות",
     
     // Tabs
     tabSessions: "חדרים",
@@ -344,10 +344,10 @@ export const translations: Record<string, Record<string, string>> = {
     manualSplitDesc: "הקלידו את הפריטים והמחירים בעצמכם",
 
     // Create Group Modal
-    createGroupTitle: "צור קבוצת הוצאות / טיול",
-    createGroupSub: "חלקו חשבונות עם חברים וצמצמו חובות",
+    createGroupTitle: "צור קבוצה",
+    createGroupSub: "רכזו כמה חלוקות עם אותה חבורה במקום אחד",
     groupNameLabel: "שם הקבוצה",
-    groupNamePlaceholder: "למשל: טיול לאילת 🌴 או דירת שותפים",
+    groupNamePlaceholder: "למשל: סופ״ש באילת",
     creatingGroup: "יוצר קבוצה...",
     processingBill: "יוצר חשבון...",
 
@@ -356,7 +356,7 @@ export const translations: Record<string, Record<string, string>> = {
     groupsTitle: "קבוצות",
     groupFallbackLabel: "קבוצה",
     createGroupBtn: "צור קבוצה",
-    groupsSub: "צרו קבוצה לחלוקת חשבונות וצמצום חובות עם חברים.",
+    groupsSub: "השתמשו בקבוצה כשאותה חבורה עומדת לבצע יותר מחלוקה אחת.",
     noGroupsYetHint: "💡 צרו קבוצה למעלה כדי להתחיל מעקב הוצאות משותף עם חברים!",
     joinGroupBtn: "הצטרף לקבוצה",
     enterGroupCodePlaceholder: "הזן קוד קבוצה בן 8 ספרות",

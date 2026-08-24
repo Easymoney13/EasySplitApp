@@ -195,24 +195,20 @@ test('legacy four-digit invite codes remain compatible and responses include sec
     `${baseUrl}/api/groups/grp_invite_test/payment-target/${groupHost.member.id}`,
     { headers: { 'x-room-token': groupGuest.accessToken } },
   );
-  assert.equal(paymentTarget.status, 200);
-  assert.deepEqual(await paymentTarget.json(), {
-    memberId: groupHost.member.id,
-    phone: '0502222222',
-    amount: 20,
-  });
+  assert.equal(paymentTarget.status, 409);
+  assert.match((await paymentTarget.json()).error, /Start the final group settlement/);
 
   const unrelatedTarget = await fetch(
     `${baseUrl}/api/groups/grp_invite_test/payment-target/${groupGuest.member.id}`,
     { headers: { 'x-room-token': groupHost.accessToken } },
   );
-  assert.equal(unrelatedTarget.status, 403);
+  assert.equal(unrelatedTarget.status, 409);
 
   for (const settledGroupId of ['grp_member_settled_test', 'grp_bill_settled_test']) {
     const settledTarget = await fetch(
       `${baseUrl}/api/groups/${settledGroupId}/payment-target/${groupHost.member.id}`,
       { headers: { 'x-room-token': groupGuest.accessToken } },
     );
-    assert.equal(settledTarget.status, 403);
+    assert.equal(settledTarget.status, 409);
   }
 });
