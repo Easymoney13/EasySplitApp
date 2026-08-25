@@ -35,6 +35,22 @@ jobs:
       - name: Materialize Task 1
         run: python3 .task1/apply_task1.py . --allow-drift
 
+      - name: Apply validated Capacitor Keyboard enum fix
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('capacitor.config.ts')
+          s = p.read_text()
+          imp = "import type { CapacitorConfig } from '@capacitor/cli';"
+          resize = "      resize: 'body',"
+          if s.count(imp) != 1 or s.count(resize) != 1:
+              raise SystemExit('unexpected capacitor.config.ts shape')
+          s = s.replace(imp, imp + "\nimport { KeyboardResize } from '@capacitor/keyboard';", 1)
+          s = s.replace(resize, '      resize: KeyboardResize.Body,', 1)
+          p.write_text(s)
+          PY
+
       - name: Update lockfile for pinned mobile dependencies
         run: npm install --package-lock-only --ignore-scripts
 
