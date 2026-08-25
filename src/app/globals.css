@@ -298,6 +298,29 @@ select:focus-visible {
   background: radial-gradient(circle, rgba(255, 255, 255, 0.20) 0%, rgba(255, 255, 255, 0) 70%);
 }
 
+.home-start-card {
+  background: linear-gradient(145deg, #5148D8 0%, #3D3ACB 54%, #302DA4 100%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 14px 28px -18px rgba(37, 33, 111, 0.36);
+  transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    filter 0.15s ease;
+}
+
+.home-start-card:hover:not(:active) {
+  transform: none;
+  box-shadow: 0 16px 30px -19px rgba(37, 33, 111, 0.38);
+}
+
+.home-secondary-action:hover:not(:active) {
+  transform: none;
+}
+
+.home-start-card:active {
+  border-color: rgba(255, 255, 255, 0.11);
+}
+
 .app-viewport,
 .app-phone-shell {
   height: 100vh;

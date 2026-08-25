@@ -41,7 +41,7 @@ import { SwipeableCard } from '../components/SwipeableCard';
 import { ManualBillModal } from '../components/ManualBillModal';
 import { CreateGroupModal } from '../components/CreateGroupModal';
 import { SleepingPandaIllustration } from '../components/PandaIllustrations';
-import { EasySplitMark, EasySplitWordmark } from '../components/EasySplitBrand';
+import { EasySplitWordmark } from '../components/EasySplitBrand';
 import { compressAvatarImage } from '../../lib/imageUtils';
 import { createReceiptDraft, receiptConfirmationPayload, receiptScanUserMessage } from '../../lib/receiptScanClient';
 import { getCookie, setCookie } from '../../lib/cookies';
@@ -59,6 +59,22 @@ const PASTEL_COLORS = [
   { bg: 'bg-pink-100 dark:bg-pink-950/60', text: 'text-pink-700 dark:text-pink-300' },
   { bg: 'bg-zinc-100 dark:bg-zinc-800', text: 'text-zinc-700 dark:text-zinc-300' },
 ];
+
+function PorcelainReceiptMark() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 48 54"
+      className="h-[52px] w-12 shrink-0 drop-shadow-[0_8px_14px_rgba(37,33,111,0.16)]"
+    >
+      <path
+        d="M5 3.5C5 1.57 6.57 0 8.5 0h31C41.43 0 43 1.57 43 3.5V48l-4.75-4-4.75 4-4.75-4L24 48l-4.75-4-4.75 4-4.75-4L5 48V3.5Z"
+        fill="#F7F6FC"
+      />
+      <path d="M14 16h20M14 24h16M14 32h12" stroke="#302DA4" strokeWidth="3.5" strokeLinecap="round" />
+    </svg>
+  );
+}
 
 export default function HomePage() {
   const router = useRouter();
@@ -672,18 +688,10 @@ export default function HomePage() {
         {activeTab === 'sessions' && (
           <div className="space-y-6 animate-fadeIn">
             {/* Brand header */}
-            <header className="flex items-center justify-between pt-8 sm:pt-10 pb-3 mb-2">
-              <div className="flex items-center gap-3">
-                <EasySplitMark className="w-11 h-11 sm:w-12 sm:h-12 shadow-brand" priority />
-                <div className="text-left rtl:text-right">
-                  <h1 className="text-2xl sm:text-[26px] leading-tight">
-                    <EasySplitWordmark />
-                  </h1>
-                  <p className="text-xs sm:text-sm font-normal text-slate-500 dark:text-brand-200 mt-0.5">
-                    {t('splitBillSubtitle', undefined, 'Split your bill with EasySplit')}
-                  </p>
-                </div>
-              </div>
+            <header className="flex items-center justify-between pt-7 sm:pt-8 pb-2 mb-1">
+              <h1 className="text-[24px] sm:text-[25px] leading-none text-left rtl:text-right">
+                <EasySplitWordmark />
+              </h1>
 
               <div className="flex items-center gap-2.5">
                 <button
@@ -780,32 +788,19 @@ export default function HomePage() {
                   setShowStartSplitModal(true);
                   triggerHaptic('medium');
                 }}
-                className="brand-tap relative rounded-[28px] bg-brand-600 hover:bg-brand-700 active:bg-brand-800 p-5 flex flex-col justify-between overflow-hidden shadow-brand hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer group min-h-[256px] select-none text-left rtl:text-right"
+                className="home-start-card brand-tap relative rounded-[24px] p-5 flex flex-col justify-between overflow-hidden cursor-pointer group min-h-[256px] select-none text-left rtl:text-right"
               >
-                {/* Decorative Subtle Receipt Bill Outline Pattern */}
-                <div className="brand-start-glow absolute -top-14 -right-12 w-52 h-52 rounded-full pointer-events-none group-hover:scale-110 transition-transform duration-700" />
-                <div className="absolute top-1/3 right-3 -translate-y-1/2 w-24 h-32 opacity-10 pointer-events-none group-hover:rotate-6 group-hover:scale-105 transition-transform duration-700 ease-out">
-                  <svg viewBox="0 0 100 120" fill="none" stroke="currentColor" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" className="w-full h-full text-white">
-                    <rect x="10" y="10" width="80" height="100" rx="8" />
-                    <line x1="26" y1="36" x2="74" y2="36" />
-                    <line x1="26" y1="56" x2="58" y2="56" />
-                    <line x1="26" y1="76" x2="74" y2="76" />
-                    <line x1="26" y1="92" x2="48" y2="92" />
-                  </svg>
-                </div>
-
-                {/* Interactive Top-Left Bill Icon Badge */}
-                <div className="relative z-10 w-12 h-12 rounded-2xl bg-mint-300 text-brand-950 border border-white/30 flex items-center justify-center shadow-[0_14px_32px_-18px_rgba(77,225,161,0.85)] group-hover:scale-110 group-hover:rotate-3 transition-all duration-300">
-                  <Receipt className="w-6 h-6 text-brand-950" />
+                <div className="relative z-10 transition-transform duration-150 group-active:translate-y-px">
+                  <PorcelainReceiptMark />
                 </div>
 
                 {/* Card Typography Content */}
                 <div className="relative z-10 mt-auto pt-6">
-                  <h2 className="whitespace-pre-line text-2xl font-black text-white leading-tight tracking-tight">
-                    {t('startSplitCard', undefined, 'start\nsplit')}
+                  <h2 className="whitespace-pre-line text-2xl font-extrabold text-white leading-tight tracking-tight">
+                    {t('startSplitCard', undefined, 'Split a\nbill')}
                   </h2>
-                  <p className="text-xs font-semibold text-white/75 mt-1.5 leading-tight">
-                    {t('letTryItNow', undefined, "Let's try it now")}
+                  <p className="text-xs font-medium text-white/80 mt-1.5 leading-tight">
+                    {t('letTryItNow', undefined, 'Scan or upload a receipt')}
                   </p>
                 </div>
               </button>
@@ -819,15 +814,15 @@ export default function HomePage() {
                     setShowJoinSessionModal(true);
                     triggerHaptic('light');
                   }}
-                  className="home-secondary-action brand-tap relative rounded-[24px] bg-white p-4 flex flex-col justify-between overflow-hidden border border-slate-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-300 cursor-pointer group flex-1 min-h-[120px] select-none text-left rtl:text-right"
+                  className="home-secondary-action brand-tap relative rounded-[18px] bg-white dark:bg-brand-900 p-4 flex flex-col justify-between overflow-hidden border border-brand-100 dark:border-brand-800 shadow-[0_8px_20px_-18px_rgba(37,33,111,0.28)] transition-all duration-150 cursor-pointer group flex-1 min-h-[120px] select-none text-left rtl:text-right"
                 >
-                  <div className="w-10 h-10 rounded-2xl bg-brand-50 border border-brand-100 flex items-center justify-center text-brand-700 shadow-sm group-hover:scale-110 group-hover:rotate-3 transition-all duration-300">
-                    <QrCode className="w-5 h-5" />
+                  <div className="w-9 h-9 rounded-xl bg-brand-50 dark:bg-brand-800/70 border border-brand-100 dark:border-brand-700 flex items-center justify-center text-brand-700 dark:text-brand-200 transition-transform duration-150 group-active:translate-y-px">
+                    <QrCode className="w-[18px] h-[18px]" />
                   </div>
 
                   <div className="mt-auto pt-2">
-                    <h3 className="whitespace-pre-line text-sm font-extrabold text-brand-950 leading-snug">
-                      {t('joinSessionViaCode', undefined, 'join session\nvia code')}
+                    <h3 className="whitespace-pre-line text-sm font-semibold text-brand-950 dark:text-white leading-snug">
+                      {t('joinSessionViaCode', undefined, 'Join by\ncode')}
                     </h3>
                   </div>
                 </button>
@@ -839,15 +834,15 @@ export default function HomePage() {
                     setShowCreateGroupModal(true);
                     triggerHaptic('light');
                   }}
-                  className="home-secondary-action brand-tap relative rounded-[24px] bg-white p-4 flex flex-col justify-between overflow-hidden border border-slate-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-300 cursor-pointer group flex-1 min-h-[120px] select-none text-left rtl:text-right"
+                  className="home-secondary-action brand-tap relative rounded-[18px] bg-white dark:bg-brand-900 p-4 flex flex-col justify-between overflow-hidden border border-brand-100 dark:border-brand-800 shadow-[0_8px_20px_-18px_rgba(37,33,111,0.28)] transition-all duration-150 cursor-pointer group flex-1 min-h-[120px] select-none text-left rtl:text-right"
                 >
-                  <div className="w-10 h-10 rounded-2xl bg-peach-50 border border-peach-100 flex items-center justify-center text-peach-700 shadow-sm group-hover:scale-110 group-hover:-rotate-3 transition-all duration-300">
-                    <Users className="w-5 h-5" />
+                  <div className="w-9 h-9 rounded-xl bg-peach-50 dark:bg-peach-700/15 border border-peach-100 dark:border-peach-700/30 flex items-center justify-center text-peach-700 dark:text-peach-300 transition-transform duration-150 group-active:translate-y-px">
+                    <Users className="w-[18px] h-[18px]" />
                   </div>
 
                   <div className="mt-auto pt-2">
-                    <h3 className="whitespace-pre-line text-sm font-extrabold text-brand-950 leading-snug">
-                      {t('createAGroupCard', undefined, 'create a\ngroup')}
+                    <h3 className="whitespace-pre-line text-sm font-semibold text-brand-950 dark:text-white leading-snug">
+                      {t('createAGroupCard', undefined, 'Create a\ngroup')}
                     </h3>
                   </div>
                 </button>
@@ -857,7 +852,7 @@ export default function HomePage() {
             {/* YOUR ACTIVE GROUPS LIST (Real user-joined groups only) */}
             <div className="space-y-3 pt-2">
               <div className="flex items-center justify-between px-1">
-                <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
                   {t('yourActiveGroupsHeader', undefined, 'Your active groups')}
                 </h3>
               </div>
