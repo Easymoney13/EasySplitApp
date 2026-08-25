@@ -37,6 +37,9 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      - name: Set up Android command-line tools
+        uses: android-actions/setup-android@v3
+
       - name: Verify native toolchain requirements
         shell: bash
         run: |
@@ -50,10 +53,7 @@ jobs:
             echo "Capacitor 8 requires Xcode 26+, runner has $(xcodebuild -version | head -1)" >&2
             exit 1
           fi
-          if ! command -v sdkmanager >/dev/null 2>&1; then
-            echo "Android sdkmanager is not available on this runner" >&2
-            exit 1
-          fi
+          command -v sdkmanager
           sdkmanager --version
 
       - name: Ensure Android API 36 toolchain is present
