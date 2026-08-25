@@ -1,0 +1,85 @@
+name: EasySplit Task 1 Mobile Build Gate
+
+on:
+  push:
+    branches:
+      - task1-mobile-build
+
+permissions:
+  contents: write
+
+jobs:
+  verify-and-materialize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout Task 1 branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node 22 for pinned Capacitor CLI
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.16.0
+          cache: npm
+
+      - name: Expand approved Task 1 bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .task1
+          mkdir -p .task1
+          cat .task1-bundle.part-* | base64 -d | tar -xzf - -C .task1
+
+      - name: Materialize Task 1
+        run: python3 .task1/apply_task1.py .
+
+      - name: Update lockfile for pinned mobile dependencies
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Install exact dependency graph
+        run: npm ci
+
+      - name: Existing EasySplit web verification
+        run: npm run verify
+
+      - name: Existing strain regression
+        run: npm run test:strain
+
+      - name: Mobile shell verification and production bundle
+        env:
+          NEXT_PUBLIC_EASYSPLIT_API_ORIGIN: https://api.easysplit.invalid
+          NEXT_PUBLIC_EASYSPLIT_WEB_ORIGIN: https://easysplit.invalid
+        run: npm run verify:mobile-shell
+
+      - name: Handoff assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f mobile-dist/index.html
+          test ! -d ios
+          test ! -d android
+          git diff --check
+
+      - name: Upload mobile-dist evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: easysplit-mobile-dist-task1
+          path: mobile-dist
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Materialize one clean Task 1 branch commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .task1
+          rm -f .task1-bundle.part-*
+          rm -f .github/workflows/task1-mobile-build-gate.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "Add EasySplit mobile build layer"
+          git push origin HEAD:task1-mobile-build
