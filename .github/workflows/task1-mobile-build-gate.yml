@@ -33,7 +33,7 @@ jobs:
           cat .task1-bundle.part-* | base64 -d | tar -xzf - -C .task1
 
       - name: Materialize Task 1
-        run: python3 .task1/apply_task1.py .
+        run: python3 .task1/apply_task1.py . --allow-drift
 
       - name: Update lockfile for pinned mobile dependencies
         run: npm install --package-lock-only --ignore-scripts
