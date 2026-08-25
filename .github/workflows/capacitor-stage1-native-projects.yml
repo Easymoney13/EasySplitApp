@@ -212,10 +212,11 @@ jobs:
           git status --porcelain=v1 --untracked-files=all | tee "${DIAGNOSTICS}/status-after-stage.txt"
           git diff --cached --name-status | tee "${DIAGNOSTICS}/staged-name-status.txt"
           git diff --cached --stat | tee "${DIAGNOSTICS}/staged-stat.txt"
-          git diff --cached --quiet && {
+          if git diff --cached --quiet; then
             echo "No Stage 1 changes were produced" | tee "${DIAGNOSTICS}/stage-error.txt" >&2
             exit 1
-          }
+          fi
+          echo "Staged Stage 1 result contains verified changes." | tee "${DIAGNOSTICS}/stage-success.txt"
 
       - name: Validate the exact staged mutation surface
         shell: bash
