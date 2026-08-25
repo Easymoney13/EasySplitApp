@@ -40,6 +40,7 @@ import { cleanIsraeliPhone, isValidIsraeliPhone, triggerBitPayment } from '../..
 import { triggerHaptic } from '../../../../lib/haptics';
 import { clearRoomCredentials, getRoomMemberId, getRoomToken, roomHeaders, saveRoomCredentials } from '../../../../lib/roomTokens';
 import { apiUrl, realtimeUrl } from '../../../../lib/platformTransport';
+import { MOBILE_RECOVERY_EVENT } from '../../../../lib/mobileEvents';
 
 function createClientActionId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -72,6 +73,9 @@ export default function GroupWorkspacePage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  const activeGroupIdRef = useRef('');
+  const activeGroupTokenRef = useRef('');
+  const lastMobileRecoveryAtRef = useRef(0);
   const paymentLookupRef = useRef(false);
 
   const persistGroupToLocal = (grp: any) => {
@@ -209,6 +213,32 @@ export default function GroupWorkspacePage() {
     };
   }, [groupId, profile.displayName, profile.phoneNumber]);
 
+
+  useEffect(() => {
+    const recoverMobileRuntime = () => {
+      const now = Date.now();
+      if (now - lastMobileRecoveryAtRef.current < 1_500) return;
+      lastMobileRecoveryAtRef.current = now;
+
+      const id = activeGroupIdRef.current;
+      const accessToken = activeGroupTokenRef.current;
+      if (!id || !accessToken) return;
+
+      void fetchGroupData(id);
+      const staleSocket = socketRef.current;
+      socketRef.current = null;
+      if (staleSocket) {
+        staleSocket.onclose = null;
+        staleSocket.onerror = null;
+        try { staleSocket.close(); } catch (_) {}
+      }
+      connectWebSocket(id, accessToken);
+    };
+
+    window.addEventListener(MOBILE_RECOVERY_EVENT, recoverMobileRuntime);
+    return () => window.removeEventListener(MOBILE_RECOVERY_EVENT, recoverMobileRuntime);
+  }, [groupId]);
+
   const fetchGroupData = async (id: string) => {
     try {
       const res = await fetch(apiUrl(`/api/groups/${id}`), { headers: roomHeaders('group', id, false) });
@@ -232,6 +262,8 @@ export default function GroupWorkspacePage() {
   };
 
   const connectWebSocket = (id: string, accessToken: string) => {
+    activeGroupIdRef.current = id;
+    activeGroupTokenRef.current = accessToken;
     try {
       if (socketRef.current) {
         try { socketRef.current.close(); } catch (_) {}
@@ -318,7 +350,7 @@ export default function GroupWorkspacePage() {
         if (data.sessionId && !billData.id) {
           const groupToken = getRoomToken('group', group.id);
           saveRoomCredentials('session', data.sessionId, currentMemberId, groupToken);
-          window.location.href = `/session/${data.sessionId}?groupId=${group.id}`;
+          router.push(`/session/${data.sessionId}?groupId=${group.id}`);
         }
       }
     } catch (err) {

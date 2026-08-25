@@ -12,7 +12,14 @@
     "test:ocr-hebrew": "node --test tests/hebrew-ocr.integration.js",
     "verify:firestore": "node scripts/verify-firestore-parity.js",
     "cutover:firestore": "node scripts/safe-firestore-cutover.js",
-    "verify": "npm run test && npm run test:ocr-hebrew && npm run typecheck && npm run build"
+    "verify": "npm run test && npm run test:ocr-hebrew && npm run typecheck && npm run build",
+    "mobile:check-node": "node scripts/check-mobile-node.mjs",
+    "mobile:dev": "npm run mobile:check-node && vite --config vite.mobile.config.ts --mode mobile",
+    "mobile:build": "npm run mobile:check-node && vite build --config vite.mobile.config.ts --mode mobile",
+    "mobile:sync": "npm run mobile:build && cap sync",
+    "mobile:open:ios": "npm run mobile:check-node && cap open ios",
+    "mobile:open:android": "npm run mobile:check-node && cap open android",
+    "verify:mobile-shell": "node --test tests/mobile-*.test.mjs && npm run mobile:build"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
@@ -26,7 +33,15 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tesseract.js": "^7.0.0",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "@capacitor/android": "8.5.0",
+    "@capacitor/app": "8.1.1",
+    "@capacitor/core": "8.5.0",
+    "@capacitor/ios": "8.5.0",
+    "@capacitor/keyboard": "8.0.5",
+    "@capacitor/network": "8.0.1",
+    "@capacitor/splash-screen": "8.0.2",
+    "@capacitor/status-bar": "8.0.3"
   },
   "devDependencies": {
     "@types/canvas-confetti": "^1.9.0",
@@ -39,6 +54,9 @@
     "autoprefixer": "^10.4.19",
     "postcss": "^8.4.39",
     "tailwindcss": "^3.4.4",
-    "typescript": "^5.5.3"
+    "typescript": "^5.5.3",
+    "@capacitor/cli": "8.5.0",
+    "@vitejs/plugin-react": "6.1.0",
+    "vite": "8.2.2"
   }
 }

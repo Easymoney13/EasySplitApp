@@ -41,6 +41,7 @@ import { getReceiptPayableTotal } from '../../../../lib/receiptMath';
 import { allocateCentsProportionally, allocateTipAdjustedCents, splitCents, toCents } from '../../../../lib/debtMinimizer';
 import { fetchPaginatedAccountData } from '../../../../lib/accountClient';
 import { apiUrl, realtimeUrl } from '../../../../lib/platformTransport';
+import { MOBILE_RECOVERY_EVENT } from '../../../../lib/mobileEvents';
 
 function createClientActionId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -152,6 +153,9 @@ function SessionWorkspaceInner() {
   };
 
   const socketRef = useRef<WebSocket | null>(null);
+  const activeSessionIdRef = useRef('');
+  const activeSessionTokenRef = useRef('');
+  const lastMobileRecoveryAtRef = useRef(0);
   const paymentLaunchRef = useRef(false);
   const finishTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -235,6 +239,32 @@ function SessionWorkspaceInner() {
       if (socket) socket.close();
     };
   }, [sessionId, profile.displayName, profile.phoneNumber]);
+
+
+  useEffect(() => {
+    const recoverMobileRuntime = () => {
+      const now = Date.now();
+      if (now - lastMobileRecoveryAtRef.current < 1_500) return;
+      lastMobileRecoveryAtRef.current = now;
+
+      const id = activeSessionIdRef.current;
+      const accessToken = activeSessionTokenRef.current;
+      if (!id || !accessToken) return;
+
+      void fetchSessionData(id);
+      const staleSocket = socketRef.current;
+      socketRef.current = null;
+      if (staleSocket) {
+        staleSocket.onclose = null;
+        staleSocket.onerror = null;
+        try { staleSocket.close(); } catch (_) {}
+      }
+      connectWebSocket(id, accessToken);
+    };
+
+    window.addEventListener(MOBILE_RECOVERY_EVENT, recoverMobileRuntime);
+    return () => window.removeEventListener(MOBILE_RECOVERY_EVENT, recoverMobileRuntime);
+  }, [sessionId]);
 
   useEffect(() => {
     if (!profile.displayName) {
@@ -393,6 +423,8 @@ function SessionWorkspaceInner() {
   };
 
   const connectWebSocket = (id: string, accessToken: string) => {
+    activeSessionIdRef.current = id;
+    activeSessionTokenRef.current = accessToken;
     try {
       if (socketRef.current) {
         try { socketRef.current.close(); } catch (_) {}

@@ -1,0 +1,14 @@
+/* Mobile-only inset compatibility. The web app keeps its existing CSS unchanged. */
+html.easysplit-mobile body {
+  padding-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  padding-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
+  padding-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+}
+
+html.easysplit-mobile .safe-bottom-nav {
+  padding-bottom: max(0.625rem, var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+}
+
+html.easysplit-mobile .session-bottom-bar {
+  padding-bottom: max(1.25rem, var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+}
