@@ -476,10 +476,10 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     >
       {children}
 
-      {/* Global Onboarding Modal for New/Unauthenticated Users */}
+      {/* Global Onboarding / Profile Modal */}
       {showProfileModal && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-md animate-fadeIn" dir={isRtl ? 'rtl' : 'ltr'}>
-          <div role="dialog" aria-modal="true" aria-label={language === 'he' ? 'ברוכים הבאים ל-EasySplit' : 'Welcome to EasySplit'} className="w-full max-w-sm rounded-[24px] p-6 bg-white dark:bg-brand-900 border border-slate-200 dark:border-[#222C3D] text-slate-900 dark:text-white space-y-4 shadow-2xl transition-all">
+          <div role="dialog" aria-modal="true" aria-label={language === 'he' ? 'ברוכים הבאים ל-EasySplit' : 'Welcome to EasySplit'} className="w-full max-w-sm rounded-[28px] p-6 bg-white dark:bg-brand-900 border border-slate-200 dark:border-[#222C3D] text-slate-900 dark:text-white space-y-4 shadow-2xl transition-all">
             
             {/* Language Switcher */}
             <div className={`flex ${isRtl ? 'justify-start' : 'justify-end'} items-center`}>
@@ -502,13 +502,54 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
                 {firebaseUser
-                  ? (language === 'he' ? 'כדי להמשיך, יש להשלים שם ומספר טלפון להעברות תשלום.' : 'Complete your name and phone number to continue with payments.')
-                  : (language === 'he' ? 'מלא שם ומספר טלפון, או התחבר עם Google כדי לסנכרן בין מכשירים.' : 'Enter your name and phone number, or sign in with Google to sync across devices.')}
+                  ? (language === 'he' ? 'השלימו את מספר הטלפון כדי לאפשר העברות Bit/Paybox בחלוקות.' : 'Complete your phone number to enable Bit/Paybox transfers.')
+                  : (language === 'he' ? 'מלאו פרטים להמשך כאורח, או התחברו עם Google לסנכרון בין מכשירים.' : 'Enter your details, or sign in with Google to sync across devices.')}
               </p>
             </div>
 
+            {/* Google Account Status Badge if authenticated */}
+            {firebaseUser && (
+              <div className="p-3.5 rounded-2xl bg-white dark:bg-[#15142A] border border-slate-200/90 dark:border-[#2A2847] shadow-xs flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 overflow-hidden">
+                  {firebaseUser.photoURL ? (
+                    <img
+                      src={firebaseUser.photoURL}
+                      alt={firebaseUser.displayName || 'Google'}
+                      className="w-9 h-9 rounded-full object-cover shrink-0 ring-2 ring-slate-100 dark:ring-white/10"
+                    />
+                  ) : (
+                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-white font-bold text-sm flex items-center justify-center shrink-0 shadow-xs">
+                      {(firebaseUser.displayName || firebaseUser.email || 'U').charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="overflow-hidden min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                        {firebaseUser.displayName || 'Google User'}
+                      </span>
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 border border-emerald-200/50 dark:border-emerald-800/40 shrink-0">
+                        Google
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono truncate mt-0.5">
+                      {firebaseUser.email}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={loginWithGoogle}
+                  className="text-[11px] font-bold text-brand-600 dark:text-brand-300 px-3 py-1.5 rounded-xl bg-brand-50 hover:bg-brand-100 dark:bg-brand-950/60 dark:hover:bg-brand-900/60 transition-all shrink-0"
+                  title={language === 'he' ? 'החלף חשבון Google' : 'Switch Google account'}
+                >
+                  {language === 'he' ? 'החלף חשבון' : 'Switch'}
+                </button>
+              </div>
+            )}
+
             <form
-              className="space-y-2 pt-2"
+              className="space-y-3 pt-1"
               onSubmit={(event) => {
                 event.preventDefault();
                 const displayName = guestName.trim();
@@ -524,29 +565,46 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 localStorage.setItem('billsplit_phone', phoneNumber);
               }}
             >
-              <input
-                value={guestName}
-                onChange={(event) => setGuestName(event.target.value)}
-                maxLength={30}
-                placeholder={language === 'he' ? 'השם שיוצג לחברים' : 'Your display name'}
-                aria-label={language === 'he' ? 'שם תצוגה' : 'Display name'}
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold outline-none focus:border-slate-900 dark:focus:border-white dark:border-slate-700 dark:bg-slate-900"
-                required
-              />
-              <div className="relative">
-                <Phone className="pointer-events-none absolute left-3.5 rtl:left-auto rtl:right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <div>
+                <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block mb-1">
+                  {language === 'he' ? 'שם לתצוגה' : 'Display Name'}
+                </label>
                 <input
-                  type="tel"
-                  inputMode="tel"
-                  value={guestPhone}
-                  onChange={(event) => setGuestPhone(event.target.value)}
-                  maxLength={16}
-                  placeholder={language === 'he' ? 'מספר טלפון, למשל 0501234567' : 'Phone number, e.g. 0501234567'}
-                  aria-label={language === 'he' ? 'מספר טלפון' : 'Phone number'}
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 rtl:pl-4 rtl:pr-10 text-sm font-semibold outline-none focus:border-brand-600 dark:focus:border-brand-300 dark:border-slate-700 dark:bg-slate-900"
+                  value={guestName}
+                  onChange={(event) => setGuestName(event.target.value)}
+                  maxLength={30}
+                  placeholder={language === 'he' ? 'השם שיוצג לחברים' : 'Your display name'}
+                  aria-label={language === 'he' ? 'שם תצוגה' : 'Display name'}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold outline-none focus:border-brand-600 dark:focus:border-brand-400 dark:border-slate-700 dark:bg-slate-900"
                   required
                 />
               </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block mb-1">
+                  {language === 'he' ? 'מספר טלפון (Bit / Paybox)' : 'Phone Number (Bit / Paybox)'}
+                </label>
+                <div className="relative">
+                  <Phone className="pointer-events-none absolute left-3.5 rtl:left-auto rtl:right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="tel"
+                    inputMode="tel"
+                    value={guestPhone}
+                    onChange={(event) => setGuestPhone(event.target.value)}
+                    maxLength={16}
+                    placeholder={language === 'he' ? '0501234567' : '0501234567'}
+                    aria-label={language === 'he' ? 'מספר טלפון' : 'Phone number'}
+                    className={`w-full rounded-xl border ${guestPhone && !isValidIsraeliPhone(guestPhone) ? 'border-amber-400 dark:border-amber-500' : 'border-slate-200 dark:border-slate-700'} bg-slate-50 py-3 pl-10 pr-4 rtl:pl-4 rtl:pr-10 text-sm font-semibold font-mono outline-none focus:border-brand-600 dark:focus:border-brand-400 dark:bg-slate-900`}
+                    required
+                  />
+                </div>
+                {guestPhone && !isValidIsraeliPhone(guestPhone) && (
+                  <p className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold mt-1">
+                    {language === 'he' ? 'יש להזין מספר נייד תקין בן 10 ספרות המתחיל ב-05' : 'Please enter a valid 10-digit Israeli mobile number starting with 05'}
+                  </p>
+                )}
+              </div>
+
               <button
                 type="submit"
                 disabled={!guestName.trim() || !isValidIsraeliPhone(guestPhone)}
@@ -558,36 +616,38 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               </button>
             </form>
 
-            {!firebaseUser && <div className="pt-1">
-              <div className="mb-2 text-center text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                {language === 'he' ? 'או' : 'or'}
+            {!firebaseUser && (
+              <div className="pt-1">
+                <div className="mb-2 text-center text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  {language === 'he' ? 'או' : 'or'}
+                </div>
+                <button
+                  type="button"
+                  onClick={loginWithGoogle}
+                  className="w-full py-3.5 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-[#1C2638] dark:hover:bg-[#222E45] border border-slate-200 dark:border-[#2a374f] text-slate-800 dark:text-slate-100 text-sm font-bold shadow-md hover:shadow-lg transition-all active:scale-95 flex items-center justify-center gap-3"
+                >
+                  <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
+                    <path
+                      fill="#EA4335"
+                      d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.68 1.54 14.98 1 12 1 7.24 1 3.2 3.73 1.24 7.72l3.96 3.07C6.16 7.6 8.85 5.04 12 5.04z"
+                    />
+                    <path
+                      fill="#4285F4"
+                      d="M23.49 12.27c0-.81-.07-1.59-.2-2.33H12v4.42h6.45c-.28 1.47-1.11 2.71-2.36 3.56l3.66 2.84c2.14-1.97 3.38-4.88 3.38-8.49z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M5.2 10.79c-.25-.72-.39-1.49-.39-2.29s.14-1.57.39-2.29L1.24 3.14C.45 4.73 0 6.51 0 8.5s.45 3.77 1.24 5.36l3.96-3.07z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.66-2.84c-1.01.68-2.31 1.09-4.3 1.09-3.15 0-5.84-2.56-6.8-5.75L1.24 13.65C3.2 17.64 7.24 23 12 23z"
+                    />
+                  </svg>
+                  <span>{language === 'he' ? 'התחבר עם Google' : 'Sign in with Google'}</span>
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={loginWithGoogle}
-                className="w-full py-3.5 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-[#1C2638] dark:hover:bg-[#222E45] border border-slate-200 dark:border-[#2a374f] text-slate-800 dark:text-slate-100 text-sm font-bold shadow-md hover:shadow-lg transition-all active:scale-95 flex items-center justify-center gap-3"
-              >
-                <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
-                  <path
-                    fill="#EA4335"
-                    d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.68 1.54 14.98 1 12 1 7.24 1 3.2 3.73 1.24 7.72l3.96 3.07C6.16 7.6 8.85 5.04 12 5.04z"
-                  />
-                  <path
-                    fill="#4285F4"
-                    d="M23.49 12.27c0-.81-.07-1.59-.2-2.33H12v4.42h6.45c-.28 1.47-1.11 2.71-2.36 3.56l3.66 2.84c2.14-1.97 3.38-4.88 3.38-8.49z"
-                  />
-                  <path
-                    fill="#FBBC05"
-                    d="M5.2 10.79c-.25-.72-.39-1.49-.39-2.29s.14-1.57.39-2.29L1.24 3.14C.45 4.73 0 6.51 0 8.5s.45 3.77 1.24 5.36l3.96-3.07z"
-                  />
-                  <path
-                    fill="#34A853"
-                    d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.66-2.84c-1.01.68-2.31 1.09-4.3 1.09-3.15 0-5.84-2.56-6.8-5.75L1.24 13.65C3.2 17.64 7.24 23 12 23z"
-                  />
-                </svg>
-                <span>{language === 'he' ? 'התחבר עם Google' : 'Sign in with Google'}</span>
-              </button>
-            </div>}
+            )}
           </div>
         </div>
       )}

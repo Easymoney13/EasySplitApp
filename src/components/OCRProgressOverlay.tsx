@@ -34,7 +34,7 @@ export function OCRProgressOverlay({ isVisible }: OCRProgressOverlayProps) {
 
   return (
     <div
-      className="fixed inset-0 z-50 overflow-hidden bg-[#F8F8F4] text-brand-950 animate-fadeIn"
+      className="absolute inset-0 z-50 overflow-hidden bg-[#F8F8F4] text-brand-950 animate-fadeIn md:rounded-[34px]"
       dir={isRtl ? 'rtl' : 'ltr'}
     >
       <span className="sr-only" role="status" aria-live="polite">

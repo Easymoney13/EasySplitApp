@@ -41,6 +41,8 @@ import { triggerHaptic } from '../../../../lib/haptics';
 import { clearRoomCredentials, getRoomMemberId, getRoomToken, roomHeaders, saveRoomCredentials } from '../../../../lib/roomTokens';
 import { apiUrl, realtimeUrl } from '../../../../lib/platformTransport';
 import { MOBILE_RECOVERY_EVENT } from '../../../../lib/mobileEvents';
+import { Capacitor } from '@capacitor/core';
+import { Camera as CapCamera, CameraResultType, CameraSource } from '@capacitor/camera';
 
 function createClientActionId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -123,7 +125,37 @@ export default function GroupWorkspacePage() {
     } catch (e) {}
   };
 
-  const handleScanCamera = () => {
+  const handleScanCamera = async () => {
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const photo = await CapCamera.getPhoto({
+          quality: 90,
+          allowEditing: false,
+          resultType: CameraResultType.Base64,
+          source: CameraSource.Camera,
+        });
+        if (photo.base64String) {
+          setIsUploading(true);
+          try {
+            const dataUrl = `data:image/${photo.format || 'jpeg'};base64,${photo.base64String}`;
+            const draft = await createReceiptDraft(dataUrl, profile.displayName || 'Member');
+            setEditingBill(null);
+            setPendingReceiptDraft({ ...draft.receipt, imageQuality: draft.imageQuality, _previewImages: draft.previewImages });
+            setPendingScanId(draft.scanId);
+            setShowCreateBillModal(true);
+          } catch (err) {
+            console.error(err);
+            alert(receiptScanUserMessage(t));
+          } finally {
+            setIsUploading(false);
+          }
+          return;
+        }
+      } catch (e) {
+        console.warn('Native camera cancelled or failed:', e);
+        return;
+      }
+    }
     const isMobile = typeof window !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     const hasMediaDevices = typeof navigator !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
     if (isMobile || !hasMediaDevices) {

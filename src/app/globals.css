@@ -18,7 +18,7 @@
   --brand-peach-soft: #FFF1EA;
   --brand-mint: #4DE1A1;
   --brand-surface: #FFFFFF;
-  --brand-background: #F8F8FC;
+  --brand-background: #EDE8FF;
   --brand-border: #E6E4F0;
 }
 
@@ -41,13 +41,14 @@ html.dark {
 }
 
 html, body {
-  background-color: var(--brand-background);
+  background: linear-gradient(180deg, #FFFFFF 0%, #F9F7FF 40%, #EDE8FF 100%);
   min-height: 100vh;
   margin: 0;
   padding: 0;
 }
 
 html.dark, body.dark, .dark {
+  background: var(--brand-background) !important;
   background-color: var(--brand-background) !important;
   color: #FFFFFF !important;
 }
@@ -237,10 +238,14 @@ select:focus-visible {
 }
 
 .app-surface {
+  background: linear-gradient(180deg, #FFFFFF 0%, #FAF8FF 35%, #EDE7FE 100%);
+}
+
+.dark .app-surface {
   background:
-    radial-gradient(circle at 88% 6%, rgba(255, 152, 116, 0.10), transparent 25%),
-    radial-gradient(circle at 8% 30%, rgba(126, 118, 229, 0.09), transparent 27%),
-    var(--brand-background);
+    radial-gradient(circle at 88% 6%, rgba(255, 152, 116, 0.08), transparent 25%),
+    radial-gradient(circle at 8% 30%, rgba(126, 118, 229, 0.08), transparent 27%),
+    #0F0E22 !important;
 }
 
 .brand-card {
@@ -337,6 +342,11 @@ select:focus-visible {
 
 .safe-bottom-nav {
   padding-bottom: max(0.625rem, env(safe-area-inset-bottom));
+}
+
+.dark .safe-bottom-nav {
+  background-color: #100E2C !important;
+  border-color: #25216F !important;
 }
 
 .session-scroll-area {

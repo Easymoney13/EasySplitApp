@@ -740,7 +740,6 @@ app.prepare().then(() => {
       providerInput
       || normalizedScanId
       || ocrEvidence
-      || Object.values(normalizedAmounts).some((value) => value !== null)
     );
 
     const filteredItems = (parsedReceipt.items || []).map((item) => ({
@@ -1128,7 +1127,7 @@ app.prepare().then(() => {
   });
 
   server.get('/api/session/:idOrCode', authenticateUser, roomLookupRateLimit, async (req, res) => {
-    const sanitizedId = security.sanitizeString(req.params.idOrCode, 50);
+    const sanitizedId = security.sanitizeString(req.params.idOrCode, 100);
     const session = await db.getSession(sanitizedId);
     if (!session) {
       return res.status(404).json({ error: 'Session not found' });

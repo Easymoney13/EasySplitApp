@@ -49,6 +49,8 @@ import { triggerHaptic } from '../../lib/haptics';
 import { clearRoomCredentials, roomHeaders, saveRoomCredentials } from '../../lib/roomTokens';
 import { fetchPaginatedAccountData } from '../../lib/accountClient';
 import { apiUrl, publicWebUrl } from '../../lib/platformTransport';
+import { Capacitor } from '@capacitor/core';
+import { Camera as CapCamera, CameraResultType, CameraSource } from '@capacitor/camera';
 
 const PASTEL_COLORS = [
   { bg: 'bg-slate-100 dark:bg-slate-800', text: 'text-slate-800 dark:text-slate-200' },
@@ -92,6 +94,7 @@ export default function HomePage() {
     formatDual,
     isRtl,
     firebaseUser,
+    loginWithGoogle,
     logout
   } = useLanguage();
 
@@ -162,7 +165,37 @@ export default function HomePage() {
     }
   };
 
-  const handleScanCamera = () => {
+  const handleScanCamera = async () => {
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const photo = await CapCamera.getPhoto({
+          quality: 90,
+          allowEditing: false,
+          resultType: CameraResultType.Base64,
+          source: CameraSource.Camera,
+        });
+        if (photo.base64String) {
+          setIsUploading(true);
+          try {
+            const dataUrl = `data:image/${photo.format || 'jpeg'};base64,${photo.base64String}`;
+            const draft = await createReceiptDraft(dataUrl, profile.displayName || 'Host');
+            setPendingReceiptDraft({ ...draft.receipt, imageQuality: draft.imageQuality, _previewImages: draft.previewImages });
+            setPendingScanId(draft.scanId);
+            setPendingRecoveryToken(draft.recoveryToken);
+            setShowManualModal(true);
+          } catch (err) {
+            console.error(err);
+            alert(receiptScanUserMessage(t));
+          } finally {
+            setIsUploading(false);
+          }
+          return;
+        }
+      } catch (e) {
+        console.warn('Native camera cancelled or failed:', e);
+        return;
+      }
+    }
     const isMobile = typeof window !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     const hasMediaDevices = typeof navigator !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
     if (isMobile || !hasMediaDevices) {
@@ -650,7 +683,7 @@ export default function HomePage() {
   const activeTabIndex = activeTab === 'history' ? 0 : activeTab === 'sessions' ? 1 : 2;
 
   return (
-    <div className="app-surface flex flex-col h-full min-h-0 flex-1 p-4 pb-0 transition-colors duration-300 dark:text-white">
+    <div className="app-surface flex flex-col h-full min-h-0 flex-1 transition-colors duration-300 dark:text-white">
       {/* OCR Animated Progress Screen */}
       <OCRProgressOverlay isVisible={isUploading} />
 
@@ -683,13 +716,13 @@ export default function HomePage() {
       )}
 
       {/* Main Content Area */}
-      <div className="flex-1 min-h-0 overflow-y-auto space-y-6 pb-4">
+      <div className="flex-1 min-h-0 overflow-y-auto space-y-6 px-4 pt-4 pb-4">
         {/* TAB 2: SESSIONS (Middle tab) */}
         {activeTab === 'sessions' && (
           <div className="space-y-6 animate-fadeIn">
             {/* Brand header */}
             <header className="flex items-center justify-between pt-7 sm:pt-8 pb-2 mb-1">
-              <h1 className="text-[24px] sm:text-[25px] leading-none text-left rtl:text-right">
+              <h1 className="text-[29px] sm:text-[33px] leading-none text-left rtl:text-right">
                 <EasySplitWordmark />
               </h1>
 
@@ -779,7 +812,7 @@ export default function HomePage() {
               className="hidden"
             />
 
-            {/* 3 Main Action Cards Layout Matching Picture 1 */}
+            {/* 3 Main Action Cards Layout */}
             <div className="grid grid-cols-2 gap-3.5 pt-1">
               {/* Left Column: Tall Purple Card (start split) */}
               <button
@@ -796,8 +829,8 @@ export default function HomePage() {
 
                 {/* Card Typography Content */}
                 <div className="relative z-10 mt-auto pt-6">
-                  <h2 className="whitespace-pre-line text-2xl font-extrabold text-white leading-tight tracking-tight">
-                    {t('startSplitCard', undefined, 'Split a\nbill')}
+                  <h2 className="text-xl sm:text-2xl font-black text-white leading-tight tracking-tight whitespace-nowrap">
+                    {t('startSplitCard', undefined, 'Split a bill')}
                   </h2>
                   <p className="text-xs font-medium text-white/80 mt-1.5 leading-tight">
                     {t('letTryItNow', undefined, 'Scan or upload a receipt')}
@@ -805,46 +838,52 @@ export default function HomePage() {
                 </div>
               </button>
 
-              {/* Right Column: 2 Stacked Cards */}
+              {/* Right Column: 2 Stacked Action Cards */}
               <div className="flex flex-col gap-3.5">
-                {/* Top Card: join session via code */}
+                {/* Top Card: Join by code (Matching Pic 1) */}
                 <button
                   type="button"
                   onClick={() => {
                     setShowJoinSessionModal(true);
                     triggerHaptic('light');
                   }}
-                  className="home-secondary-action brand-tap relative rounded-[18px] bg-white dark:bg-brand-900 p-4 flex flex-col justify-between overflow-hidden border border-brand-100 dark:border-brand-800 shadow-[0_8px_20px_-18px_rgba(37,33,111,0.28)] transition-all duration-150 cursor-pointer group flex-1 min-h-[120px] select-none text-left rtl:text-right"
+                  className="home-secondary-action brand-tap relative rounded-[22px] bg-white dark:bg-brand-900 p-4 flex flex-col justify-between overflow-hidden border border-slate-200/80 dark:border-brand-800 shadow-[0_8px_20px_-18px_rgba(37,33,111,0.28)] transition-all duration-150 cursor-pointer group flex-1 min-h-[120px] select-none text-left rtl:text-right"
                 >
-                  <div className="w-9 h-9 rounded-xl bg-brand-50 dark:bg-brand-800/70 border border-brand-100 dark:border-brand-700 flex items-center justify-center text-brand-700 dark:text-brand-200 transition-transform duration-150 group-active:translate-y-px">
-                    <QrCode className="w-[18px] h-[18px]" />
-                  </div>
-
-                  <div className="mt-auto pt-2">
-                    <h3 className="whitespace-pre-line text-sm font-semibold text-brand-950 dark:text-white leading-snug">
-                      {t('joinSessionViaCode', undefined, 'Join by\ncode')}
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-brand-50 dark:bg-brand-800/70 border border-brand-100 dark:border-brand-700 flex items-center justify-center text-brand-700 dark:text-brand-200 shrink-0 transition-transform duration-150 group-active:translate-y-px">
+                      <QrCode className="w-5 h-5" />
+                    </div>
+                    <h3 className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white leading-tight">
+                      {t('joinSessionViaCode', undefined, 'Join by code')}
                     </h3>
                   </div>
+
+                  <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 mt-2 font-normal leading-relaxed whitespace-nowrap truncate">
+                    {t('joinSessionSubtitle', undefined, 'join friends session')}
+                  </p>
                 </button>
 
-                {/* Bottom Card: create a group */}
+                {/* Bottom Card: Create a group */}
                 <button
                   type="button"
                   onClick={() => {
                     setShowCreateGroupModal(true);
                     triggerHaptic('light');
                   }}
-                  className="home-secondary-action brand-tap relative rounded-[18px] bg-white dark:bg-brand-900 p-4 flex flex-col justify-between overflow-hidden border border-brand-100 dark:border-brand-800 shadow-[0_8px_20px_-18px_rgba(37,33,111,0.28)] transition-all duration-150 cursor-pointer group flex-1 min-h-[120px] select-none text-left rtl:text-right"
+                  className="home-secondary-action brand-tap relative rounded-[22px] bg-white dark:bg-brand-900 p-4 flex flex-col justify-between overflow-hidden border border-slate-200/80 dark:border-brand-800 shadow-[0_8px_20px_-18px_rgba(37,33,111,0.28)] transition-all duration-150 cursor-pointer group flex-1 min-h-[120px] select-none text-left rtl:text-right"
                 >
-                  <div className="w-9 h-9 rounded-xl bg-peach-50 dark:bg-peach-700/15 border border-peach-100 dark:border-peach-700/30 flex items-center justify-center text-peach-700 dark:text-peach-300 transition-transform duration-150 group-active:translate-y-px">
-                    <Users className="w-[18px] h-[18px]" />
-                  </div>
-
-                  <div className="mt-auto pt-2">
-                    <h3 className="whitespace-pre-line text-sm font-semibold text-brand-950 dark:text-white leading-snug">
-                      {t('createAGroupCard', undefined, 'Create a\ngroup')}
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-peach-50 dark:bg-peach-700/15 border border-peach-100 dark:border-peach-700/30 flex items-center justify-center text-peach-700 dark:text-peach-300 shrink-0 transition-transform duration-150 group-active:translate-y-px">
+                      <Users className="w-5 h-5" />
+                    </div>
+                    <h3 className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white leading-tight">
+                      {t('createAGroupCard', undefined, 'Create a group')}
                     </h3>
                   </div>
+
+                  <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 mt-2 font-normal leading-relaxed whitespace-nowrap truncate">
+                    {t('createGroupSubtitle', undefined, 'start group with friends')}
+                  </p>
                 </button>
               </div>
             </div>
@@ -1336,6 +1375,79 @@ export default function HomePage() {
             </div>
 
             <form onSubmit={handleSaveSettings} className="space-y-4">
+              {/* Google Account Card */}
+              {firebaseUser ? (
+                <div className="photo-card p-3.5 bg-white dark:bg-[#15142A] border border-slate-200/90 dark:border-[#2A2847] shadow-xs rounded-2xl flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 overflow-hidden">
+                    {firebaseUser.photoURL ? (
+                      <img
+                        src={firebaseUser.photoURL}
+                        alt="Google"
+                        className="w-9 h-9 rounded-full object-cover shrink-0 ring-2 ring-slate-100 dark:ring-white/10"
+                      />
+                    ) : (
+                      <div className="w-9 h-9 rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-white font-bold text-sm flex items-center justify-center shrink-0 shadow-xs">
+                        {(firebaseUser.displayName || firebaseUser.email || 'U').charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                    <div className="overflow-hidden min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                          {firebaseUser.displayName || 'Google User'}
+                        </span>
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 border border-emerald-200/50 dark:border-emerald-800/40 shrink-0">
+                          Google
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono truncate mt-0.5">
+                        {firebaseUser.email}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={loginWithGoogle}
+                    className="text-[11px] font-bold text-brand-600 dark:text-brand-300 px-3 py-1.5 rounded-xl bg-brand-50 hover:bg-brand-100 dark:bg-brand-950/60 dark:hover:bg-brand-900/60 transition-all shrink-0"
+                  >
+                    {t('switchGoogleAccount', undefined, 'Switch Account')}
+                  </button>
+                </div>
+              ) : (
+                <div className="photo-card p-4 bg-white dark:bg-brand-900 border border-slate-200/80 dark:border-white/5 shadow-md shadow-slate-950/10 space-y-3 rounded-2xl">
+                  <div className="flex items-start gap-3">
+                    <div className="p-2.5 rounded-xl bg-brand-50 dark:bg-brand-950 text-brand-600 dark:text-brand-300 shrink-0">
+                      <svg className="w-5 h-5" viewBox="0 0 24 24">
+                        <path fill="#EA4335" d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.68 1.54 14.98 1 12 1 7.24 1 3.2 3.73 1.24 7.72l3.96 3.07C6.16 7.6 8.85 5.04 12 5.04z"/>
+                        <path fill="#4285F4" d="M23.49 12.27c0-.81-.07-1.59-.2-2.33H12v4.42h6.45c-.28 1.47-1.11 2.71-2.36 3.56l3.66 2.84c2.14-1.97 3.38-4.88 3.38-8.49z"/>
+                        <path fill="#FBBC05" d="M5.2 10.79c-.25-.72-.39-1.49-.39-2.29s.14-1.57.39-2.29L1.24 3.14C.45 4.73 0 6.51 0 8.5s.45 3.77 1.24 5.36l3.96-3.07z"/>
+                        <path fill="#34A853" d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.66-2.84c-1.01.68-2.31 1.09-4.3 1.09-3.15 0-5.84-2.56-6.8-5.75L1.24 13.65C3.2 17.64 7.24 23 12 23z"/>
+                      </svg>
+                    </div>
+                    <div className="flex-1">
+                      <h4 className="font-extrabold text-xs text-slate-900 dark:text-white">
+                        {t('connectGoogleAccount', undefined, 'Connect Google Account')}
+                      </h4>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
+                        {t('connectGoogleDesc', undefined, 'Sign in with Google to sync your groups, splits, and history across all your devices.')}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={loginWithGoogle}
+                    className="w-full py-2.5 px-4 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-[#1C2638] dark:hover:bg-[#222E45] border border-slate-200 dark:border-[#2a374f] text-slate-800 dark:text-slate-100 text-xs font-bold shadow-xs transition-all active:scale-95 flex items-center justify-center gap-2"
+                  >
+                    <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                      <path fill="#EA4335" d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.68 1.54 14.98 1 12 1 7.24 1 3.2 3.73 1.24 7.72l3.96 3.07C6.16 7.6 8.85 5.04 12 5.04z"/>
+                      <path fill="#4285F4" d="M23.49 12.27c0-.81-.07-1.59-.2-2.33H12v4.42h6.45c-.28 1.47-1.11 2.71-2.36 3.56l3.66 2.84c2.14-1.97 3.38-4.88 3.38-8.49z"/>
+                      <path fill="#FBBC05" d="M5.2 10.79c-.25-.72-.39-1.49-.39-2.29s.14-1.57.39-2.29L1.24 3.14C.45 4.73 0 6.51 0 8.5s.45 3.77 1.24 5.36l3.96-3.07z"/>
+                      <path fill="#34A853" d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.66-2.84c-1.01.68-2.31 1.09-4.3 1.09-3.15 0-5.84-2.56-6.8-5.75L1.24 13.65C3.2 17.64 7.24 23 12 23z"/>
+                    </svg>
+                    <span>{t('signInWithGoogle', undefined, 'Sign in with Google')}</span>
+                  </button>
+                </div>
+              )}
+
               {/* Personal Info Card */}
               <div className="photo-card p-5 bg-white dark:bg-brand-900 border border-slate-200/80 dark:border-white/5 shadow-md shadow-slate-950/10 space-y-4 rounded-2xl">
                 <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
@@ -1499,8 +1611,8 @@ export default function HomePage() {
       </div>
 
       {/* Ultra-Smooth LTR & RTL Animated Sliding Modern Navbar */}
-      <nav className="safe-bottom-nav shrink-0 w-full z-40 p-2.5 bg-white/90 dark:bg-brand-950/92 border-t border-brand-100 dark:border-brand-800 backdrop-blur-xl shadow-[0_-8px_28px_rgba(37,33,111,0.08)] mt-auto">
-        <div className="relative grid grid-cols-3 gap-2 p-1 bg-brand-50/90 dark:bg-brand-900/90 rounded-full border border-brand-100 dark:border-brand-800">
+      <nav className="safe-bottom-nav shrink-0 w-full z-40 p-2.5 bg-white/90 dark:bg-[#100E2C] border-t border-brand-100/80 dark:border-brand-900/60 backdrop-blur-xl shadow-[0_-8px_28px_rgba(37,33,111,0.08)] mt-auto">
+        <div className="relative grid grid-cols-3 gap-2 p-1 bg-brand-50/90 dark:bg-[#181643] rounded-full border border-brand-100 dark:border-brand-800/80">
           
           {/* Animated Sliding Pill Indicator */}
           <div

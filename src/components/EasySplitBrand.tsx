@@ -23,9 +23,9 @@ export function EasySplitMark({ className = 'w-12 h-12', priority = false }: Eas
   );
 }
 
-export function EasySplitWordmark({ compact = false }: { compact?: boolean }) {
+export function EasySplitWordmark({ compact = false, className = '' }: { compact?: boolean; className?: string }) {
   return (
-    <span dir="ltr" className="inline-flex items-baseline font-rounded font-semibold tracking-[-0.035em] text-brand-950 dark:text-white [unicode-bidi:isolate]">
+    <span dir="ltr" className={`inline-flex items-baseline font-rounded font-semibold tracking-[-0.035em] text-brand-950 dark:text-white [unicode-bidi:isolate] ${className}`}>
       Easy<span className="text-brand-600 dark:text-brand-300">Split</span>
       {!compact && <span className="sr-only"> app</span>}
     </span>

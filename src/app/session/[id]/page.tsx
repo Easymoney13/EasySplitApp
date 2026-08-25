@@ -95,6 +95,70 @@ class SessionErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 }
 
+function AnimatedPriceCounter({
+  amount,
+  formatDual,
+  currency,
+}: {
+  amount: number;
+  formatDual?: (amount: number, currency: string) => { primary: string; secondary?: string };
+  currency: string;
+}) {
+  const [displayAmount, setDisplayAmount] = useState(amount);
+  const [isChanging, setIsChanging] = useState(false);
+  const prevAmountRef = useRef(amount);
+
+  useEffect(() => {
+    if (prevAmountRef.current === amount) return;
+    const startValue = displayAmount;
+    const endValue = amount;
+    const startTime = performance.now();
+    const duration = 340;
+    setIsChanging(true);
+
+    let animationFrameId: number;
+
+    const animate = (currentTime: number) => {
+      const elapsed = currentTime - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      // smooth easeOutExpo
+      const ease = progress === 1 ? 1 : 1 - Math.pow(2, -10 * progress);
+      const current = startValue + (endValue - startValue) * ease;
+      setDisplayAmount(current);
+
+      if (progress < 1) {
+        animationFrameId = requestAnimationFrame(animate);
+      } else {
+        setDisplayAmount(endValue);
+        prevAmountRef.current = endValue;
+        setTimeout(() => setIsChanging(false), 140);
+      }
+    };
+
+    animationFrameId = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(animationFrameId);
+  }, [amount]);
+
+  const dual = formatDual ? formatDual(displayAmount, currency) : { primary: `${displayAmount.toFixed(2)}` };
+
+  return (
+    <div className="flex items-baseline gap-1.5">
+      <span
+        className={`text-xl sm:text-2xl font-black text-slate-900 dark:text-white transition-all duration-200 ${
+          isChanging ? 'text-brand-600 dark:text-brand-300 scale-105 inline-block' : ''
+        }`}
+      >
+        {dual.primary}
+      </span>
+      {dual.secondary && (
+        <span className="text-xs font-bold text-slate-400">
+          ({dual.secondary})
+        </span>
+      )}
+    </div>
+  );
+}
+
 function SessionWorkspaceInner() {
   const params = useParams();
   const router = useRouter();
@@ -164,7 +228,7 @@ function SessionWorkspaceInner() {
   }, []);
 
   useEffect(() => {
-    if (!sessionId || !profile.displayName) return;
+    if (!sessionId) return;
     let disposed = false;
     let pollInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -964,8 +1028,8 @@ function SessionWorkspaceInner() {
           )}
         </div>
 
-        {/* Item Cards List grouped inside a single container with rich styling */}
-        <div className="bg-white dark:bg-[#141B28] rounded-2xl border border-slate-200/80 dark:border-white/10 divide-y divide-slate-100 dark:divide-white/5 overflow-hidden shadow-md">
+        {/* Item Cards List with distinct spacing and modern rounded card styling */}
+        <div className="space-y-3">
           {validItems.map((item: any) => {
             const claimants = Array.isArray(item?.claimedBy) ? item.claimedBy : [];
             const isClaimedByMe = claimants.includes(currentMemberId);
@@ -1027,15 +1091,15 @@ function SessionWorkspaceInner() {
                 role={isAccountingLocked ? undefined : 'button'}
                 tabIndex={isAccountingLocked ? undefined : 0}
                 aria-pressed={isAccountingLocked ? undefined : isClaimedByMe}
-                className={`relative p-4 sm:p-5 transition-all flex flex-col ${isAccountingLocked ? '' : 'cursor-pointer'} ${
+                className={`relative p-4 sm:p-5 rounded-2xl transition-all flex flex-col border ${isAccountingLocked ? '' : 'cursor-pointer active:scale-[0.99]'} ${
                   isClaimedByMe
-                    ? 'bg-brand-500/[0.07] dark:bg-brand-500/[0.12]'
-                    : 'hover:bg-slate-50/70 dark:hover:bg-white/[0.02]'
+                    ? 'bg-brand-500/[0.08] dark:bg-brand-500/[0.15] border-brand-400 dark:border-brand-500/60 shadow-md shadow-brand-500/10'
+                    : 'bg-white dark:bg-[#141B28] border-slate-200/80 dark:border-white/10 shadow-xs hover:border-slate-300 dark:hover:border-white/20'
                 }`}
               >
                 {/* Visual left accent bar when claimed */}
                 {isClaimedByMe && (
-                  <div className="absolute top-0 bottom-0 w-1.5 bg-gradient-to-b from-brand-500 to-peach-400 ltr:left-0 rtl:right-0 shadow-sm" />
+                  <div className="absolute top-3 bottom-3 w-1.5 rounded-full bg-gradient-to-b from-brand-500 to-peach-400 ltr:left-1.5 rtl:right-1.5 shadow-xs" />
                 )}
 
                 <div className="flex items-start justify-between mb-1">
@@ -1113,23 +1177,6 @@ function SessionWorkspaceInner() {
                     })()}
                   </div>
                 </div>
-
-                {/* Claim state and split status */}
-                <div className="flex items-center justify-between pt-3 mt-2.5 border-t border-slate-100 dark:border-white/5">
-                  <span className={`text-[10px] font-black px-2.5 py-1 rounded-full ${
-                    splitCount === 0
-                      ? 'text-slate-500 bg-slate-100 dark:bg-white/5 dark:text-slate-400'
-                      : isClaimedByMe
-                        ? 'text-brand-700 bg-brand-100 dark:bg-brand-500/20 dark:text-brand-300'
-                        : 'text-slate-700 bg-slate-100 dark:bg-[#1A2232] dark:text-slate-300'
-                  }`}>
-                    {splitCount === 0
-                      ? t('availableLabel', undefined, 'Available')
-                      : splitCount > 1
-                        ? t('splitBetweenLabel', { count: splitCount }, `Split between ${splitCount}`)
-                        : t('claimedByLabel', { name: claimantDetails[0]?.fullName || 'Member' }, `Claimed by ${claimantDetails[0]?.fullName || 'Member'}`)}
-                  </span>
-                </div>
               </div>
             );
           })}
@@ -1150,16 +1197,11 @@ function SessionWorkspaceInner() {
       {!isSessionClosed && <div className="session-bottom-bar relative z-40 w-full shrink-0 p-5 bg-white/95 dark:bg-brand-950/90 border-t border-slate-100 dark:border-white/5 backdrop-blur-xl flex items-center justify-between shadow-2xl">
         <div>
           <span className="text-xs text-slate-500 dark:text-slate-400 block">{t('yourShareLabel', undefined, 'Your Share')}</span>
-          {(() => {
-            type DualPriceResult = { primary: string; secondary?: string };
-            const shareDual: DualPriceResult = formatDual ? formatDual(memberCalculations.myShare || 0, session?.currency || 'NIS') : { primary: `${memberCalculations.myShare || 0}` };
-            return (
-              <div className="flex items-baseline gap-1.5">
-                <span className="text-xl font-bold text-slate-900 dark:text-white">{shareDual?.primary || '0.00'}</span>
-                {shareDual?.secondary && <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">({shareDual.secondary})</span>}
-              </div>
-            );
-          })()}
+          <AnimatedPriceCounter
+            amount={memberCalculations.myShare || 0}
+            formatDual={formatDual}
+            currency={session?.currency || 'NIS'}
+          />
           {isGroupLinked && <span className="text-[9px] font-bold text-brand-600 dark:text-brand-300">{isRtl ? 'ייכלל במאזן הקבוצה' : 'Included in group balance'}</span>}
         </div>
 

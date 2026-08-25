@@ -66,5 +66,11 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>EasySplit requires camera access to scan and OCR physical restaurant bills and receipts.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>EasySplit requires access to your photo library to select receipt images for bill splitting.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>EasySplit requires permission to save receipt summaries and payment QR codes to your photo library.</string>
 </dict>
 </plist>
