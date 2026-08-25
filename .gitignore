@@ -69,3 +69,7 @@ id_dsa
 id_ecdsa
 id_ed25519
 id_rsa
+
+# EasySplit mobile build output and local mobile environment
+/mobile-dist/
+!.env.mobile.example
