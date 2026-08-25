@@ -202,14 +202,153 @@ jobs:
           Path('docs/capacitor-stage1-handoff.md').write_text(content, encoding='utf-8')
           PY
 
-      - name: Materialize one clean Stage 1 result commit
+      - name: Stage the generated Stage 1 result
         shell: bash
         run: |
           set -euo pipefail
+          DIAGNOSTICS="${RUNNER_TEMP}/stage1-finalizer"
+          mkdir -p "${DIAGNOSTICS}"
+          git add --all -- ios android docs/capacitor-stage1-handoff.md
+          git status --porcelain=v1 --untracked-files=all | tee "${DIAGNOSTICS}/status-after-stage.txt"
+          git diff --cached --name-status | tee "${DIAGNOSTICS}/staged-name-status.txt"
+          git diff --cached --stat | tee "${DIAGNOSTICS}/staged-stat.txt"
+          git diff --cached --quiet && {
+            echo "No Stage 1 changes were produced" | tee "${DIAGNOSTICS}/stage-error.txt" >&2
+            exit 1
+          }
+
+      - name: Validate the exact staged mutation surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          DIAGNOSTICS="${RUNNER_TEMP}/stage1-finalizer"
+          python3 - <<'PY' | tee "${DIAGNOSTICS}/staged-path-validation.txt"
+          import subprocess
+
+          paths = subprocess.check_output(
+              ["git", "diff", "--cached", "--name-only"],
+              text=True,
+          ).splitlines()
+          unexpected = [
+              path for path in paths
+              if not (
+                  path.startswith("ios/")
+                  or path.startswith("android/")
+                  or path == "docs/capacitor-stage1-handoff.md"
+              )
+          ]
+          if unexpected:
+              raise SystemExit(
+                  "Unexpected staged paths:\n" + "\n".join(unexpected)
+              )
+          required = {
+              "ios": any(path.startswith("ios/") for path in paths),
+              "android": any(path.startswith("android/") for path in paths),
+              "handoff": "docs/capacitor-stage1-handoff.md" in paths,
+          }
+          missing = [name for name, present in required.items() if not present]
+          if missing:
+              raise SystemExit(
+                  "Missing required Stage 1 outputs: " + ", ".join(missing)
+              )
+          print(f"Validated {len(paths)} staged paths; mutation surface is restricted to ios/, android/, and the handoff.")
+          PY
+
+      - name: Validate staged diff integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          DIAGNOSTICS="${RUNNER_TEMP}/stage1-finalizer"
+          if ! git diff --cached --check >"${DIAGNOSTICS}/diff-check.txt" 2>&1; then
+            cat "${DIAGNOSTICS}/diff-check.txt" >&2
+            exit 1
+          fi
+          echo "Staged diff integrity check passed." | tee "${DIAGNOSTICS}/diff-check.txt"
+
+      - name: Create the single Stage 1 result commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          DIAGNOSTICS="${RUNNER_TEMP}/stage1-finalizer"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add --all -- ios android docs/capacitor-stage1-handoff.md
-          git diff --cached --check
-          git diff --cached --quiet && { echo "No Stage 1 changes were produced" >&2; exit 1; }
-          git commit -m "Initialize Capacitor iOS and Android projects [skip ci]"
-          git push origin HEAD:capacitor-stage1-native-projects
+          if ! git commit -m "Initialize Capacitor iOS and Android projects [skip ci]" >"${DIAGNOSTICS}/commit.txt" 2>&1; then
+            cat "${DIAGNOSTICS}/commit.txt" >&2
+            exit 1
+          fi
+          cat "${DIAGNOSTICS}/commit.txt"
+
+      - name: Verify the result commit and clean working tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          DIAGNOSTICS="${RUNNER_TEMP}/stage1-finalizer"
+          python3 - <<'PY' | tee "${DIAGNOSTICS}/commit-path-validation.txt"
+          import subprocess
+
+          paths = subprocess.check_output(
+              ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"],
+              text=True,
+          ).splitlines()
+          unexpected = [
+              path for path in paths
+              if not (
+                  path.startswith("ios/")
+                  or path.startswith("android/")
+                  or path == "docs/capacitor-stage1-handoff.md"
+              )
+          ]
+          if unexpected:
+              raise SystemExit(
+                  "Unexpected committed paths:\n" + "\n".join(unexpected)
+              )
+          if not any(path.startswith("ios/") for path in paths):
+              raise SystemExit("The result commit does not contain ios/.")
+          if not any(path.startswith("android/") for path in paths):
+              raise SystemExit("The result commit does not contain android/.")
+          if "docs/capacitor-stage1-handoff.md" not in paths:
+              raise SystemExit("The result commit does not contain the Stage 1 handoff.")
+          print(f"Validated {len(paths)} committed paths.")
+          PY
+          git show --stat --oneline --summary HEAD | tee "${DIAGNOSTICS}/commit-summary.txt"
+          DIRTY="$(git status --porcelain=v1 --untracked-files=all)"
+          if [ -n "${DIRTY}" ]; then
+            printf '%s\n' "${DIRTY}" | tee "${DIAGNOSTICS}/dirty-after-commit.txt" >&2
+            exit 1
+          fi
+          echo "Working tree is clean after the result commit." | tee "${DIAGNOSTICS}/clean-tree.txt"
+
+      - name: Push the verified Stage 1 result commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          DIAGNOSTICS="${RUNNER_TEMP}/stage1-finalizer"
+          REMOTE_HEAD="$(git ls-remote origin refs/heads/capacitor-stage1-native-projects | awk '{print $1}')"
+          EXPECTED_PARENT="$(git rev-parse HEAD^)"
+          {
+            echo "remote_head=${REMOTE_HEAD}"
+            echo "expected_parent=${EXPECTED_PARENT}"
+            echo "result_commit=$(git rev-parse HEAD)"
+          } | tee "${DIAGNOSTICS}/push-precondition.txt"
+          if [ "${REMOTE_HEAD}" != "${EXPECTED_PARENT}" ]; then
+            echo "Remote branch moved during the verified run; refusing a non-fast-forward or stale push." | tee "${DIAGNOSTICS}/push-error.txt" >&2
+            exit 1
+          fi
+          if ! git push --porcelain origin HEAD:capacitor-stage1-native-projects >"${DIAGNOSTICS}/push.txt" 2>&1; then
+            cat "${DIAGNOSTICS}/push.txt" >&2
+            exit 1
+          fi
+          cat "${DIAGNOSTICS}/push.txt"
+          REMOTE_AFTER="$(git ls-remote origin refs/heads/capacitor-stage1-native-projects | awk '{print $1}')"
+          test "${REMOTE_AFTER}" = "$(git rev-parse HEAD)"
+          echo "remote_after=${REMOTE_AFTER}" | tee "${DIAGNOSTICS}/push-confirmation.txt"
+
+      - name: Upload finalizer diagnostics
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: capacitor-stage1-finalizer-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/stage1-finalizer
+          if-no-files-found: warn
+          retention-days: 7
