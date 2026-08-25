@@ -1,0 +1,216 @@
+name: EasySplit Capacitor Stage 1 — Native Projects
+
+on:
+  push:
+    branches:
+      - capacitor-stage1-native-projects
+
+permissions:
+  contents: write
+
+concurrency:
+  group: easysplit-capacitor-stage1-native-projects
+  cancel-in-progress: true
+
+jobs:
+  generate-sync-and-compile:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      NEXT_PUBLIC_EASYSPLIT_API_ORIGIN: https://api.easysplit.invalid
+      NEXT_PUBLIC_EASYSPLIT_WEB_ORIGIN: https://easysplit.invalid
+    steps:
+      - name: Checkout isolated Stage 1 branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.16.0
+          cache: npm
+
+      - name: Set up Java 21 for Android
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Verify native toolchain requirements
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          npm --version
+          xcodebuild -version
+          java -version
+          XCODE_MAJOR="$(xcodebuild -version | awk 'NR==1 {split($2, v, "."); print v[1]}')"
+          if [ "${XCODE_MAJOR}" -lt 26 ]; then
+            echo "Capacitor 8 requires Xcode 26+, runner has $(xcodebuild -version | head -1)" >&2
+            exit 1
+          fi
+          if ! command -v sdkmanager >/dev/null 2>&1; then
+            echo "Android sdkmanager is not available on this runner" >&2
+            exit 1
+          fi
+          sdkmanager --version
+
+      - name: Ensure Android API 36 toolchain is present
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install exact JavaScript dependency graph
+        run: npm ci
+
+      - name: Protect the existing web baseline
+        run: npm run verify
+
+      - name: Run existing strain regression
+        run: npm run test:strain
+
+      - name: Verify and build the packaged mobile bundle
+        run: npm run verify:mobile-shell
+
+      - name: Assert clean pre-platform state
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f mobile-dist/index.html
+          test ! -e ios
+          test ! -e android
+          git diff --check
+
+      - name: Generate Capacitor iOS project using the Capacitor 8 default SPM flow
+        run: npx cap add ios
+
+      - name: Generate Capacitor Android project
+        run: npx cap add android
+
+      - name: Synchronize bundled assets and native plugins
+        run: npx cap sync
+
+      - name: Validate generated native project structure and synchronized assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f ios/App/App.xcodeproj/project.pbxproj
+          test -f ios/App/App/Info.plist
+          test -f ios/App/App/public/index.html
+          test -f ios/App/App/capacitor.config.json
+          test -f android/settings.gradle
+          test -f android/app/build.gradle
+          test -f android/app/src/main/AndroidManifest.xml
+          test -f android/app/src/main/assets/public/index.html
+          test -f android/app/src/main/assets/capacitor.config.json
+          grep -R "com.easysplit.app" ios/App android/app/src/main android/app/build.gradle* >/dev/null
+          npx cap ls
+          git diff --check
+
+      - name: Compile iOS simulator build without signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d ios/App/App.xcworkspace ]; then
+            XCODE_CONTAINER=(-workspace ios/App/App.xcworkspace)
+          else
+            XCODE_CONTAINER=(-project ios/App/App.xcodeproj)
+          fi
+          xcodebuild \
+            "${XCODE_CONTAINER[@]}" \
+            -scheme App \
+            -sdk iphonesimulator \
+            -configuration Debug \
+            -derivedDataPath "$RUNNER_TEMP/EasySplitDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Compile Android debug build
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x android/gradlew
+          cd android
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Re-sync after native compile and assert reproducibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx cap sync
+          test -f ios/App/App/public/index.html
+          test -f android/app/src/main/assets/public/index.html
+          test ! -d ios/App/App.xcodeproj/xcuserdata
+          test ! -d android/.gradle || true
+          git diff --check
+
+      - name: Write the Stage 1 handoff
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_SHA="$(git rev-parse origin/main)"
+          mkdir -p docs
+          cat > docs/capacitor-stage1-handoff.md <<EOF
+          # Capacitor Stage 1 — Native Projects Handoff
+
+          ## Measurable outcome
+
+          EasySplit now has generated Capacitor 8 native projects for both iOS and Android, sourced from the existing `mobile-dist` build path without replacing or changing the web deployment path.
+
+          ## Verified baseline
+
+          - Base `main`: `${BASE_SHA}`
+          - App ID: `com.easysplit.app`
+          - App name: `EasySplit`
+          - Capacitor: `8.5.0`
+          - iOS dependency manager: Swift Package Manager (Capacitor 8 default)
+          - Web verification: passed
+          - Hebrew OCR integration: passed
+          - Strain regression: passed
+          - Mobile shell tests and Vite production build: passed
+          - `npx cap sync`: passed for iOS and Android
+          - iOS simulator compilation without signing: passed
+          - Android debug compilation: passed
+
+          ## Handoff commands
+
+          From a clean checkout with Node 22+:
+
+          ```bash
+          npm ci
+          NEXT_PUBLIC_EASYSPLIT_API_ORIGIN=https://YOUR_BACKEND \
+          NEXT_PUBLIC_EASYSPLIT_WEB_ORIGIN=https://YOUR_PUBLIC_WEB \
+          npm run mobile:sync
+          npx cap open ios
+          npx cap open android
+          ```
+
+          ## Explicitly not included in Stage 1
+
+          - Apple or Google signing
+          - Store accounts or uploads
+          - Production mobile environment values
+          - Emulator/device core-flow testing
+          - Native Camera, Share, Haptics or Deep Links
+          - Product/UI changes
+
+          The web application remains the unchanged source of truth. Generated native build artifacts remain ignored; the maintainable iOS and Android projects are version-controlled.
+          EOF
+
+      - name: Materialize one clean Stage 1 result commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/capacitor-stage1-native-projects.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git diff --cached --quiet && { echo "No Stage 1 changes were produced" >&2; exit 1; }
+          git commit -m "Initialize Capacitor iOS and Android projects"
+          git push origin HEAD:capacitor-stage1-native-projects
