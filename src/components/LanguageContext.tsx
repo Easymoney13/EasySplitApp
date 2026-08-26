@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { Sparkles, Phone, User, Globe, LogOut } from 'lucide-react';
+import { Sparkles, Phone, User, Globe, LogOut, Loader2, AlertCircle, CheckCircle, X } from 'lucide-react';
 import defaultTranslations, { translations as namedTranslations, formatCurrency, convertCurrency, formatDualPrice, updateLiveExchangeRates } from '../../lib/i18n';
 import { getCookie, setCookie, removeCookie } from '../../lib/cookies';
 import { clearAccountScopedStorage, transitionAccountScope } from '../../lib/accountIsolation';
@@ -26,6 +26,11 @@ interface UserProfile {
   phoneNumber?: string;
 }
 
+export interface AuthNotification {
+  type: 'error' | 'info' | 'success';
+  message: string;
+}
+
 interface LanguageContextType {
   language: Language;
   setLanguage: (lang: Language) => void;
@@ -41,6 +46,9 @@ interface LanguageContextType {
   formatDual: (amount: number, billCurrency?: string) => { primary: string; secondary?: string };
   firebaseUser: any;
   authLoading: boolean;
+  isAuthenticating: boolean;
+  authNotification: AuthNotification | null;
+  clearAuthNotification: () => void;
   loginWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -53,19 +61,37 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [theme, setThemeState] = useState<Theme>('light');
   const [isInitialized, setIsInitialized] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const [authNotification, setAuthNotification] = useState<AuthNotification | null>(null);
   const [firebaseUser, setFirebaseUser] = useState<any>(null);
   const [authModules, setAuthModules] = useState<any>(null);
   const [guestName, setGuestName] = useState('');
   const [guestPhone, setGuestPhone] = useState('');
+
+  const showAuthMessage = (message: string, type: 'error' | 'info' | 'success' = 'error') => {
+    setAuthNotification({ type, message });
+  };
+
+  const clearAuthNotification = () => {
+    setAuthNotification(null);
+  };
+
+  // Auto-dismiss auth notification after 6 seconds
+  useEffect(() => {
+    if (!authNotification) return;
+    const timer = setTimeout(() => {
+      setAuthNotification(null);
+    }, 6000);
+    return () => clearTimeout(timer);
+  }, [authNotification]);
   
-  // Preload Firebase Auth modules on client mount to bypass popup blocker limitations on mobile
+  // Preload Firebase Auth modules on client mount for instant popup execution
   useEffect(() => {
     const preload = async () => {
       try {
-        const { auth, googleProvider } = await import('../../lib/firebase');
-        const { signInWithPopup, signInWithRedirect, setPersistence, browserLocalPersistence } = await import('firebase/auth');
-        await setPersistence(auth, browserLocalPersistence);
-        setAuthModules({ auth, googleProvider, signInWithPopup, signInWithRedirect });
+        const { auth, googleProvider, getGoogleProvider } = await import('../../lib/firebase');
+        const { signInWithPopup, signInWithRedirect } = await import('firebase/auth');
+        setAuthModules({ auth, googleProvider, getGoogleProvider, signInWithPopup, signInWithRedirect });
       } catch (e) {
         console.error('Failed to preload auth modules:', e);
       }
@@ -77,8 +103,6 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     displayName: '',
     avatarColor: '#4DE1A1'
   });
-
-
 
   // 1. Fetch real-time live currency exchange rates on mount
   useEffect(() => {
@@ -175,13 +199,31 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           .then((result) => {
             if (result) {
               console.log('Successfully authenticated user via redirect:', result.user);
+              setIsAuthenticating(false);
             }
           })
           .catch((err) => {
             console.error('Error handling redirect authentication:', err);
+            setIsAuthenticating(false);
+            if (err?.code === 'auth/unauthorized-domain') {
+              showAuthMessage(
+                savedLang === 'he'
+                  ? `Google Sign-In אינו מאושר עבור הדומיין ${window.location.hostname}. יש להוסיף את הדומיין בהגדרות Firebase Authentication.`
+                  : `Google Sign-In is not authorized for ${window.location.hostname}. Add this domain in Firebase Authentication settings.`,
+                'error'
+              );
+            } else if (err?.code && err.code !== 'auth/popup-closed-by-user') {
+              showAuthMessage(
+                savedLang === 'he'
+                  ? 'ההתחברות באמצעות Google נכשלה. אנא נסו שוב.'
+                  : 'Failed to sign in with Google. Please try again.',
+                'error'
+              );
+            }
           });
 
         onAuthStateChanged(auth, async (user) => {
+          setIsAuthenticating(false);
           const accountTransition = transitionAccountScope(localStorage, user?.uid || '');
           if (accountTransition.changed) {
             removeCookie('billsplit_user_groups');
@@ -255,6 +297,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         console.error('Failed to initialize Firebase Auth listener:', e);
         setAuthLoading(false);
         setIsInitialized(true);
+        setIsAuthenticating(false);
       }
     };
 
@@ -326,58 +369,112 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [language, theme]);
 
   const loginWithGoogle = async () => {
+    if (isAuthenticating) return;
+    setIsAuthenticating(true);
+    clearAuthNotification();
+
     try {
-      let activeAuth, activeProvider, activeSignInWithPopup, activeSignInWithRedirect;
+      let activeAuth: any;
+      let activeGetProvider: any;
+      let activeSignInWithPopup: any;
+      let activeSignInWithRedirect: any;
       
       if (authModules) {
         activeAuth = authModules.auth;
-        activeProvider = authModules.googleProvider;
+        activeGetProvider = authModules.getGoogleProvider;
         activeSignInWithPopup = authModules.signInWithPopup;
         activeSignInWithRedirect = authModules.signInWithRedirect;
       } else {
-        const { auth, googleProvider } = await import('../../lib/firebase');
-        const { signInWithPopup, signInWithRedirect, setPersistence, browserLocalPersistence } = await import('firebase/auth');
-        await setPersistence(auth, browserLocalPersistence);
-        activeAuth = auth;
-        activeProvider = googleProvider;
-        activeSignInWithPopup = signInWithPopup;
-        activeSignInWithRedirect = signInWithRedirect;
+        const fb = await import('../../lib/firebase');
+        const fbAuth = await import('firebase/auth');
+        activeAuth = fb.auth;
+        activeGetProvider = fb.getGoogleProvider;
+        activeSignInWithPopup = fbAuth.signInWithPopup;
+        activeSignInWithRedirect = fbAuth.signInWithRedirect;
       }
-      
-      try {
-        await activeSignInWithPopup(activeAuth, activeProvider);
-      } catch (popupError: any) {
-        const cancelledPopupErrors = new Set([
-          'auth/popup-closed-by-user',
-          'auth/cancelled-popup-request',
-        ]);
-        if (cancelledPopupErrors.has(popupError?.code)) return;
 
-        const redirectFallbackErrors = new Set([
-          'auth/popup-blocked',
-          'auth/operation-not-supported',
-          'auth/operation-not-supported-in-this-environment',
-          'auth/web-storage-unsupported',
-        ]);
-        const terminalConfigurationErrors = new Set([
-          'auth/unauthorized-domain',
-          'auth/invalid-api-key',
-          'auth/operation-not-allowed',
-        ]);
-        if (redirectFallbackErrors.has(popupError?.code)) {
-          console.warn('Google popup is unavailable; falling back to redirect:', popupError);
-          await activeSignInWithRedirect(activeAuth, activeProvider);
+      const provider = typeof activeGetProvider === 'function'
+        ? activeGetProvider()
+        : (authModules?.googleProvider || new (await import('firebase/auth')).GoogleAuthProvider());
+      provider.setCustomParameters({ prompt: 'select_account' });
+
+      const isMobileDevice = typeof navigator !== 'undefined' && (
+        /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent || '') ||
+        (navigator.maxTouchPoints && navigator.maxTouchPoints > 2 && /Macintosh/i.test(navigator.userAgent || ''))
+      );
+
+      // On mobile devices, redirect is significantly more reliable than popup windows
+      if (isMobileDevice) {
+        try {
+          await activeSignInWithRedirect(activeAuth, provider);
+          return;
+        } catch (redirectErr: any) {
+          console.warn('Direct mobile redirect failed, trying popup fallback:', redirectErr);
+        }
+      }
+
+      // Try popup first on desktop
+      try {
+        await activeSignInWithPopup(activeAuth, provider);
+        setIsAuthenticating(false);
+      } catch (popupError: any) {
+        console.warn('Google popup encounter:', popupError);
+
+        // Terminal configuration error
+        if (popupError?.code === 'auth/unauthorized-domain') {
+          setIsAuthenticating(false);
+          showAuthMessage(
+            language === 'he'
+              ? `Google Sign-In אינו מאושר עבור הדומיין ${window.location.hostname}. יש להוסיף את הדומיין בהגדרות Firebase Authentication > Settings > Authorized domains.`
+              : `Google Sign-In is not authorized for ${window.location.hostname}. Add this domain in Firebase Authentication > Settings > Authorized domains.`,
+            'error'
+          );
           return;
         }
-        if (terminalConfigurationErrors.has(popupError?.code)) throw popupError;
-        throw popupError;
+
+        // Clean user dismissal on desktop (don't show harsh error if user clicked X intentionally)
+        if (popupError?.code === 'auth/popup-closed-by-user' || popupError?.code === 'auth/cancelled-popup-request') {
+          if (!isMobileDevice) {
+            setIsAuthenticating(false);
+            return;
+          }
+        }
+
+        // Seamless fallback to redirect for any popup issues (blocked, COOP, iframe, network, closed unexpectedly)
+        try {
+          console.log('Falling back to Google Sign-In redirect flow...');
+          await activeSignInWithRedirect(activeAuth, provider);
+        } catch (redirectError: any) {
+          console.error('Google Sign-In redirect fallback failed:', redirectError);
+          setIsAuthenticating(false);
+          if (redirectError?.code === 'auth/unauthorized-domain') {
+            showAuthMessage(
+              language === 'he'
+                ? `Google Sign-In אינו מאושר עבור הדומיין ${window.location.hostname}. יש להוסיף את הדומיין בהגדרות Firebase.`
+                : `Google Sign-In is not authorized for ${window.location.hostname}. Add this domain in Firebase Authentication settings.`,
+              'error'
+            );
+          } else {
+            showAuthMessage(
+              language === 'he'
+                ? 'ההתחברות באמצעות Google נכשלה. אנא נסו שוב.'
+                : 'Failed to sign in with Google. Please try again.',
+              'error'
+            );
+          }
+        }
       }
     } catch (e: any) {
       console.error('Google Sign-In failed:', e);
+      setIsAuthenticating(false);
       const message = e?.code === 'auth/unauthorized-domain'
-        ? `Google Sign-In is not authorized for ${window.location.hostname}. Add this domain in Firebase Authentication > Settings > Authorized domains.`
-        : 'Failed to sign in with Google. Please try again.';
-      alert(message);
+        ? (language === 'he'
+            ? `Google Sign-In אינו מאושר עבור הדומיין ${window.location.hostname}. יש להוסיף את הדומיין בהגדרות Firebase.`
+            : `Google Sign-In is not authorized for ${window.location.hostname}. Add this domain in Firebase Authentication > Settings > Authorized domains.`)
+        : (language === 'he'
+            ? 'ההתחברות באמצעות Google נכשלה. אנא נסו שוב.'
+            : 'Failed to sign in with Google. Please try again.');
+      showAuthMessage(message, 'error');
     }
   };
 
@@ -470,10 +567,49 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         formatDual,
         firebaseUser,
         authLoading,
+        isAuthenticating,
+        authNotification,
+        clearAuthNotification,
         loginWithGoogle,
         logout
       }}
     >
+      {/* Sleek In-App Toast Notification */}
+      {authNotification && (
+        <div
+          role="alert"
+          className={`fixed top-4 left-1/2 -translate-x-1/2 z-[10000] max-w-[92vw] sm:max-w-md w-full p-4 rounded-2xl shadow-2xl backdrop-blur-md border transition-all duration-300 animate-in fade-in slide-in-from-top-4 flex items-start gap-3 ${
+            authNotification.type === 'error'
+              ? 'bg-rose-950/90 dark:bg-rose-950/95 border-rose-500/40 text-rose-100'
+              : authNotification.type === 'success'
+              ? 'bg-emerald-950/90 dark:bg-emerald-950/95 border-emerald-500/40 text-emerald-100'
+              : 'bg-slate-900/90 dark:bg-[#15142A]/95 border-slate-700/50 text-slate-100'
+          }`}
+          dir={isRtl ? 'rtl' : 'ltr'}
+        >
+          <div className="shrink-0 mt-0.5">
+            {authNotification.type === 'error' ? (
+              <AlertCircle className="w-5 h-5 text-rose-400" />
+            ) : authNotification.type === 'success' ? (
+              <CheckCircle className="w-5 h-5 text-emerald-400" />
+            ) : (
+              <Sparkles className="w-5 h-5 text-brand-400" />
+            )}
+          </div>
+          <div className="flex-1 text-xs font-semibold leading-relaxed">
+            {authNotification.message}
+          </div>
+          <button
+            type="button"
+            onClick={clearAuthNotification}
+            className="shrink-0 p-1 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white transition-colors"
+            aria-label="Close"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {children}
 
       {/* Global Onboarding / Profile Modal */}
@@ -540,10 +676,14 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 <button
                   type="button"
                   onClick={loginWithGoogle}
-                  className="text-[11px] font-bold text-brand-600 dark:text-brand-300 px-3 py-1.5 rounded-xl bg-brand-50 hover:bg-brand-100 dark:bg-brand-950/60 dark:hover:bg-brand-900/60 transition-all shrink-0"
+                  disabled={isAuthenticating}
+                  className="text-[11px] font-bold text-brand-600 dark:text-brand-300 px-3 py-1.5 rounded-xl bg-brand-50 hover:bg-brand-100 dark:bg-brand-950/60 dark:hover:bg-brand-900/60 transition-all shrink-0 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                   title={language === 'he' ? 'החלף חשבון Google' : 'Switch Google account'}
                 >
-                  {language === 'he' ? 'החלף חשבון' : 'Switch'}
+                  {isAuthenticating ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : null}
+                  <span>{language === 'he' ? 'החלף חשבון' : 'Switch'}</span>
                 </button>
               </div>
             )}
@@ -624,27 +764,37 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 <button
                   type="button"
                   onClick={loginWithGoogle}
-                  className="w-full py-3.5 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-[#1C2638] dark:hover:bg-[#222E45] border border-slate-200 dark:border-[#2a374f] text-slate-800 dark:text-slate-100 text-sm font-bold shadow-md hover:shadow-lg transition-all active:scale-95 flex items-center justify-center gap-3"
+                  disabled={isAuthenticating}
+                  className="w-full py-3.5 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-[#1C2638] dark:hover:bg-[#222E45] border border-slate-200 dark:border-[#2a374f] text-slate-800 dark:text-slate-100 text-sm font-bold shadow-md hover:shadow-lg transition-all active:scale-95 flex items-center justify-center gap-3 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
-                    <path
-                      fill="#EA4335"
-                      d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.68 1.54 14.98 1 12 1 7.24 1 3.2 3.73 1.24 7.72l3.96 3.07C6.16 7.6 8.85 5.04 12 5.04z"
-                    />
-                    <path
-                      fill="#4285F4"
-                      d="M23.49 12.27c0-.81-.07-1.59-.2-2.33H12v4.42h6.45c-.28 1.47-1.11 2.71-2.36 3.56l3.66 2.84c2.14-1.97 3.38-4.88 3.38-8.49z"
-                    />
-                    <path
-                      fill="#FBBC05"
-                      d="M5.2 10.79c-.25-.72-.39-1.49-.39-2.29s.14-1.57.39-2.29L1.24 3.14C.45 4.73 0 6.51 0 8.5s.45 3.77 1.24 5.36l3.96-3.07z"
-                    />
-                    <path
-                      fill="#34A853"
-                      d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.66-2.84c-1.01.68-2.31 1.09-4.3 1.09-3.15 0-5.84-2.56-6.8-5.75L1.24 13.65C3.2 17.64 7.24 23 12 23z"
-                    />
-                  </svg>
-                  <span>{language === 'he' ? 'התחבר עם Google' : 'Sign in with Google'}</span>
+                  {isAuthenticating ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin text-brand-600 dark:text-brand-400" />
+                      <span>{language === 'he' ? 'מתחבר ל-Google...' : 'Connecting with Google...'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
+                        <path
+                          fill="#EA4335"
+                          d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.68 1.54 14.98 1 12 1 7.24 1 3.2 3.73 1.24 7.72l3.96 3.07C6.16 7.6 8.85 5.04 12 5.04z"
+                        />
+                        <path
+                          fill="#4285F4"
+                          d="M23.49 12.27c0-.81-.07-1.59-.2-2.33H12v4.42h6.45c-.28 1.47-1.11 2.71-2.36 3.56l3.66 2.84c2.14-1.97 3.38-4.88 3.38-8.49z"
+                        />
+                        <path
+                          fill="#FBBC05"
+                          d="M5.2 10.79c-.25-.72-.39-1.49-.39-2.29s.14-1.57.39-2.29L1.24 3.14C.45 4.73 0 6.51 0 8.5s.45 3.77 1.24 5.36l3.96-3.07z"
+                        />
+                        <path
+                          fill="#34A853"
+                          d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.66-2.84c-1.01.68-2.31 1.09-4.3 1.09-3.15 0-5.84-2.56-6.8-5.75L1.24 13.65C3.2 17.64 7.24 23 12 23z"
+                        />
+                      </svg>
+                      <span>{language === 'he' ? 'התחבר עם Google' : 'Sign in with Google'}</span>
+                    </>
+                  )}
                 </button>
               </div>
             )}

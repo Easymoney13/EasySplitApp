@@ -31,7 +31,8 @@ import {
   Wine,
   Box,
   Pencil,
-  LockOpen
+  LockOpen,
+  Loader2
 } from 'lucide-react';
 import { useLanguage, DEFAULT_REAL_AVATAR } from '../components/LanguageContext';
 import { CameraViewfinder } from '../components/CameraViewfinder';
@@ -94,6 +95,7 @@ export default function HomePage() {
     formatDual,
     isRtl,
     firebaseUser,
+    isAuthenticating,
     loginWithGoogle,
     logout
   } = useLanguage();
@@ -1407,9 +1409,13 @@ export default function HomePage() {
                   <button
                     type="button"
                     onClick={loginWithGoogle}
-                    className="text-[11px] font-bold text-brand-600 dark:text-brand-300 px-3 py-1.5 rounded-xl bg-brand-50 hover:bg-brand-100 dark:bg-brand-950/60 dark:hover:bg-brand-900/60 transition-all shrink-0"
+                    disabled={isAuthenticating}
+                    className="text-[11px] font-bold text-brand-600 dark:text-brand-300 px-3 py-1.5 rounded-xl bg-brand-50 hover:bg-brand-100 dark:bg-brand-950/60 dark:hover:bg-brand-900/60 transition-all shrink-0 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {t('switchGoogleAccount', undefined, 'Switch Account')}
+                    {isAuthenticating ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : null}
+                    <span>{t('switchGoogleAccount', undefined, 'Switch Account')}</span>
                   </button>
                 </div>
               ) : (
@@ -1435,15 +1441,25 @@ export default function HomePage() {
                   <button
                     type="button"
                     onClick={loginWithGoogle}
-                    className="w-full py-2.5 px-4 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-[#1C2638] dark:hover:bg-[#222E45] border border-slate-200 dark:border-[#2a374f] text-slate-800 dark:text-slate-100 text-xs font-bold shadow-xs transition-all active:scale-95 flex items-center justify-center gap-2"
+                    disabled={isAuthenticating}
+                    className="w-full py-2.5 px-4 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-[#1C2638] dark:hover:bg-[#222E45] border border-slate-200 dark:border-[#2a374f] text-slate-800 dark:text-slate-100 text-xs font-bold shadow-xs transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-                      <path fill="#EA4335" d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.68 1.54 14.98 1 12 1 7.24 1 3.2 3.73 1.24 7.72l3.96 3.07C6.16 7.6 8.85 5.04 12 5.04z"/>
-                      <path fill="#4285F4" d="M23.49 12.27c0-.81-.07-1.59-.2-2.33H12v4.42h6.45c-.28 1.47-1.11 2.71-2.36 3.56l3.66 2.84c2.14-1.97 3.38-4.88 3.38-8.49z"/>
-                      <path fill="#FBBC05" d="M5.2 10.79c-.25-.72-.39-1.49-.39-2.29s.14-1.57.39-2.29L1.24 3.14C.45 4.73 0 6.51 0 8.5s.45 3.77 1.24 5.36l3.96-3.07z"/>
-                      <path fill="#34A853" d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.66-2.84c-1.01.68-2.31 1.09-4.3 1.09-3.15 0-5.84-2.56-6.8-5.75L1.24 13.65C3.2 17.64 7.24 23 12 23z"/>
-                    </svg>
-                    <span>{t('signInWithGoogle', undefined, 'Sign in with Google')}</span>
+                    {isAuthenticating ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin text-brand-600 dark:text-brand-400" />
+                        <span>{language === 'he' ? 'מתחבר ל-Google...' : 'Connecting with Google...'}</span>
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                          <path fill="#EA4335" d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.68 1.54 14.98 1 12 1 7.24 1 3.2 3.73 1.24 7.72l3.96 3.07C6.16 7.6 8.85 5.04 12 5.04z"/>
+                          <path fill="#4285F4" d="M23.49 12.27c0-.81-.07-1.59-.2-2.33H12v4.42h6.45c-.28 1.47-1.11 2.71-2.36 3.56l3.66 2.84c2.14-1.97 3.38-4.88 3.38-8.49z"/>
+                          <path fill="#FBBC05" d="M5.2 10.79c-.25-.72-.39-1.49-.39-2.29s.14-1.57.39-2.29L1.24 3.14C.45 4.73 0 6.51 0 8.5s.45 3.77 1.24 5.36l3.96-3.07z"/>
+                          <path fill="#34A853" d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.66-2.84c-1.01.68-2.31 1.09-4.3 1.09-3.15 0-5.84-2.56-6.8-5.75L1.24 13.65C3.2 17.64 7.24 23 12 23z"/>
+                        </svg>
+                        <span>{t('signInWithGoogle', undefined, 'Sign in with Google')}</span>
+                      </>
+                    )}
                   </button>
                 </div>
               )}

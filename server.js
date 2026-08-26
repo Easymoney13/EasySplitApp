@@ -196,16 +196,16 @@ app.prepare().then(() => {
     if (process.env.NODE_ENV === 'production') {
       res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     }
-    const scriptSources = ["'self'", "'unsafe-inline'"];
+    const scriptSources = ["'self'", "'unsafe-inline'", "https://apis.google.com", "https://*.firebaseapp.com", "https://*.googleapis.com"];
     if (process.env.NODE_ENV !== 'production') scriptSources.push("'unsafe-eval'");
     res.setHeader('Content-Security-Policy', [
       "default-src 'self'",
       `script-src ${scriptSources.join(' ')}`,
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-      "img-src 'self' data: blob: https://lh3.googleusercontent.com",
+      "img-src 'self' data: blob: https://*.googleusercontent.com https://lh3.googleusercontent.com https://*.google.com",
       "font-src 'self' data: https://fonts.gstatic.com",
-      "connect-src 'self' ws: wss: https://*.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com",
-      "frame-src https://accounts.google.com https://*.firebaseapp.com",
+      "connect-src 'self' ws: wss: https://*.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com https://accounts.google.com https://*.google.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://apis.google.com",
+      "frame-src https://accounts.google.com https://*.firebaseapp.com https://*.google.com https://*.firebase.com",
       "object-src 'none'",
       "base-uri 'self'",
       "form-action 'self'",

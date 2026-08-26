@@ -21,4 +21,13 @@ googleProvider.setCustomParameters({
   prompt: 'select_account'
 });
 
+export const getGoogleProvider = () => {
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({
+    prompt: 'select_account'
+  });
+  return provider;
+};
+
 export { app, auth, googleProvider };
+
