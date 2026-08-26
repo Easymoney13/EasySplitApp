@@ -42,7 +42,24 @@ test('shared room pages consume mobile recovery without importing Capacitor', as
   assert.doesNotMatch(group, /window\.location\.href\s*=\s*`\/session\//);
 });
 
-test('Task 1 does not generate native platform projects', async () => {
-  assert.equal(await missing('ios/'), true);
-  assert.equal(await missing('android/'), true);
+test('Stage 1 native platform projects are committed and structurally present', async () => {
+  assert.equal(await missing('ios/'), false);
+  assert.equal(await missing('android/'), false);
+  assert.equal(await missing('ios/App/App.xcodeproj/project.pbxproj'), false);
+  assert.equal(await missing('android/app/build.gradle'), false);
+});
+
+test('Camera and Haptics are synchronized into both native projects', async () => {
+  const packageSwift = await read('ios/App/CapApp-SPM/Package.swift');
+  const androidSettings = await read('android/capacitor.settings.gradle');
+  const androidBuild = await read('android/app/capacitor.build.gradle');
+
+  for (const plugin of ['Camera', 'Haptics']) {
+    assert.match(packageSwift, new RegExp(`Capacitor${plugin}`));
+  }
+  for (const plugin of ['camera', 'haptics']) {
+    assert.match(androidSettings, new RegExp(`:capacitor-${plugin}`));
+    assert.match(androidBuild, new RegExp(`project\\(':capacitor-${plugin}'\\)`));
+  }
+  assert.doesNotMatch(packageSwift, /path:\s*"[^"\n]*\\/);
 });
