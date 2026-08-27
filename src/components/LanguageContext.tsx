@@ -8,6 +8,12 @@ import { clearAccountScopedStorage, transitionAccountScope } from '../../lib/acc
 import { isProtectedApi } from '../../lib/authFetch';
 import { cleanIsraeliPhone, isValidIsraeliPhone } from '../../lib/bitDeepLink';
 import { apiUrl, getApiOrigin } from '../../lib/platformTransport';
+import {
+  isNativeGoogleAuthPlatform,
+  isNativeGoogleSignInCancellation,
+  signInNativeGoogle,
+  signOutNativeGoogle,
+} from '../../lib/nativeGoogleAuth';
 
 const rawDictionary: any = defaultTranslations || namedTranslations || {};
 const i18nDictionary: Record<string, Record<string, string>> = 
@@ -373,6 +379,32 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setIsAuthenticating(true);
     clearAuthNotification();
 
+    if (isNativeGoogleAuthPlatform()) {
+      try {
+        const [{ auth }, { GoogleAuthProvider, signInWithCredential }] = await Promise.all([
+          import('../../lib/firebase'),
+          import('firebase/auth'),
+        ]);
+        const { idToken } = await signInNativeGoogle({ forceAccountSelection: Boolean(firebaseUser) });
+        const credential = GoogleAuthProvider.credential(idToken);
+        await signInWithCredential(auth, credential);
+      } catch (e: any) {
+        if (!isNativeGoogleSignInCancellation(e)) {
+          console.error('Native Google Sign-In failed:', e);
+          showAuthMessage(
+            language === 'he'
+              ? 'ההתחברות באמצעות Google נכשלה. אנא נסו שוב.'
+              : 'Failed to sign in with Google. Please try again.',
+            'error'
+          );
+        }
+      } finally {
+        setIsAuthenticating(false);
+      }
+      // Native apps must never fall through to Firebase Web popup/redirect OAuth.
+      return;
+    }
+
     try {
       let activeAuth: any;
       let activeGetProvider: any;
@@ -487,6 +519,14 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setProfile({ displayName: '', avatarColor: '#4DE1A1', avatarUrl: undefined, phoneNumber: undefined });
       setGuestName('');
       setGuestPhone('');
+      if (isNativeGoogleAuthPlatform()) {
+        try {
+          await signOutNativeGoogle();
+        } catch (nativeSignOutError) {
+          // Firebase remains the authoritative session; native provider cleanup is best-effort.
+          console.warn('Failed to clear native Google credential state:', nativeSignOutError);
+        }
+      }
       const { auth } = await import('../../lib/firebase');
       const { signOut } = await import('firebase/auth');
       await signOut(auth);
