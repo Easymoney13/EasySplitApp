@@ -64,7 +64,10 @@ jobs:
           git apply --check .ci/native-google-auth-candidate.patch
           git apply .ci/native-google-auth-candidate.patch
           git diff --check
-          git diff --name-only | tee /tmp/google-auth-changed-files.txt
+          {
+            git diff --name-only
+            git ls-files --others --exclude-standard
+          } | sort -u | tee /tmp/google-auth-changed-files.txt
           python3 - <<'PY'
           from pathlib import Path
           allowed = {
@@ -170,6 +173,7 @@ jobs:
           git diff --stat > "$RUNNER_TEMP/google-auth-diagnostics/diff-stat.txt" || true
           git diff --name-status > "$RUNNER_TEMP/google-auth-diagnostics/diff-name-status.txt" || true
           git diff > "$RUNNER_TEMP/google-auth-diagnostics/candidate.diff" || true
+          git ls-files --others --exclude-standard > "$RUNNER_TEMP/google-auth-diagnostics/untracked.txt" || true
           node --version > "$RUNNER_TEMP/google-auth-diagnostics/node.txt" || true
           xcodebuild -version > "$RUNNER_TEMP/google-auth-diagnostics/xcode.txt" || true
           (cd android && ./gradlew signingReport --no-daemon) > "$RUNNER_TEMP/google-auth-diagnostics/android-signing-report.txt" 2>&1 || true
