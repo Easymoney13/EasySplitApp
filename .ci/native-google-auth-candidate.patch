@@ -1,0 +1,332 @@
+--- a/package.json
++++ b/package.json
+@@ -31,8 +31,9 @@
+     "@capacitor/keyboard": "8.0.5",
+     "@capacitor/network": "8.0.1",
+     "@capacitor/splash-screen": "8.0.2",
+     "@capacitor/status-bar": "8.0.3",
++    "@capawesome/capacitor-google-sign-in": "0.1.3",
+     "@google/generative-ai": "^0.21.0",
+     "canvas-confetti": "^1.9.3",
+     "express": "^4.19.2",
+     "firebase": "^10.12.2",
+--- a/ios/App/App/Info.plist
++++ b/ios/App/App/Info.plist
+@@ -23,8 +23,19 @@
+ 	<key>CFBundleVersion</key>
+ 	<string>$(CURRENT_PROJECT_VERSION)</string>
+ 	<key>LSRequiresIPhoneOS</key>
+ 	<true/>
++	<key>GIDClientID</key>
++	<string>510350845002-11pq3jtk5vb5f2kv1nrn1jqd02f04dqp.apps.googleusercontent.com</string>
++	<key>CFBundleURLTypes</key>
++	<array>
++		<dict>
++			<key>CFBundleURLSchemes</key>
++			<array>
++				<string>com.googleusercontent.apps.510350845002-11pq3jtk5vb5f2kv1nrn1jqd02f04dqp</string>
++			</array>
++		</dict>
++	</array>
+ 	<key>UIApplicationSceneManifest</key>
+ 	<dict>
+ 		<key>UIApplicationSupportsMultipleScenes</key>
+     <false/>
+--- a/ios/App/CapApp-SPM/Package.swift
++++ b/ios/App/CapApp-SPM/Package.swift
+@@ -17,9 +17,10 @@
+         .package(name: "CapacitorHaptics", path: "../../../node_modules/@capacitor/haptics"),
+         .package(name: "CapacitorKeyboard", path: "../../../node_modules/@capacitor/keyboard"),
+         .package(name: "CapacitorNetwork", path: "../../../node_modules/@capacitor/network"),
+         .package(name: "CapacitorSplashScreen", path: "../../../node_modules/@capacitor/splash-screen"),
+-        .package(name: "CapacitorStatusBar", path: "../../../node_modules/@capacitor/status-bar")
++        .package(name: "CapacitorStatusBar", path: "../../../node_modules/@capacitor/status-bar"),
++        .package(name: "CapawesomeCapacitorGoogleSignIn", path: "../../../node_modules/@capawesome/capacitor-google-sign-in")
+     ],
+     targets: [
+         .target(
+             name: "CapApp-SPM",
+@@ -31,9 +32,10 @@
+                 .product(name: "CapacitorHaptics", package: "CapacitorHaptics"),
+                 .product(name: "CapacitorKeyboard", package: "CapacitorKeyboard"),
+                 .product(name: "CapacitorNetwork", package: "CapacitorNetwork"),
+                 .product(name: "CapacitorSplashScreen", package: "CapacitorSplashScreen"),
+-                .product(name: "CapacitorStatusBar", package: "CapacitorStatusBar")
++                .product(name: "CapacitorStatusBar", package: "CapacitorStatusBar"),
++                .product(name: "CapawesomeCapacitorGoogleSignIn", package: "CapawesomeCapacitorGoogleSignIn")
+             ]
+         )
+     ]
+ )
+--- a/android/capacitor.settings.gradle
++++ b/android/capacitor.settings.gradle
+@@ -21,4 +21,7 @@
+ project(':capacitor-splash-screen').projectDir = new File('../node_modules/@capacitor/splash-screen/android')
+ 
+ include ':capacitor-status-bar'
+ project(':capacitor-status-bar').projectDir = new File('../node_modules/@capacitor/status-bar/android')
++
++include ':capawesome-capacitor-google-sign-in'
++project(':capawesome-capacitor-google-sign-in').projectDir = new File('../node_modules/@capawesome/capacitor-google-sign-in/android')
+--- a/android/app/capacitor.build.gradle
++++ b/android/app/capacitor.build.gradle
+@@ -15,8 +15,9 @@
+     implementation project(':capacitor-keyboard')
+     implementation project(':capacitor-network')
+     implementation project(':capacitor-splash-screen')
+     implementation project(':capacitor-status-bar')
++    implementation project(':capawesome-capacitor-google-sign-in')
+ 
+ }
+ 
+ 
+--- /dev/null
++++ b/lib/nativeGoogleAuth.ts
+@@ -0,0 +1,78 @@
++import { Capacitor } from '@capacitor/core';
++
++const GOOGLE_WEB_CLIENT_ID = '510350845002-o6t8t84c5fnvncgkspqdit0s0ndgsir9.apps.googleusercontent.com';
++const SIGN_IN_CANCELED = 'SIGN_IN_CANCELED';
++
++let initializationPromise: Promise<void> | null = null;
++
++type NativeGoogleResult = {
++  idToken: string;
++};
++
++type NativeGoogleSignInOptions = {
++  forceAccountSelection?: boolean;
++};
++
++async function getNativeGooglePlugin() {
++  const { GoogleSignIn } = await import('@capawesome/capacitor-google-sign-in');
++  return GoogleSignIn;
++}
++
++async function ensureNativeGoogleInitialized(): Promise<void> {
++  if (!Capacitor.isNativePlatform()) {
++    throw new Error('Native Google Sign-In is only available in the native app.');
++  }
++
++  if (!initializationPromise) {
++    initializationPromise = (async () => {
++      const GoogleSignIn = await getNativeGooglePlugin();
++      await GoogleSignIn.initialize({ clientId: GOOGLE_WEB_CLIENT_ID });
++    })().catch((error) => {
++      initializationPromise = null;
++      throw error;
++    });
++  }
++
++  await initializationPromise;
++}
++
++export function isNativeGoogleAuthPlatform(): boolean {
++  return Capacitor.isNativePlatform();
++}
++
++export function isNativeGoogleSignInCancellation(error: unknown): boolean {
++  if (!error || typeof error !== 'object') return false;
++  return (error as { code?: string }).code === SIGN_IN_CANCELED;
++}
++
++export async function signInNativeGoogle(
++  options: NativeGoogleSignInOptions = {},
++): Promise<NativeGoogleResult> {
++  await ensureNativeGoogleInitialized();
++  const GoogleSignIn = await getNativeGooglePlugin();
++
++  // Only clear provider state for an explicit account switch. Normal login stays fast,
++  // while "Switch account" cannot silently reuse the previous Google account.
++  if (options.forceAccountSelection) {
++    try {
++      await GoogleSignIn.signOut();
++    } catch {
++      // A stale or missing provider session must not block a fresh sign-in attempt.
++    }
++  }
++
++  const result = await GoogleSignIn.signIn();
++  if (!result?.idToken) {
++    throw new Error('Google Sign-In did not return an ID token.');
++  }
++
++  return { idToken: result.idToken };
++}
++
++export async function signOutNativeGoogle(): Promise<void> {
++  if (!Capacitor.isNativePlatform()) return;
++
++  await ensureNativeGoogleInitialized();
++  const GoogleSignIn = await getNativeGooglePlugin();
++  await GoogleSignIn.signOut();
++}
+--- /dev/null
++++ b/tests/mobile-google-auth-static.test.mjs
+@@ -0,0 +1,65 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { readFile } from 'node:fs/promises';
++
++const root = new URL('../', import.meta.url);
++const read = async (path) => readFile(new URL(path, root), 'utf8');
++
++const WEB_CLIENT_ID = '510350845002-o6t8t84c5fnvncgkspqdit0s0ndgsir9.apps.googleusercontent.com';
++const IOS_CLIENT_ID = '510350845002-11pq3jtk5vb5f2kv1nrn1jqd02f04dqp.apps.googleusercontent.com';
++const IOS_URL_SCHEME = 'com.googleusercontent.apps.510350845002-11pq3jtk5vb5f2kv1nrn1jqd02f04dqp';
++
++test('native Google auth dependency is exact and leaves Firebase JS version untouched', async () => {
++  const pkg = JSON.parse(await read('package.json'));
++  assert.equal(pkg.dependencies['@capawesome/capacitor-google-sign-in'], '0.1.3');
++  assert.equal(pkg.dependencies.firebase, '^10.12.2');
++  assert.equal(pkg.dependencies['@capacitor/core'], '8.5.0');
++});
++
++test('native Google auth uses Capacitor platform detection and exchanges only an ID token', async () => {
++  const helper = await read('lib/nativeGoogleAuth.ts');
++  assert.match(helper, /Capacitor\.isNativePlatform\(\)/);
++  assert.match(helper, new RegExp(WEB_CLIENT_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
++  assert.match(helper, /GoogleSignIn\.initialize\(\{ clientId: GOOGLE_WEB_CLIENT_ID \}\)/);
++  assert.match(helper, /GoogleSignIn\.signIn\(\)/);
++  assert.match(helper, /forceAccountSelection/);
++  assert.match(helper, /GoogleSignIn\.signOut\(\)/);
++  assert.doesNotMatch(helper, /scopes\s*:/);
++  assert.doesNotMatch(helper, /localStorage|sessionStorage|document\.cookie/);
++  assert.doesNotMatch(helper, /console\.(log|debug)\([^\n]*(idToken|accessToken)/);
++});
++
++test('LanguageContext keeps web auth and uses Firebase JS credential exchange on native', async () => {
++  const source = await read('src/components/LanguageContext.tsx');
++  assert.match(source, /isNativeGoogleAuthPlatform\(\)/);
++  assert.match(source, /signInNativeGoogle\(\{ forceAccountSelection: Boolean\(firebaseUser\) \}\)/);
++  assert.match(source, /GoogleAuthProvider\.credential\(idToken\)/);
++  assert.match(source, /signInWithCredential\(auth, credential\)/);
++  assert.match(source, /signInWithPopup/);
++  assert.match(source, /signInWithRedirect/);
++  assert.match(source, /signOutNativeGoogle\(\)/);
++  assert.ok(
++    source.indexOf('isNativeGoogleAuthPlatform()') < source.indexOf('const isMobileDevice'),
++    'native platform branch must run before UA-based mobile-web redirect logic',
++  );
++});
++
++test('iOS contains the issued client ID and callback scheme', async () => {
++  const plist = await read('ios/App/App/Info.plist');
++  assert.match(plist, new RegExp(IOS_CLIENT_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
++  assert.match(plist, new RegExp(IOS_URL_SCHEME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
++  assert.match(plist, /<key>GIDClientID<\/key>/);
++  assert.match(plist, /<key>CFBundleURLTypes<\/key>/);
++});
++
++test('Capacitor generated projects wire the Google Sign-In plugin on iOS and Android', async () => {
++  const iosPackage = await read('ios/App/CapApp-SPM/Package.swift');
++  const androidSettings = await read('android/capacitor.settings.gradle');
++  const androidBuild = await read('android/app/capacitor.build.gradle');
++
++  assert.match(iosPackage, /CapawesomeCapacitorGoogleSignIn/);
++  assert.match(iosPackage, /@capawesome\/capacitor-google-sign-in/);
++  assert.match(androidSettings, /include ':capawesome-capacitor-google-sign-in'/);
++  assert.match(androidSettings, /@capawesome\/capacitor-google-sign-in\/android/);
++  assert.match(androidBuild, /implementation project\(':capawesome-capacitor-google-sign-in'\)/);
++});
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -20,6 +20,7 @@
+         "@capacitor/network": "8.0.1",
+         "@capacitor/splash-screen": "8.0.2",
+         "@capacitor/status-bar": "8.0.3",
++        "@capawesome/capacitor-google-sign-in": "0.1.3",
+         "@google/generative-ai": "^0.21.0",
+         "canvas-confetti": "^1.9.3",
+         "express": "^4.19.2",
+@@ -220,4 +221,23 @@
++      "peerDependencies": {
++        "@capacitor/core": ">=8.0.0"
++      }
++    },
++    "node_modules/@capawesome/capacitor-google-sign-in": {
++      "version": "0.1.3",
++      "resolved": "https://registry.npmjs.org/@capawesome/capacitor-google-sign-in/-/capacitor-google-sign-in-0.1.3.tgz",
++      "integrity": "sha512-Cf/j2+aGMVZT/Gp1dQLwl7fLopG6lHUG4cDGX9xL1sb9efjUXl/ekEDrZ3yllRdPIcClYqq6DKr3Tz37Y24Dcg==",
++      "funding": [
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/capawesome-team/"
++        },
++        {
++          "type": "opencollective",
++          "url": "https://opencollective.com"
++        }
++      ],
++      "license": "MIT",
+       "peerDependencies": {
+         "@capacitor/core": ">=8.0.0"
+       }
+     },
+--- a/src/components/LanguageContext.tsx
++++ b/src/components/LanguageContext.tsx
+@@ -8,7 +8,13 @@
+ import { isProtectedApi } from '../../lib/authFetch';
+ import { cleanIsraeliPhone, isValidIsraeliPhone } from '../../lib/bitDeepLink';
+ import { apiUrl, getApiOrigin } from '../../lib/platformTransport';
++import {
++  isNativeGoogleAuthPlatform,
++  isNativeGoogleSignInCancellation,
++  signInNativeGoogle,
++  signOutNativeGoogle,
++} from '../../lib/nativeGoogleAuth';
+ 
+ const rawDictionary: any = defaultTranslations || namedTranslations || {};
+ const i18nDictionary: Record<string, Record<string, string>> = 
+   (rawDictionary?.en || rawDictionary?.he) ? rawDictionary : (rawDictionary?.default || rawDictionary?.translations || {});
+@@ -352,8 +352,34 @@
+   const loginWithGoogle = async () => {
+     if (isAuthenticating) return;
+     setIsAuthenticating(true);
+     clearAuthNotification();
++
++    if (isNativeGoogleAuthPlatform()) {
++      try {
++        const [{ auth }, { GoogleAuthProvider, signInWithCredential }] = await Promise.all([
++          import('../../lib/firebase'),
++          import('firebase/auth'),
++        ]);
++        const { idToken } = await signInNativeGoogle({ forceAccountSelection: Boolean(firebaseUser) });
++        const credential = GoogleAuthProvider.credential(idToken);
++        await signInWithCredential(auth, credential);
++      } catch (e: any) {
++        if (!isNativeGoogleSignInCancellation(e)) {
++          console.error('Native Google Sign-In failed:', e);
++          showAuthMessage(
++            language === 'he'
++              ? 'ההתחברות באמצעות Google נכשלה. אנא נסו שוב.'
++              : 'Failed to sign in with Google. Please try again.',
++            'error'
++          );
++        }
++      } finally {
++        setIsAuthenticating(false);
++      }
++      // Native apps must never fall through to Firebase Web popup/redirect OAuth.
++      return;
++    }
+ 
+     try {
+       let activeAuth: any;
+       let activeGetProvider: any;
+@@ -490,7 +490,15 @@
+       setProfile({ displayName: '', avatarColor: '#4DE1A1', avatarUrl: undefined, phoneNumber: undefined });
+       setGuestName('');
+       setGuestPhone('');
++      if (isNativeGoogleAuthPlatform()) {
++        try {
++          await signOutNativeGoogle();
++        } catch (nativeSignOutError) {
++          // Firebase remains the authoritative session; native provider cleanup is best-effort.
++          console.warn('Failed to clear native Google credential state:', nativeSignOutError);
++        }
++      }
+       const { auth } = await import('../../lib/firebase');
+       const { signOut } = await import('firebase/auth');
+       await signOut(auth);
+       if (typeof window !== 'undefined') {
