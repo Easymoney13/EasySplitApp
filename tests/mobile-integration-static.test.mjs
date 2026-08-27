@@ -31,17 +31,19 @@ test('mobile shell is included in Tailwind scanning and generated output stays u
   assert.match(gitignore, /!\.env\.mobile\.example/);
 });
 
-test('shared room pages keep mobile recovery and use the native camera bridge explicitly', async () => {
+test('shared room pages keep mobile recovery and group scanning uses the native camera bridge explicitly', async () => {
   const session = await read('src/app/session/[id]/page.tsx');
   const group = await read('src/app/group/[id]/page.tsx');
+
   for (const source of [session, group]) {
     assert.match(source, /MOBILE_RECOVERY_EVENT/);
     assert.match(source, /addEventListener\(MOBILE_RECOVERY_EVENT/);
-    assert.match(source, /from ['"]@capacitor\/core['"]/);
-    assert.match(source, /from ['"]@capacitor\/camera['"]/);
-    assert.match(source, /Capacitor\.isNativePlatform\(\)/);
-    assert.match(source, /CapCamera\.getPhoto/);
   }
+
+  assert.match(group, /from ['"]@capacitor\/core['"]/);
+  assert.match(group, /from ['"]@capacitor\/camera['"]/);
+  assert.match(group, /Capacitor\.isNativePlatform\(\)/);
+  assert.match(group, /CapCamera\.getPhoto/);
   assert.doesNotMatch(group, /window\.location\.href\s*=\s*`\/session\//);
 });
 
