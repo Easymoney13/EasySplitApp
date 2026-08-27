@@ -1,0 +1,65 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+
+const root = new URL('../', import.meta.url);
+const read = async (path) => readFile(new URL(path, root), 'utf8');
+
+const WEB_CLIENT_ID = '510350845002-o6t8t84c5fnvncgkspqdit0s0ndgsir9.apps.googleusercontent.com';
+const IOS_CLIENT_ID = '510350845002-11pq3jtk5vb5f2kv1nrn1jqd02f04dqp.apps.googleusercontent.com';
+const IOS_URL_SCHEME = 'com.googleusercontent.apps.510350845002-11pq3jtk5vb5f2kv1nrn1jqd02f04dqp';
+
+test('native Google auth dependency is exact and leaves Firebase JS version untouched', async () => {
+  const pkg = JSON.parse(await read('package.json'));
+  assert.equal(pkg.dependencies['@capawesome/capacitor-google-sign-in'], '0.1.3');
+  assert.equal(pkg.dependencies.firebase, '^10.12.2');
+  assert.equal(pkg.dependencies['@capacitor/core'], '8.5.0');
+});
+
+test('native Google auth uses Capacitor platform detection and exchanges only an ID token', async () => {
+  const helper = await read('lib/nativeGoogleAuth.ts');
+  assert.match(helper, /Capacitor\.isNativePlatform\(\)/);
+  assert.ok(helper.includes(WEB_CLIENT_ID));
+  assert.match(helper, /GoogleSignIn\.initialize\(\{ clientId: GOOGLE_WEB_CLIENT_ID \}\)/);
+  assert.match(helper, /GoogleSignIn\.signIn\(\)/);
+  assert.match(helper, /forceAccountSelection/);
+  assert.match(helper, /GoogleSignIn\.signOut\(\)/);
+  assert.doesNotMatch(helper, /scopes\s*:/);
+  assert.doesNotMatch(helper, /localStorage|sessionStorage|document\.cookie/);
+  assert.doesNotMatch(helper, /console\.(log|debug)\([^\n]*(idToken|accessToken)/);
+});
+
+test('LanguageContext keeps web auth and uses Firebase JS credential exchange on native', async () => {
+  const source = await read('src/components/LanguageContext.tsx');
+  assert.match(source, /isNativeGoogleAuthPlatform\(\)/);
+  assert.match(source, /signInNativeGoogle\(\{ forceAccountSelection: Boolean\(firebaseUser\) \}\)/);
+  assert.match(source, /GoogleAuthProvider\.credential\(idToken\)/);
+  assert.match(source, /signInWithCredential\(auth, credential\)/);
+  assert.match(source, /signInWithPopup/);
+  assert.match(source, /signInWithRedirect/);
+  assert.match(source, /signOutNativeGoogle\(\)/);
+  assert.ok(
+    source.indexOf('isNativeGoogleAuthPlatform()') < source.indexOf('const isMobileDevice'),
+    'native platform branch must run before UA-based mobile-web redirect logic',
+  );
+});
+
+test('iOS contains the issued client ID and callback scheme', async () => {
+  const plist = await read('ios/App/App/Info.plist');
+  assert.ok(plist.includes(IOS_CLIENT_ID));
+  assert.ok(plist.includes(IOS_URL_SCHEME));
+  assert.match(plist, /<key>GIDClientID<\/key>/);
+  assert.match(plist, /<key>CFBundleURLTypes<\/key>/);
+});
+
+test('Capacitor generated projects wire the Google Sign-In plugin on iOS and Android', async () => {
+  const iosPackage = await read('ios/App/CapApp-SPM/Package.swift');
+  const androidSettings = await read('android/capacitor.settings.gradle');
+  const androidBuild = await read('android/app/capacitor.build.gradle');
+
+  assert.match(iosPackage, /CapawesomeCapacitorGoogleSignIn/);
+  assert.match(iosPackage, /@capawesome\/capacitor-google-sign-in/);
+  assert.match(androidSettings, /include ':capawesome-capacitor-google-sign-in'/);
+  assert.match(androidSettings, /@capawesome\/capacitor-google-sign-in\/android/);
+  assert.match(androidBuild, /implementation project\(':capawesome-capacitor-google-sign-in'\)/);
+});
