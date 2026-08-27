@@ -53,7 +53,7 @@ jobs:
           tests/mobile-google-auth-static.test.mjs
           tests/mobile-integration-static.test.mjs
           EOF
-          git diff --name-only | sort > /tmp/actual-files.txt
+          { git diff --name-only; git ls-files --others --exclude-standard; } | sort -u > /tmp/actual-files.txt
           sort -o /tmp/expected-files.txt /tmp/expected-files.txt
           diff -u /tmp/expected-files.txt /tmp/actual-files.txt
 
