@@ -5,12 +5,12 @@ import { access, readFile } from 'node:fs/promises';
 const root = new URL('../', import.meta.url);
 const read = async (path) => readFile(new URL(path, root), 'utf8');
 
-async function missing(path) {
+async function exists(path) {
   try {
     await access(new URL(path, root));
-    return false;
-  } catch {
     return true;
+  } catch {
+    return false;
   }
 }
 
@@ -31,18 +31,36 @@ test('mobile shell is included in Tailwind scanning and generated output stays u
   assert.match(gitignore, /!\.env\.mobile\.example/);
 });
 
-test('shared room pages consume mobile recovery without importing Capacitor', async () => {
+test('shared room pages keep mobile recovery and use the native camera bridge explicitly', async () => {
   const session = await read('src/app/session/[id]/page.tsx');
   const group = await read('src/app/group/[id]/page.tsx');
   for (const source of [session, group]) {
     assert.match(source, /MOBILE_RECOVERY_EVENT/);
     assert.match(source, /addEventListener\(MOBILE_RECOVERY_EVENT/);
-    assert.doesNotMatch(source, /from ['"]@capacitor\//);
+    assert.match(source, /from ['"]@capacitor\/core['"]/);
+    assert.match(source, /from ['"]@capacitor\/camera['"]/);
+    assert.match(source, /Capacitor\.isNativePlatform\(\)/);
+    assert.match(source, /CapCamera\.getPhoto/);
   }
   assert.doesNotMatch(group, /window\.location\.href\s*=\s*`\/session\//);
 });
 
-test('Task 1 does not generate native platform projects', async () => {
-  assert.equal(await missing('ios/'), true);
-  assert.equal(await missing('android/'), true);
+test('committed native projects wire Camera and Haptics on both iOS and Android', async () => {
+  assert.equal(await exists('ios/App/CapApp-SPM/Package.swift'), true);
+  assert.equal(await exists('android/capacitor.settings.gradle'), true);
+  assert.equal(await exists('android/app/capacitor.build.gradle'), true);
+
+  const pkg = JSON.parse(await read('package.json'));
+  const iosPackage = await read('ios/App/CapApp-SPM/Package.swift');
+  const androidSettings = await read('android/capacitor.settings.gradle');
+  const androidBuild = await read('android/app/capacitor.build.gradle');
+
+  assert.ok(pkg.dependencies['@capacitor/camera']);
+  assert.ok(pkg.dependencies['@capacitor/haptics']);
+  assert.match(iosPackage, /CapacitorCamera/);
+  assert.match(iosPackage, /CapacitorHaptics/);
+  assert.match(androidSettings, /include ':capacitor-camera'/);
+  assert.match(androidSettings, /include ':capacitor-haptics'/);
+  assert.match(androidBuild, /implementation project\(':capacitor-camera'\)/);
+  assert.match(androidBuild, /implementation project\(':capacitor-haptics'\)/);
 });
