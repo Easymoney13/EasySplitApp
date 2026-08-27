@@ -57,6 +57,17 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
+      - name: Capture the existing dependency audit baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          npm audit --package-lock-only --json > "$RUNNER_TEMP/audit-baseline.json"
+          AUDIT_RC=$?
+          set -e
+          test -s "$RUNNER_TEMP/audit-baseline.json"
+          echo "Baseline npm audit exit code: ${AUDIT_RC} (non-zero is expected when the existing repository has advisories)."
+
       - name: Apply the exact isolated candidate
         shell: bash
         run: |
@@ -94,12 +105,66 @@ jobs:
       - name: Install exact dependency graph
         run: npm ci
 
-      - name: Verify dependency resolution
+      - name: Verify dependency resolution and audit delta
         shell: bash
         run: |
           set -euo pipefail
           npm ls @capawesome/capacitor-google-sign-in @capacitor/core firebase
-          npm audit --audit-level=high
+          set +e
+          npm audit --package-lock-only --json > "$RUNNER_TEMP/audit-candidate.json"
+          AUDIT_RC=$?
+          set -e
+          test -s "$RUNNER_TEMP/audit-candidate.json"
+          echo "Candidate npm audit exit code: ${AUDIT_RC}. Comparing it with the unchanged baseline."
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          temp = Path(os.environ['RUNNER_TEMP'])
+          baseline = json.loads((temp / 'audit-baseline.json').read_text())
+          candidate = json.loads((temp / 'audit-candidate.json').read_text())
+
+          severe = {'high', 'critical'}
+
+          def counts(report):
+              values = report.get('metadata', {}).get('vulnerabilities', {})
+              return {level: int(values.get(level, 0) or 0) for level in severe}
+
+          def severe_advisories(report):
+              found = set()
+              for package, details in report.get('vulnerabilities', {}).items():
+                  if details.get('severity') not in severe:
+                      continue
+                  vias = details.get('via', [])
+                  for via in vias:
+                      if isinstance(via, dict) and via.get('severity') in severe:
+                          identity = via.get('source') or via.get('url') or via.get('title')
+                          found.add((package, str(identity), via.get('severity')))
+              return found
+
+          baseline_counts = counts(baseline)
+          candidate_counts = counts(candidate)
+          new_severe = sorted(severe_advisories(candidate) - severe_advisories(baseline))
+          increased = {
+              level: (baseline_counts[level], candidate_counts[level])
+              for level in severe
+              if candidate_counts[level] > baseline_counts[level]
+          }
+
+          print('Existing high/critical audit baseline:', baseline_counts)
+          print('Candidate high/critical audit result:', candidate_counts)
+          if new_severe:
+              print('New severe advisories introduced by the candidate:')
+              for item in new_severe:
+                  print(' -', item)
+          if increased or new_severe:
+              raise SystemExit(
+                  'Native Google Auth candidate introduces a new high/critical dependency risk: '
+                  + repr({'increased': increased, 'new': new_severe})
+              )
+          print('PASS: candidate adds no high/critical advisory beyond the existing repository baseline.')
+          PY
 
       - name: Protect the existing web and OCR baseline
         run: npm run verify
@@ -174,6 +239,8 @@ jobs:
           git diff --name-status > "$RUNNER_TEMP/google-auth-diagnostics/diff-name-status.txt" || true
           git diff > "$RUNNER_TEMP/google-auth-diagnostics/candidate.diff" || true
           git ls-files --others --exclude-standard > "$RUNNER_TEMP/google-auth-diagnostics/untracked.txt" || true
+          cp "$RUNNER_TEMP/audit-baseline.json" "$RUNNER_TEMP/google-auth-diagnostics/audit-baseline.json" 2>/dev/null || true
+          cp "$RUNNER_TEMP/audit-candidate.json" "$RUNNER_TEMP/google-auth-diagnostics/audit-candidate.json" 2>/dev/null || true
           node --version > "$RUNNER_TEMP/google-auth-diagnostics/node.txt" || true
           xcodebuild -version > "$RUNNER_TEMP/google-auth-diagnostics/xcode.txt" || true
           (cd android && ./gradlew signingReport --no-daemon) > "$RUNNER_TEMP/google-auth-diagnostics/android-signing-report.txt" 2>&1 || true
