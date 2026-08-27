@@ -1,0 +1,74 @@
+name: EasySplit Native Google Auth — Promotion Staging
+
+on:
+  push:
+    branches:
+      - ci/native-google-auth-validation-20260827
+
+permissions:
+  contents: write
+
+jobs:
+  build-clean-promotion-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout current main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Build exact validated Google Auth commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_MAIN="d53b66ae99bbf271b65a7fb9c2782e003be77ee4"
+          VALIDATION_BRANCH="ci/native-google-auth-validation-20260827"
+          PROMOTION_BRANCH="promotion/native-google-auth-20260827"
+
+          CURRENT_MAIN="$(git rev-parse HEAD)"
+          if [ "$CURRENT_MAIN" != "$EXPECTED_MAIN" ]; then
+            echo "main moved: expected $EXPECTED_MAIN, got $CURRENT_MAIN"
+            exit 1
+          fi
+
+          git fetch origin "$VALIDATION_BRANCH"
+          git show "origin/$VALIDATION_BRANCH:.ci/native-google-auth-candidate.patch" > /tmp/native-google-auth-candidate.patch
+          git show "origin/$VALIDATION_BRANCH:tests/mobile-integration-static.test.mjs" > /tmp/mobile-integration-static.test.mjs
+
+          git apply --check /tmp/native-google-auth-candidate.patch
+          git apply /tmp/native-google-auth-candidate.patch
+          cp /tmp/mobile-integration-static.test.mjs tests/mobile-integration-static.test.mjs
+          git diff --check
+
+          cat > /tmp/expected-files.txt <<'EOF'
+          android/app/capacitor.build.gradle
+          android/capacitor.settings.gradle
+          ios/App/App/Info.plist
+          ios/App/CapApp-SPM/Package.swift
+          lib/nativeGoogleAuth.ts
+          package-lock.json
+          package.json
+          src/components/LanguageContext.tsx
+          tests/mobile-google-auth-static.test.mjs
+          tests/mobile-integration-static.test.mjs
+          EOF
+          git diff --name-only | sort > /tmp/actual-files.txt
+          sort -o /tmp/expected-files.txt /tmp/expected-files.txt
+          diff -u /tmp/expected-files.txt /tmp/actual-files.txt
+
+          git config user.name "yoav-jacoel"
+          git config user.email "yoavjacoel@gmail.com"
+          git add -- \
+            android/app/capacitor.build.gradle \
+            android/capacitor.settings.gradle \
+            ios/App/App/Info.plist \
+            ios/App/CapApp-SPM/Package.swift \
+            lib/nativeGoogleAuth.ts \
+            package-lock.json \
+            package.json \
+            src/components/LanguageContext.tsx \
+            tests/mobile-google-auth-static.test.mjs \
+            tests/mobile-integration-static.test.mjs
+          git commit -m "Add native Google sign-in for Capacitor"
+          git push origin "HEAD:refs/heads/$PROMOTION_BRANCH" --force
