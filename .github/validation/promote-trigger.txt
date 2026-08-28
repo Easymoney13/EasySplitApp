@@ -1,0 +1,1 @@
+Promote the Gate 1+2 candidate only when .github/validation/GATE12_PASS exists.
