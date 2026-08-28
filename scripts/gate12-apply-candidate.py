@@ -62,10 +62,36 @@ test('server defaults to the exact Capacitor WebView origins', () => {
 platform_test.write_text(platform_source, encoding="utf-8")
 
 replace_exact(
+    "lib/mobileEvents.ts",
+    "/** Neutral browser event shared by the bundled mobile runtime and existing room pages. */\n"
+    "export const MOBILE_RECOVERY_EVENT = 'easysplit:runtime-recover' as const;\n",
+    "/** Neutral browser events shared by the bundled mobile runtime and existing pages. */\n"
+    "export const MOBILE_RECOVERY_EVENT = 'easysplit:runtime-recover' as const;\n"
+    "export const MOBILE_NATIVE_BACK_EVENT = 'easysplit:native-back' as const;\n",
+)
+
+replace_exact(
+    "mobile/runtime/mobileRuntime.ts",
+    "import { MOBILE_RECOVERY_EVENT } from '../../lib/mobileEvents';",
+    "import { MOBILE_NATIVE_BACK_EVENT, MOBILE_RECOVERY_EVENT } from '../../lib/mobileEvents';",
+)
+
+replace_exact(
+    "mobile/runtime/mobileRuntime.ts",
+    "  handles.push(await App.addListener('backButton', async () => {\n"
+    "    const action = backAction(window.location.search, window.history.state);",
+    "  handles.push(await App.addListener('backButton', async () => {\n"
+    "    const interceptEvent = new Event(MOBILE_NATIVE_BACK_EVENT, { cancelable: true });\n"
+    "    window.dispatchEvent(interceptEvent);\n"
+    "    if (interceptEvent.defaultPrevented) return;\n\n"
+    "    const action = backAction(window.location.search, window.history.state);",
+)
+
+replace_exact(
     "src/app/page.tsx",
-    "import { Camera as CapCamera, CameraResultType, CameraSource } from '@capacitor/camera';\n",
-    "import { Camera as CapCamera, CameraResultType, CameraSource } from '@capacitor/camera';\n"
-    "import { App as CapacitorApp } from '@capacitor/app';\n",
+    "import { triggerHaptic } from '../../lib/haptics';\n",
+    "import { triggerHaptic } from '../../lib/haptics';\n"
+    "import { MOBILE_NATIVE_BACK_EVENT } from '../../lib/mobileEvents';\n",
 )
 
 replace_exact(
@@ -76,20 +102,13 @@ replace_exact(
     "  const [showJoinSessionModal, setShowJoinSessionModal] = useState(false);\n\n"
     "  useEffect(() => {\n"
     "    if (!showStartSplitModal || Capacitor.getPlatform() !== 'android') return;\n\n"
-    "    let cancelled = false;\n"
-    "    let backHandle: { remove: () => Promise<void> } | null = null;\n"
-    "    void CapacitorApp.addListener('backButton', () => {\n"
+    "    const handleNativeBack = (event: Event) => {\n"
+    "      event.preventDefault();\n"
     "      setShowStartSplitModal(false);\n"
-    "    }).then((handle) => {\n"
-    "      if (cancelled) {\n"
-    "        void handle.remove();\n"
-    "        return;\n"
-    "      }\n"
-    "      backHandle = handle;\n"
-    "    });\n\n"
+    "    };\n"
+    "    window.addEventListener(MOBILE_NATIVE_BACK_EVENT, handleNativeBack);\n"
     "    return () => {\n"
-    "      cancelled = true;\n"
-    "      if (backHandle) void backHandle.remove();\n"
+    "      window.removeEventListener(MOBILE_NATIVE_BACK_EVENT, handleNativeBack);\n"
     "    };\n"
     "  }, [showStartSplitModal]);\n",
 )
@@ -102,19 +121,25 @@ replace_exact(
 
 mobile_test = root / "tests/mobile-integration-static.test.mjs"
 mobile_source = mobile_test.read_text(encoding="utf-8")
-mobile_marker = "native Android back dismisses the Start Split sheet"
+mobile_marker = "native Android back is consumed by an open Start Split sheet"
 if mobile_marker in mobile_source:
     raise SystemExit("tests/mobile-integration-static.test.mjs: candidate test already present")
 mobile_source += r'''
 
-test('native Android back dismisses the Start Split sheet', async () => {
+test('native Android back is consumed by an open Start Split sheet', async () => {
   const home = await read('src/app/page.tsx');
+  const runtime = await read('mobile/runtime/mobileRuntime.ts');
+  const events = await read('lib/mobileEvents.ts');
   const variables = await read('android/variables.gradle');
 
-  assert.match(home, /from ['"]@capacitor\/app['"]/);
+  assert.match(events, /easysplit:native-back/);
+  assert.match(runtime, /new Event\(MOBILE_NATIVE_BACK_EVENT, \{ cancelable: true \}\)/);
+  assert.match(runtime, /interceptEvent\.defaultPrevented/);
   assert.match(home, /Capacitor\.getPlatform\(\)\s*!==\s*['"]android['"]/);
-  assert.match(home, /CapacitorApp\.addListener\(['"]backButton['"]/);
+  assert.match(home, /addEventListener\(MOBILE_NATIVE_BACK_EVENT/);
+  assert.match(home, /event\.preventDefault\(\)/);
   assert.match(home, /setShowStartSplitModal\(false\)/);
+  assert.doesNotMatch(home, /CapacitorApp\.addListener\(['"]backButton['"]/);
   assert.match(variables, /androidxActivityVersion = '1\.12\.4'/);
 });
 '''

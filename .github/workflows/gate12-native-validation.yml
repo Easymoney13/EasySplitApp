@@ -133,6 +133,8 @@ jobs:
             server.js \
             lib/platformSecurity.js \
             tests/platform-security.test.js \
+            lib/mobileEvents.ts \
+            mobile/runtime/mobileRuntime.ts \
             src/app/page.tsx \
             android/variables.gradle \
             tests/mobile-integration-static.test.mjs \
