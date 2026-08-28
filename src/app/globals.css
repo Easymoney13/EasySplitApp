@@ -469,6 +469,17 @@ select:focus-visible {
   }
 }
 
+@keyframes bottomSheetSlideUp {
+  0% {
+    opacity: 0;
+    transform: translateY(100%);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @keyframes bounceShort {
   0%, 100% {
     transform: translateY(0);
@@ -499,6 +510,11 @@ select:focus-visible {
 
 .animate-slideUp {
   animation: slideUp 0.38s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-bottomSheet {
+  animation: bottomSheetSlideUp 0.38s cubic-bezier(0.2, 0.9, 0.3, 1.0) forwards;
+  will-change: transform, opacity;
 }
 
 .animate-bounce-short {

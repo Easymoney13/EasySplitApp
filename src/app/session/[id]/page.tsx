@@ -1420,7 +1420,10 @@ function SessionWorkspaceInner() {
 
         return (
           <div className="fixed inset-0 z-50 flex flex-col justify-end bg-slate-950/60 backdrop-blur-sm animate-fadeIn">
-            <div className="w-full max-w-md mx-auto rounded-t-[32px] p-5 bg-white dark:bg-brand-900 text-slate-900 dark:text-white space-y-4 max-h-[78vh] overflow-y-auto shadow-2xl">
+            <div className="w-full max-w-md mx-auto rounded-t-[32px] p-6 pb-8 bg-white dark:bg-brand-900 text-slate-900 dark:text-white space-y-4 max-h-[82vh] overflow-y-auto shadow-2xl animate-bottomSheet border-t border-slate-200/80 dark:border-white/10">
+              {/* Visual Drag Handle Pill */}
+              <div className="w-12 h-1.5 rounded-full bg-slate-300 dark:bg-slate-700 mx-auto -mt-1 mb-2 opacity-80" />
+
               {/* Header */}
               <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
                 <div>
@@ -1668,24 +1671,24 @@ function SessionWorkspaceInner() {
                       setIsSettling('idle');
                     }, 700);
                   }}
-                  className={`w-full py-4 rounded-full bg-white dark:bg-white text-black dark:text-black font-black text-sm border border-slate-200 dark:border-white/20 hover:bg-slate-100 dark:hover:bg-slate-100 shadow-2xl flex items-center justify-center gap-2.5 transition-all duration-300 active:scale-[0.98] text-center relative overflow-hidden group select-none ${
-                    isSettling === 'success' ? 'ring-4 ring-black/20 dark:ring-white/30 bg-white' : ''
+                  className={`w-full py-4 rounded-full bg-slate-950 dark:bg-black text-white dark:text-white font-black text-sm border border-slate-800 dark:border-white/20 hover:bg-slate-900 dark:hover:bg-slate-900 shadow-2xl flex items-center justify-center gap-2.5 transition-all duration-300 active:scale-[0.98] text-center relative overflow-hidden group select-none ${
+                    isSettling === 'success' ? 'ring-4 ring-mint-400/40 bg-black text-white' : ''
                   }`}
                 >
                   {isSettling === 'loading' ? (
                     <>
-                      <Loader2 className="w-5 h-5 animate-spin text-black" />
-                      <span className="text-black">{isCurrentUserHost ? t('settlingSession', undefined, 'Settling Session...') : t('markingPaid', undefined, 'Marking Paid...')}</span>
+                      <Loader2 className="w-5 h-5 animate-spin text-white" />
+                      <span className="text-white">{isCurrentUserHost ? t('settlingSession', undefined, 'Settling Session...') : t('markingPaid', undefined, 'Marking Paid...')}</span>
                     </>
                   ) : isSettling === 'success' ? (
                     <>
-                      <CheckCircle2 className="w-5 h-5 text-mint-600 animate-scaleUp" />
-                      <span className="animate-fadeIn text-black">{t('settledSuccessMsg', undefined, 'Settled Successfully! 🎉')}</span>
+                      <CheckCircle2 className="w-5 h-5 text-mint-400 animate-scaleUp" />
+                      <span className="animate-fadeIn text-white">{t('settledSuccessMsg', undefined, 'Settled Successfully! 🎉')}</span>
                     </>
                   ) : (
                     <>
-                      <CheckCircle2 className="w-5 h-5 text-black group-hover:scale-110 transition-transform" />
-                      <span className="text-black">
+                      <CheckCircle2 className="w-5 h-5 text-white group-hover:scale-110 transition-transform" />
+                      <span className="text-white">
                         {isCurrentUserHost
                           ? t('settleAndCloseSessionBtn', undefined, 'Settle Payment & Close Session')
                           : t('markPaidBtn', undefined, 'Mark My Share as Paid')}

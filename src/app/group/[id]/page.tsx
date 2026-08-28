@@ -667,9 +667,12 @@ export default function GroupWorkspacePage() {
       {showStartSplitModal && (
         <div className="fixed inset-0 z-50 flex flex-col justify-end bg-slate-950/70 backdrop-blur-xs animate-fadeIn" onClick={() => setShowStartSplitModal(false)}>
           <div 
-            className="w-full max-w-md mx-auto rounded-t-[32px] p-6 bg-white dark:bg-brand-950 text-slate-900 dark:text-white space-y-4 shadow-2xl animate-slideUp border-t border-slate-200 dark:border-slate-800"
+            className="w-full max-w-md mx-auto rounded-t-[32px] p-6 pb-8 bg-white dark:bg-brand-950 text-slate-900 dark:text-white space-y-4 shadow-2xl animate-bottomSheet border-t border-slate-200 dark:border-slate-800"
             onClick={(e) => e.stopPropagation()}
           >
+            {/* Visual Drag Handle Pill */}
+            <div className="w-12 h-1.5 rounded-full bg-slate-300 dark:bg-slate-700 mx-auto -mt-1 mb-2 opacity-80" />
+
             {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
               <div>

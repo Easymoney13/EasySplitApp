@@ -167,7 +167,28 @@ export default function HomePage() {
     }
   };
 
+  const ensureAuthenticatedForScan = async (): Promise<boolean> => {
+    if (firebaseUser) return true;
+    triggerHaptic('warning');
+    const confirmed = confirm(
+      language === 'he'
+        ? 'כדי לסרוק קבלות עם AI, יש להתחבר עם חשבון Google. להתחבר עכשיו?'
+        : 'Please sign in with Google to scan receipts with AI. Sign in now?'
+    );
+    if (confirmed) {
+      try {
+        await loginWithGoogle();
+      } catch (_) {}
+    }
+    return false;
+  };
+
   const handleScanCamera = async () => {
+    if (!firebaseUser) {
+      const ok = await ensureAuthenticatedForScan();
+      if (!ok) return;
+    }
+
     if (Capacitor.isNativePlatform()) {
       try {
         const photo = await CapCamera.getPhoto({
@@ -185,9 +206,9 @@ export default function HomePage() {
             setPendingScanId(draft.scanId);
             setPendingRecoveryToken(draft.recoveryToken);
             setShowManualModal(true);
-          } catch (err) {
+          } catch (err: any) {
             console.error(err);
-            alert(receiptScanUserMessage(t));
+            alert(err?.message || receiptScanUserMessage(t));
           } finally {
             setIsUploading(false);
           }
@@ -511,6 +532,13 @@ export default function HomePage() {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (!firebaseUser) {
+      const ok = await ensureAuthenticatedForScan();
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      if (cameraInputRef.current) cameraInputRef.current.value = '';
+      if (!ok) return;
+    }
+
     setIsUploading(true);
     try {
       const draft = await createReceiptDraft(file, profile.displayName || 'Host');
@@ -518,12 +546,13 @@ export default function HomePage() {
       setPendingScanId(draft.scanId);
       setPendingRecoveryToken(draft.recoveryToken);
       setShowManualModal(true);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert(receiptScanUserMessage(t));
+      alert(err?.message || receiptScanUserMessage(t));
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
+      if (cameraInputRef.current) cameraInputRef.current.value = '';
     }
   };
 
@@ -1716,9 +1745,12 @@ export default function HomePage() {
       {showStartSplitModal && (
         <div className="fixed inset-0 z-50 flex flex-col justify-end bg-slate-950/60 backdrop-blur-xs animate-fadeIn" onClick={() => setShowStartSplitModal(false)}>
           <div 
-            className="w-full max-w-md mx-auto rounded-t-[32px] p-6 bg-white dark:bg-brand-900 text-slate-900 dark:text-white space-y-4 shadow-2xl animate-slideUp"
+            className="w-full max-w-md mx-auto rounded-t-[32px] p-6 pb-8 bg-white dark:bg-brand-900 text-slate-900 dark:text-white space-y-4 shadow-2xl animate-bottomSheet border-t border-slate-200/80 dark:border-white/10"
             onClick={(e) => e.stopPropagation()}
           >
+            {/* Visual Drag Handle Pill */}
+            <div className="w-12 h-1.5 rounded-full bg-slate-300 dark:bg-slate-700 mx-auto -mt-1 mb-2 opacity-80" />
+
             {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
               <div>

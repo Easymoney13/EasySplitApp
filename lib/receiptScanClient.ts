@@ -85,8 +85,14 @@ export async function createReceiptDraft(
         usedLocalFallback: false,
       };
     }
+    if (response.status === 429 || response.status === 401) {
+      throw new Error(data.error || 'Scan limit reached or authentication required');
+    }
     serverError = data.error || 'Could not read the receipt image';
   } catch (error) {
+    if (error instanceof Error && (error.message.includes('limit') || error.message.includes('sign in') || error.message.includes('Authentication'))) {
+      throw error;
+    }
     serverError = error instanceof Error && error.name === 'AbortError'
       ? 'Receipt scan timed out'
       : 'Receipt scan is temporarily unavailable';

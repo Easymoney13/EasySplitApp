@@ -598,27 +598,41 @@ app.prepare().then(() => {
     return nextMiddleware();
   }
 
+  const ocrUserRateLimiter = security.createUserRateLimiter({
+    shortWindowMs: 10 * 60 * 1000,
+    shortMax: 5,
+    dailyWindowMs: 24 * 60 * 60 * 1000,
+    dailyMax: 25,
+    shortMessage: 'Too many receipt scans in a short period. Please wait a few minutes before trying again.',
+    dailyMessage: 'Daily receipt scan limit reached (25 scans per day). Please try again tomorrow.',
+    requireAuth: process.env.NODE_ENV === 'production' || process.env.REQUIRE_OCR_AUTH === 'true',
+    unauthMessage: 'Please sign in with Google or Email to scan receipts with AI.',
+  });
+
   function ocrRateLimit(req, res, nextMiddleware) {
-    // User-confirmed/manual drafts do not call an OCR provider and must not
-    // consume the scan quota.
-    if (req.body?.parsedBill && !req.body?.imageBase64 && !req.body?.imageBase64Parts && !req.body?.rawText) {
-      return nextMiddleware();
+    return ocrUserRateLimiter.middleware(req, res, nextMiddleware);
+  }
+
+  // Firebase App Check middleware (validates genuine app traffic)
+  async function appCheckProtection(req, res, nextMiddleware) {
+    const appCheckToken = req.header('X-Firebase-AppCheck');
+    if (process.env.ENFORCE_APP_CHECK === 'true') {
+      if (!appCheckToken) {
+        return res.status(401).json({ error: 'App Check token is required', errorCode: 'APP_CHECK_REQUIRED' });
+      }
+      try {
+        const appCheckClaims = await admin.appCheck().verifyToken(appCheckToken);
+        req.appCheck = appCheckClaims;
+        return nextMiddleware();
+      } catch (err) {
+        return res.status(401).json({ error: 'Unauthorized: Invalid App Check token', errorCode: 'APP_CHECK_INVALID' });
+      }
     }
-    const now = Date.now();
-    const key = req.user?.uid
-      ? `user:${req.user.uid}`
-      : `ip:${req.ip || req.socket.remoteAddress || 'unknown'}`;
-    const existing = ocrRateBuckets.get(key);
-    const bucket = !existing || now - existing.startedAt > 10 * 60 * 1000
-      ? { startedAt: now, count: 0 }
-      : existing;
-    bucket.count += 1;
-    ocrRateBuckets.set(key, bucket);
-    if (ocrRateBuckets.size > 1000) {
-      pruneRateBuckets(ocrRateBuckets, now);
-    }
-    if (bucket.count > 10) {
-      return res.status(429).json({ error: 'Too many receipt scans. Please wait a few minutes and try again.' });
+    if (appCheckToken) {
+      try {
+        const appCheckClaims = await admin.appCheck().verifyToken(appCheckToken);
+        req.appCheck = appCheckClaims;
+      } catch (_) {}
     }
     return nextMiddleware();
   }
@@ -850,7 +864,7 @@ app.prepare().then(() => {
   // REST API Routes
 
   // Parse a receipt and create a private real-time session.
-  server.post('/api/receipt/parse', authenticateUser, ocrRateLimit, async (req, res) => {
+  server.post('/api/receipt/parse', authenticateUser, appCheckProtection, ocrRateLimit, async (req, res) => {
     const startedAt = Date.now();
     const ocrSource = getOcrSource(req.body);
     void trackAnalyticsEvent('ocr_scan_started', {
@@ -905,7 +919,7 @@ app.prepare().then(() => {
     }
   });
 
-  server.post('/api/receipt/scan', authenticateUser, sessionCreateRateLimit, ocrRateLimit, async (req, res) => {
+  server.post('/api/receipt/scan', authenticateUser, appCheckProtection, sessionCreateRateLimit, ocrRateLimit, async (req, res) => {
     const startedAt = Date.now();
     const ocrSource = getOcrSource(req.body);
     void trackAnalyticsEvent('ocr_scan_started', {
