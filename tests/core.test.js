@@ -788,6 +788,68 @@ test('OCR model reads run concurrently instead of adding their latencies', async
   }
 });
 
+test('OCR reaches the bounded fallback pool when the fast model quorum is unavailable', async () => {
+  const originalFetch = global.fetch;
+  const endpoints = [];
+  global.fetch = async (endpoint) => {
+    endpoints.push(String(endpoint));
+    if (endpoints.length <= 3) return { ok: false, status: 503 };
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return {
+          candidates: [{ content: { parts: [{ text: JSON.stringify({
+            storeName: 'חשבון לקוח',
+            date: '2026-08-24',
+            currency: 'NIS',
+            documentLanguage: 'hebrew',
+            receiptTotal: 237,
+            items: [
+              { name: 'עראייס', lineTotal: 59 },
+              { name: 'סיגרי ומח עצם', lineTotal: 165 },
+              { name: 'קולה זירו', lineTotal: 13 },
+            ],
+          }) }] } }],
+        };
+      },
+    };
+  };
+  try {
+    const receipt = await parseReceiptImage('/9j/', 'image/jpeg', 'test-key', {
+      pipelineTimeoutMs: 2_000,
+      fallbackTimeoutMs: 2_000,
+      verificationGraceMs: 250,
+    });
+    assert.equal(endpoints.length, 5);
+    assert.match(endpoints[3], /gemini-2\.5-flash:generateContent/);
+    assert.match(endpoints[4], /gemini-flash-latest:generateContent/);
+    assert.equal(receipt.items.length, 3);
+    assert.equal(receipt.receiptTotal, 237);
+    assert.equal(receipt.ocr.verificationStatus, 'cross_model_agreement');
+    assert.equal(receipt.ocr.modelAttempts, 5);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('OCR provider outages are not mislabeled as unreadable receipt images', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ ok: false, status: 503 });
+  try {
+    await assert.rejects(
+      parseReceiptImage('/9j/', 'image/jpeg', 'test-key', {
+        pipelineTimeoutMs: 2_000,
+        fallbackTimeoutMs: 2_000,
+        verificationGraceMs: 250,
+      }),
+      (error) => error?.statusCode === 503 && error?.errorCode === 'OCR_PROVIDER_UNAVAILABLE',
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('Hebrew Gemini OCR keeps a readable primary draft on a one-letter verifier disagreement', async () => {
   const originalFetch = global.fetch;
   let callCount = 0;
