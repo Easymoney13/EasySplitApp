@@ -1,0 +1,195 @@
+name: Gate 1+2 Native Validation
+
+on:
+  push:
+    branches:
+      - gate12-native-validation-20260828
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate12-native-validation-20260828
+  cancel-in-progress: true
+
+jobs:
+  android-and-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+
+    steps:
+      - name: Check out isolated validation branch
+        uses: actions/checkout@v5
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22.23.2
+          cache: npm
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android tools
+        uses: android-actions/setup-android@v3
+
+      - name: Install exact dependency graph
+        run: npm ci
+
+      - name: Apply the isolated Gate 1+2 candidate
+        run: python3 scripts/gate12-apply-candidate.py
+
+      - name: Verify unchanged web baseline
+        run: |
+          npm run verify
+          npm run test:strain
+
+      - name: Verify mobile shell and candidate static tests
+        env:
+          NEXT_PUBLIC_EASYSPLIT_API_ORIGIN: https://billspltapp.onrender.com
+          NEXT_PUBLIC_EASYSPLIT_WEB_ORIGIN: https://billspltapp.onrender.com
+        run: npm run verify:mobile-shell
+
+      - name: Prove exact default native CORS behavior
+        run: |
+          set -euo pipefail
+          PORT=3100 npm start >/tmp/easysplit-gate12-server.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "${SERVER_PID}" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:3100/ >/dev/null; then
+              break
+            fi
+            if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
+              cat /tmp/easysplit-gate12-server.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+          for origin in capacitor://localhost https://localhost; do
+            status="$(
+              curl --silent --show-error \
+                --output /tmp/cors-body \
+                --dump-header /tmp/cors-headers \
+                --write-out '%{http_code}' \
+                --request OPTIONS \
+                --header "Origin: ${origin}" \
+                --header 'Access-Control-Request-Method: GET' \
+                http://127.0.0.1:3100/api/exchange-rates
+            )"
+            test "${status}" = "204"
+            grep -Fqi "Access-Control-Allow-Origin: ${origin}" /tmp/cors-headers
+            grep -Fqi 'X-Firebase-AppCheck' /tmp/cors-headers
+          done
+
+          attacker_status="$(
+            curl --silent --show-error \
+              --output /tmp/cors-attacker-body \
+              --write-out '%{http_code}' \
+              --request OPTIONS \
+              --header 'Origin: https://localhost.attacker.example' \
+              --header 'Access-Control-Request-Method: GET' \
+              http://127.0.0.1:3100/api/exchange-rates
+          )"
+          test "${attacker_status}" = "403"
+
+      - name: Build the Android API 36 debug package
+        env:
+          NEXT_PUBLIC_EASYSPLIT_API_ORIGIN: https://billspltapp.onrender.com
+          NEXT_PUBLIC_EASYSPLIT_WEB_ORIGIN: https://billspltapp.onrender.com
+        run: |
+          npx cap sync android
+          chmod +x android/gradlew
+          cd android
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Validate Android 16 Back behavior in an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: |
+            adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+            node scripts/gate12-verify-android-back.mjs
+
+      - name: Capture exact candidate patch
+        if: always()
+        run: |
+          git diff --check
+          git diff -- \
+            server.js \
+            lib/platformSecurity.js \
+            tests/platform-security.test.js \
+            src/app/page.tsx \
+            android/variables.gradle \
+            tests/mobile-integration-static.test.mjs \
+            > gate12-candidate.patch
+
+      - name: Upload Android evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate12-android-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            gate12-candidate.patch
+            gate12-android-back-result.png
+            gate12-android-logcat.txt
+            /tmp/easysplit-gate12-server.log
+          if-no-files-found: warn
+          retention-days: 7
+
+  ios-simulator:
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out isolated validation branch
+        uses: actions/checkout@v5
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22.23.2
+          cache: npm
+
+      - name: Install exact dependency graph
+        run: npm ci
+
+      - name: Apply the isolated Gate 1+2 candidate
+        run: python3 scripts/gate12-apply-candidate.py
+
+      - name: Verify Xcode requirement
+        run: |
+          xcodebuild -version
+          XCODE_MAJOR="$(xcodebuild -version | awk 'NR==1 {split($2, v, "."); print v[1]}')"
+          test "${XCODE_MAJOR}" -ge 26
+
+      - name: Build and synchronize iOS assets
+        env:
+          NEXT_PUBLIC_EASYSPLIT_API_ORIGIN: https://billspltapp.onrender.com
+          NEXT_PUBLIC_EASYSPLIT_WEB_ORIGIN: https://billspltapp.onrender.com
+        run: |
+          npm run verify:mobile-shell
+          npx cap sync ios
+
+      - name: Compile iOS Simulator without signing
+        run: |
+          xcodebuild \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -sdk iphonesimulator \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "${RUNNER_TEMP}/EasySplitDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
