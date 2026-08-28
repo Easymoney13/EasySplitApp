@@ -1,0 +1,146 @@
+name: Publish Gate 1+2 Validation Report
+
+on:
+  push:
+    branches:
+      - validation-gate12-native-20260828
+    paths:
+      - .github/validation/report-trigger.txt
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: gate12-report-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout validation branch
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Wait for the matching native validation run
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUN_ID=''
+          for attempt in $(seq 1 300); do
+            RUN_ID=$(gh api \
+              -H 'Accept: application/vnd.github+json' \
+              "/repos/$GITHUB_REPOSITORY/actions/runs?branch=$GITHUB_REF_NAME&per_page=30" \
+              --jq ".workflow_runs | map(select(.name == \"Gate 1+2 Native Validation\" and .head_sha == \"$GITHUB_SHA\")) | sort_by(.created_at) | last | .id // empty")
+            if [ -n "$RUN_ID" ]; then
+              STATUS=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq '.status')
+              echo "validation_run=$RUN_ID status=$STATUS"
+              if [ "$STATUS" = completed ]; then break; fi
+            fi
+            sleep 10
+          done
+          test -n "$RUN_ID"
+          test "$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq '.status')" = completed
+          echo "VALIDATION_RUN_ID=$RUN_ID" >> "$GITHUB_ENV"
+
+      - name: Collect run, job, step and artifact results
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/gate12-report
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$VALIDATION_RUN_ID" \
+            > /tmp/gate12-report/run.json
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$VALIDATION_RUN_ID/jobs?per_page=100" \
+            > /tmp/gate12-report/jobs.json
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$VALIDATION_RUN_ID/artifacts?per_page=100" \
+            > /tmp/gate12-report/artifacts.json
+
+      - name: Write auditable branch report
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          run = json.loads(Path('/tmp/gate12-report/run.json').read_text())
+          jobs = json.loads(Path('/tmp/gate12-report/jobs.json').read_text()).get('jobs', [])
+          artifacts = json.loads(Path('/tmp/gate12-report/artifacts.json').read_text()).get('artifacts', [])
+          conclusion = run.get('conclusion') or 'unknown'
+          passed = conclusion == 'success' and jobs and all(job.get('conclusion') == 'success' for job in jobs)
+
+          lines = [
+              '# Gate 1+2 Native Validation Report',
+              '',
+              f"- **Overall:** {'PASS' if passed else 'FAIL'}",
+              f"- **Workflow conclusion:** `{conclusion}`",
+              f"- **Validation run:** [{run['id']}]({run['html_url']})",
+              f"- **Candidate source SHA:** `{run['head_sha']}`",
+              f"- **Branch:** `{run['head_branch']}`",
+              '',
+              '## Jobs',
+              '',
+          ]
+          for job in jobs:
+              lines.append(f"### {job['name']} — `{job.get('conclusion') or job.get('status')}`")
+              for step in job.get('steps', []):
+                  result = step.get('conclusion') or step.get('status')
+                  icon = '✅' if result == 'success' else ('⏭️' if result == 'skipped' else '❌')
+                  lines.append(f"- {icon} {step['name']}: `{result}`")
+              lines.append('')
+
+          failed = [
+              (job['name'], step['name'], step.get('conclusion') or step.get('status'))
+              for job in jobs
+              for step in job.get('steps', [])
+              if (step.get('conclusion') or step.get('status')) not in ('success', 'skipped')
+          ]
+          lines.extend(['## Failed or cancelled steps', ''])
+          if failed:
+              lines.extend(f"- `{job}` → **{step}**: `{result}`" for job, step, result in failed)
+          else:
+              lines.append('- None')
+
+          lines.extend(['', '## Evidence artifacts', ''])
+          if artifacts:
+              for artifact in artifacts:
+                  lines.append(f"- `{artifact['name']}` — {artifact['size_in_bytes']} bytes")
+          else:
+              lines.append('- No artifacts were retained.')
+
+          lines.extend([
+              '',
+              '## Interpretation',
+              '',
+              '- This branch is isolated from `main` and does not deploy production.',
+              '- The product candidate is applied only inside clean CI runners.',
+              '- iOS validation is Simulator-only and intentionally does not claim Apple signing.',
+              '- Android validation uses Android 16 / API 36 and a real installed debug APK.',
+              '',
+          ])
+          report = Path('.github/validation/gate12-result.md')
+          report.write_text('\n'.join(lines), encoding='utf-8')
+
+          for marker in (Path('.github/validation/GATE12_PASS'), Path('.github/validation/GATE12_FAIL')):
+              if marker.exists(): marker.unlink()
+          marker = Path('.github/validation/GATE12_PASS' if passed else '.github/validation/GATE12_FAIL')
+          marker.write_text(f"run={run['id']}\nconclusion={conclusion}\n", encoding='utf-8')
+          PY
+
+      - name: Commit report to validation branch only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/validation/gate12-result.md \
+            .github/validation/GATE12_PASS \
+            .github/validation/GATE12_FAIL 2>/dev/null || true
+          git diff --cached --check
+          git commit -m "chore(validation): publish Gate 1+2 result [skip ci]"
+          git push origin "HEAD:$GITHUB_REF_NAME"
