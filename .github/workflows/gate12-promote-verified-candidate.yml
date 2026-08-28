@@ -1,0 +1,67 @@
+name: Promote Verified Gate 1+2 Candidate
+
+on:
+  push:
+    branches:
+      - validation-gate12-native-20260828
+    paths:
+      - .github/validation/promote-trigger.txt
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gate12-promote-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout validation branch
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Require a successful auditable validation marker
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f .github/validation/GATE12_PASS ]; then
+            echo 'promote=true' >> "$GITHUB_OUTPUT"
+            cat .github/validation/GATE12_PASS
+          else
+            echo 'promote=false' >> "$GITHUB_OUTPUT"
+            echo 'Candidate was not promoted because Gate 1+2 did not pass.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Apply the already-validated candidate
+        if: steps.gate.outputs.promote == 'true'
+        run: |
+          python3 .github/validation/apply-gate12-candidate.py
+          git diff --check
+
+      - name: Commit candidate to validation branch only
+        if: steps.gate.outputs.promote == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .github/validation/GATE12_PASS .github/validation/GATE12_PROMOTED
+          printf 'promoted_sha=%s\n' "$GITHUB_SHA" >> .github/validation/GATE12_PROMOTED
+          git add \
+            .env.example \
+            lib/platformSecurity.js \
+            server.js \
+            tests/platform-security.test.js \
+            capacitor.config.ts \
+            android/variables.gradle \
+            src/app/page.tsx \
+            tests/mobile-integration-static.test.mjs \
+            .github/validation/GATE12_PROMOTED
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(native): stage verified Gate 1+2 candidate [skip ci]'
+          git push origin "HEAD:$GITHUB_REF_NAME"
