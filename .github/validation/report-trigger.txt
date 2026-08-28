@@ -1,0 +1,3 @@
+Gate 1+2 isolated native validation trigger
+Date: 2026-08-28
+Scope: validation branch only; no main mutation; no production deploy.
