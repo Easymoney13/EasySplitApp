@@ -57,11 +57,14 @@ jobs:
       - name: Prove exact default native CORS behavior
         run: |
           set -euo pipefail
+          npm run build
           PORT=3100 npm start >/tmp/easysplit-gate12-server.log 2>&1 &
           SERVER_PID=$!
           trap 'kill "${SERVER_PID}" 2>/dev/null || true' EXIT
+          READY=false
           for attempt in $(seq 1 60); do
             if curl --fail --silent http://127.0.0.1:3100/ >/dev/null; then
+              READY=true
               break
             fi
             if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
@@ -70,6 +73,7 @@ jobs:
             fi
             sleep 1
           done
+          test "${READY}" = "true"
 
           for origin in capacitor://localhost https://localhost; do
             status="$(
