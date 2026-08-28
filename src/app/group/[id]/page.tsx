@@ -1139,8 +1139,8 @@ export default function GroupWorkspacePage() {
                     <div className="flex items-center gap-1.5">
                       {canPay && (
                         <>
-                          <button disabled={Boolean(paymentLookupKey)} onClick={() => openGroupTransferPayment(tx, 'bit')} className="py-1.5 px-2.5 rounded-lg bg-[#7026FF] text-white font-extrabold text-[10px] disabled:opacity-50">Bit</button>
-                          <button disabled={Boolean(paymentLookupKey)} onClick={() => openGroupTransferPayment(tx, 'paybox')} className="py-1.5 px-2.5 rounded-lg bg-[#005082] text-white font-extrabold text-[10px] disabled:opacity-50">Paybox</button>
+                          <button disabled={Boolean(paymentLookupKey)} onClick={() => openGroupTransferPayment(tx, 'bit')} className="py-1.5 px-2.5 rounded-lg bg-[#00D4E5] hover:bg-[#00C2DE] text-slate-950 font-black text-[10px] shadow-xs disabled:opacity-50">Bit</button>
+                          <button disabled={Boolean(paymentLookupKey)} onClick={() => openGroupTransferPayment(tx, 'paybox')} className="py-1.5 px-2.5 rounded-lg bg-gradient-to-r from-[#3877FF] to-[#7B61FF] hover:from-[#2F6DF5] hover:to-[#6E54F7] text-white font-black text-[10px] shadow-xs disabled:opacity-50">Paybox</button>
                         </>
                       )}
                       {canUpdate && (

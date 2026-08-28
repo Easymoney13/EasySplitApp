@@ -99,17 +99,24 @@ function AnimatedPriceCounter({
   amount,
   formatDual,
   currency,
+  className = 'text-xl sm:text-2xl font-black text-slate-900 dark:text-white',
+  hideSecondary = false,
 }: {
   amount: number;
   formatDual?: (amount: number, currency: string) => { primary: string; secondary?: string };
   currency: string;
+  className?: string;
+  hideSecondary?: boolean;
 }) {
   const [displayAmount, setDisplayAmount] = useState(amount);
   const [isChanging, setIsChanging] = useState(false);
   const prevAmountRef = useRef(amount);
 
   useEffect(() => {
-    if (prevAmountRef.current === amount) return;
+    if (Math.abs(prevAmountRef.current - amount) < 0.005) {
+      setDisplayAmount(amount);
+      return;
+    }
     const startValue = displayAmount;
     const endValue = amount;
     const startTime = performance.now();
@@ -142,15 +149,15 @@ function AnimatedPriceCounter({
   const dual = formatDual ? formatDual(displayAmount, currency) : { primary: `${displayAmount.toFixed(2)}` };
 
   return (
-    <div className="flex items-baseline gap-1.5">
+    <div className="flex items-baseline gap-1.5 inline-flex">
       <span
-        className={`text-xl sm:text-2xl font-black text-slate-900 dark:text-white transition-all duration-200 ${
+        className={`transition-all duration-200 ${className} ${
           isChanging ? 'text-brand-600 dark:text-brand-300 scale-105 inline-block' : ''
         }`}
       >
         {dual.primary}
       </span>
-      {dual.secondary && (
+      {!hideSecondary && dual.secondary && (
         <span className="text-xs font-bold text-slate-400">
           ({dual.secondary})
         </span>
@@ -189,6 +196,31 @@ function SessionWorkspaceInner() {
   const [showAttachGroupModal, setShowAttachGroupModal] = useState<boolean>(false);
   const [userGroups, setUserGroups] = useState<any[]>([]);
   const [isSettling, setIsSettling] = useState<'idle' | 'loading' | 'success'>('idle');
+
+  // Swipe to dismiss state for Final Settlement modal
+  const [settleDragY, setSettleDragY] = useState(0);
+  const settleTouchStartY = useRef<number | null>(null);
+
+  const handleSettleTouchStart = (e: React.TouchEvent) => {
+    settleTouchStartY.current = e.touches[0].clientY;
+  };
+
+  const handleSettleTouchMove = (e: React.TouchEvent) => {
+    if (settleTouchStartY.current === null) return;
+    const diff = e.touches[0].clientY - settleTouchStartY.current;
+    if (diff > 0) {
+      setSettleDragY(diff);
+    }
+  };
+
+  const handleSettleTouchEnd = () => {
+    if (settleDragY > 75) {
+      setShowSettleModal(false);
+      setIsRounded(false);
+    }
+    setSettleDragY(0);
+    settleTouchStartY.current = null;
+  };
 
   // Input states
   const [newItemName, setNewItemName] = useState('');
@@ -1419,13 +1451,38 @@ function SessionWorkspaceInner() {
         const canLaunchPayment = !isEachPaid && !isMePayer && finalDueVal > 0;
 
         return (
-          <div className="fixed inset-0 z-50 flex flex-col justify-end bg-slate-950/60 backdrop-blur-sm animate-fadeIn">
-            <div className="w-full max-w-md mx-auto rounded-t-[32px] p-6 pb-8 bg-white dark:bg-brand-900 text-slate-900 dark:text-white space-y-4 max-h-[82vh] overflow-y-auto shadow-2xl animate-bottomSheet border-t border-slate-200/80 dark:border-white/10">
-              {/* Visual Drag Handle Pill */}
-              <div className="w-12 h-1.5 rounded-full bg-slate-300 dark:bg-slate-700 mx-auto -mt-1 mb-2 opacity-80" />
+          <div 
+            className="fixed inset-0 z-50 flex flex-col justify-end bg-slate-950/60 backdrop-blur-sm animate-fadeIn"
+            onClick={() => {
+              setShowSettleModal(false);
+              setIsRounded(false);
+            }}
+          >
+            <div 
+              style={{
+                transform: settleDragY > 0 ? `translateY(${settleDragY}px)` : undefined,
+                transition: settleDragY === 0 ? 'transform 0.25s cubic-bezier(0.16, 1, 0.3, 1)' : 'none'
+              }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-md mx-auto rounded-t-[32px] p-6 pb-8 bg-white dark:bg-brand-900 text-slate-900 dark:text-white space-y-4 max-h-[85vh] overflow-y-auto shadow-2xl animate-bottomSheet border-t border-slate-200/80 dark:border-white/10"
+            >
+              {/* Visual Drag Handle Pill with Touch Swipe-Down events */}
+              <div 
+                onTouchStart={handleSettleTouchStart}
+                onTouchMove={handleSettleTouchMove}
+                onTouchEnd={handleSettleTouchEnd}
+                className="py-2 -mt-3 mb-1 cursor-grab active:cursor-grabbing touch-none select-none flex justify-center"
+              >
+                <div className="w-12 h-1.5 rounded-full bg-slate-300 dark:bg-slate-700 opacity-80" />
+              </div>
 
-              {/* Header */}
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              {/* Header with Touch Swipe-Down events */}
+              <div 
+                onTouchStart={handleSettleTouchStart}
+                onTouchMove={handleSettleTouchMove}
+                onTouchEnd={handleSettleTouchEnd}
+                className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 touch-none select-none"
+              >
                 <div>
                   <h2 className="text-xl font-extrabold text-slate-900 dark:text-white">{t('finalSettlementTitle', undefined, 'Final Settlement')}</h2>
                   <p className="text-xs text-slate-500 dark:text-slate-400">{session.storeName || ''}</p>
@@ -1436,7 +1493,7 @@ function SessionWorkspaceInner() {
                     setShowSettleModal(false);
                     setIsRounded(false);
                   }}
-                  className="p-1.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                  className="p-1.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -1457,6 +1514,7 @@ function SessionWorkspaceInner() {
                           setTipPercentage(pct);
                           setCustomTipInput('');
                           sendAction('SET_TIP', { tipPercentage: pct });
+                          triggerHaptic('light');
                         }}
                         className={`py-2 rounded-full text-xs font-extrabold transition-all border active:scale-95 duration-100 ${
                           tipPercentage === pct && !customTipInput
@@ -1504,11 +1562,14 @@ function SessionWorkspaceInner() {
                     <span>{adjustmentDual.primary} {adjustmentDual.secondary || ''}</span>
                   </div>
                 )}
-                <div className="flex justify-between text-slate-500 dark:text-slate-400">
+                <div className="flex justify-between text-slate-500 dark:text-slate-400 items-center">
                   <span>{t('tipAmountLabel', { pct: tipPercentage }, `Tip (${tipPercentage}%)`)}</span>
-                  <span>
-                    {tipDual.primary}
-                  </span>
+                  <AnimatedPriceCounter 
+                    amount={tipVal} 
+                    currency={session.currency || 'NIS'} 
+                    formatDual={formatDual} 
+                    className="text-xs font-bold text-slate-900 dark:text-white" 
+                  />
                 </div>
                 <div className="flex justify-between pt-2 border-t border-slate-200 dark:border-slate-800 text-base font-black text-slate-900 dark:text-white items-center">
                   <div className="flex items-center gap-2">
@@ -1530,9 +1591,12 @@ function SessionWorkspaceInner() {
                       </button>
                     )}
                   </div>
-                  <span>
-                    {dueDual.primary} {dueDual.secondary || ''}
-                  </span>
+                  <AnimatedPriceCounter 
+                    amount={finalDueVal} 
+                    currency={session.currency || 'NIS'} 
+                    formatDual={formatDual} 
+                    className="text-base font-black text-slate-900 dark:text-white" 
+                  />
                 </div>
               </div>
 
@@ -1568,7 +1632,7 @@ function SessionWorkspaceInner() {
                 </p>
               </div>
 
-              {/* Payment integrations stay visible in the settlement flow. */}
+              {/* Payment integrations (Bit Cyan #00D4E5 and Paybox Blue/Purple Gradient) */}
               <div className="space-y-2">
                 <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 block">
                   {t('paymentMethodsTitle', undefined, 'Choose payment method')}
@@ -1578,18 +1642,18 @@ function SessionWorkspaceInner() {
                     type="button"
                     disabled={!canLaunchPayment || paymentLaunchMethod !== null}
                     onClick={() => launchSessionPayment('bit')}
-                    className="brand-tap py-3 px-3 rounded-xl bg-brand-600 text-white font-black text-xs shadow-brand hover:bg-brand-700 transition-all text-center flex items-center justify-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="brand-tap py-3 px-3 rounded-xl bg-[#00D4E5] hover:bg-[#00C2DE] active:bg-[#00B4C8] text-slate-950 font-black text-xs shadow-md transition-all text-center flex items-center justify-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    {paymentLaunchMethod === 'bit' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    {paymentLaunchMethod === 'bit' && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-950" />}
                     <span>Bit (₪{finalDueVal.toFixed(2)})</span>
                   </button>
                   <button
                     type="button"
                     disabled={!canLaunchPayment || paymentLaunchMethod !== null}
                     onClick={() => launchSessionPayment('paybox')}
-                    className="brand-tap py-3 px-3 rounded-xl bg-mint-500 text-brand-950 font-black text-xs shadow-sm hover:bg-mint-600 transition-all text-center flex items-center justify-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="brand-tap py-3 px-3 rounded-xl bg-gradient-to-r from-[#3877FF] to-[#7B61FF] hover:from-[#2F6DF5] hover:to-[#6E54F7] text-white font-black text-xs shadow-md transition-all text-center flex items-center justify-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    {paymentLaunchMethod === 'paybox' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    {paymentLaunchMethod === 'paybox' && <Loader2 className="h-3.5 w-3.5 animate-spin text-white" />}
                     <span>Paybox (₪{finalDueVal.toFixed(2)})</span>
                   </button>
                 </div>

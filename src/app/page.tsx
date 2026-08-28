@@ -133,6 +133,45 @@ export default function HomePage() {
   const [showJoinSessionModal, setShowJoinSessionModal] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
 
+  // Swipe-down to dismiss gestures for start split & group modals
+  const [splitModalDragY, setSplitModalDragY] = useState(0);
+  const splitTouchStartY = useRef<number | null>(null);
+
+  const handleSplitTouchStart = (e: React.TouchEvent) => {
+    splitTouchStartY.current = e.touches[0].clientY;
+  };
+  const handleSplitTouchMove = (e: React.TouchEvent) => {
+    if (splitTouchStartY.current === null) return;
+    const diff = e.touches[0].clientY - splitTouchStartY.current;
+    if (diff > 0) setSplitModalDragY(diff);
+  };
+  const handleSplitTouchEnd = () => {
+    if (splitModalDragY > 75) {
+      setShowStartSplitModal(false);
+    }
+    setSplitModalDragY(0);
+    splitTouchStartY.current = null;
+  };
+
+  const [groupModalDragY, setGroupModalDragY] = useState(0);
+  const groupTouchStartY = useRef<number | null>(null);
+
+  const handleGroupTouchStart = (e: React.TouchEvent) => {
+    groupTouchStartY.current = e.touches[0].clientY;
+  };
+  const handleGroupTouchMove = (e: React.TouchEvent) => {
+    if (groupTouchStartY.current === null) return;
+    const diff = e.touches[0].clientY - groupTouchStartY.current;
+    if (diff > 0) setGroupModalDragY(diff);
+  };
+  const handleGroupTouchEnd = () => {
+    if (groupModalDragY > 75) {
+      setSelectedGroupForModal(null);
+    }
+    setGroupModalDragY(0);
+    groupTouchStartY.current = null;
+  };
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const avatarFileInputRef = useRef<HTMLInputElement>(null);
@@ -1745,14 +1784,30 @@ export default function HomePage() {
       {showStartSplitModal && (
         <div className="fixed inset-0 z-50 flex flex-col justify-end bg-slate-950/60 backdrop-blur-xs animate-fadeIn" onClick={() => setShowStartSplitModal(false)}>
           <div 
+            style={{
+              transform: splitModalDragY > 0 ? `translateY(${splitModalDragY}px)` : undefined,
+              transition: splitModalDragY === 0 ? 'transform 0.25s cubic-bezier(0.16, 1, 0.3, 1)' : 'none'
+            }}
             className="w-full max-w-md mx-auto rounded-t-[32px] p-6 pb-8 bg-white dark:bg-brand-900 text-slate-900 dark:text-white space-y-4 shadow-2xl animate-bottomSheet border-t border-slate-200/80 dark:border-white/10"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Visual Drag Handle Pill */}
-            <div className="w-12 h-1.5 rounded-full bg-slate-300 dark:bg-slate-700 mx-auto -mt-1 mb-2 opacity-80" />
+            {/* Visual Drag Handle Pill with Touch events */}
+            <div 
+              onTouchStart={handleSplitTouchStart}
+              onTouchMove={handleSplitTouchMove}
+              onTouchEnd={handleSplitTouchEnd}
+              className="py-2 -mt-3 mb-1 cursor-grab active:cursor-grabbing touch-none select-none flex justify-center"
+            >
+              <div className="w-12 h-1.5 rounded-full bg-slate-300 dark:bg-slate-700 opacity-80" />
+            </div>
 
-            {/* Header */}
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+            {/* Header with Touch events */}
+            <div 
+              onTouchStart={handleSplitTouchStart}
+              onTouchMove={handleSplitTouchMove}
+              onTouchEnd={handleSplitTouchEnd}
+              className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 touch-none select-none"
+            >
               <div>
                 <h3 className="text-base font-extrabold text-slate-900 dark:text-white">{t('startSplitTitle', undefined, 'Start a New Split')}</h3>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400">{t('startSplitSubtitle', undefined, 'Choose how you want to load the bill')}</p>
