@@ -9,6 +9,7 @@ interface AnimatedRollingNumberProps {
   formatDual?: (amount: number, curr?: string) => { primary: string; secondary?: string };
   formatPrice?: (amount: number, curr?: string) => string;
   className?: string;
+  rollingClassName?: string;
 }
 
 export function AnimatedRollingNumber({
@@ -17,7 +18,8 @@ export function AnimatedRollingNumber({
   isDual = false,
   formatDual,
   formatPrice,
-  className = ''
+  className = '',
+  rollingClassName = 'text-brand-600 dark:text-brand-300',
 }: AnimatedRollingNumberProps) {
   const [displayValue, setDisplayValue] = useState(value);
   const [isRolling, setIsRolling] = useState(false);
@@ -28,6 +30,7 @@ export function AnimatedRollingNumber({
   useEffect(() => {
     if (Math.abs(displayValue - value) < 0.005) {
       setDisplayValue(value);
+      setIsRolling(false);
       return;
     }
 
@@ -58,23 +61,24 @@ export function AnimatedRollingNumber({
     animRef.current = requestAnimationFrame(animate);
 
     return () => {
-      if (animRef.current) cancelAnimationFrame(animRef.current);
+      if (animRef.current !== null) cancelAnimationFrame(animRef.current);
+      animRef.current = null;
     };
   }, [value]);
 
   if (isDual && formatDual) {
     const dual = formatDual(displayValue, currency);
     return (
-      <span className={`inline-flex items-baseline transition-transform duration-150 ${isRolling ? 'scale-[1.04] text-brand-600 dark:text-brand-300' : ''} ${className}`}>
+      <span dir="ltr" className={`inline-flex items-baseline transition-transform duration-150 ${isRolling ? `scale-[1.04] ${rollingClassName}` : ''} ${className}`}>
         <span>{dual.primary}</span>
-        {dual.secondary && <span className="text-[11px] opacity-75 ms-1">{dual.secondary}</span>}
+        {dual.secondary && <span className="text-[11px] opacity-75 ms-1">({dual.secondary})</span>}
       </span>
     );
   }
 
   const formatted = formatPrice ? formatPrice(displayValue, currency) : `${displayValue.toFixed(2)} ${currency}`;
   return (
-    <span className={`inline-block transition-transform duration-150 ${isRolling ? 'scale-[1.04] text-brand-600 dark:text-brand-300' : ''} ${className}`}>
+    <span dir="ltr" className={`inline-block transition-transform duration-150 ${isRolling ? `scale-[1.04] ${rollingClassName}` : ''} ${className}`}>
       {formatted}
     </span>
   );

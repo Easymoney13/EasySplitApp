@@ -38,7 +38,7 @@ function waitForServer(child, timeoutMs = 45_000) {
   });
 }
 
-test('legacy four-digit invite codes remain compatible and responses include security headers', { timeout: 60_000 }, async (t) => {
+test('guest receipt parsing and legacy invite access remain account-free', { timeout: 60_000 }, async (t) => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'easysplit-invite-'));
   const dbPath = path.join(tempDir, 'db.json');
   const sessionHost = createRoomMember({ name: 'Session Host', phone: '0501111111', isHost: true });
@@ -113,6 +113,8 @@ test('legacy four-digit invite codes remain compatible and responses include sec
       NODE_ENV: 'test',
       NEXT_TELEMETRY_DISABLED: '1',
       BILLSPLIT_DB_PATH: dbPath,
+      // A stale deployment variable must never restore the retired OCR auth gate.
+      REQUIRE_OCR_AUTH: 'true',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -123,6 +125,43 @@ test('legacy four-digit invite codes remain compatible and responses include sec
 
   await waitForServer(child);
   const baseUrl = `http://127.0.0.1:${port}`;
+
+  const anonymousReceiptDraft = await fetch(`${baseUrl}/api/receipt/parse`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      parsedBill: {
+        storeName: 'Guest Scan Test',
+        currency: 'NIS',
+        items: [{ name: 'Coffee', price: 12 }],
+      },
+    }),
+  });
+  assert.equal(anonymousReceiptDraft.status, 200);
+  assert.equal((await anonymousReceiptDraft.json()).success, true);
+
+  const anonymousSessionCreation = await fetch(`${baseUrl}/api/receipt/scan`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      parsedBill: {
+        storeName: 'Creator Gate Test',
+        currency: 'NIS',
+        items: [{ name: 'Coffee', price: 12 }],
+      },
+      confirmedByUser: true,
+    }),
+  });
+  assert.equal(anonymousSessionCreation.status, 401);
+  assert.equal((await anonymousSessionCreation.json()).errorCode, 'CREATOR_ACCOUNT_REQUIRED');
+
+  const anonymousGroupCreation = await fetch(`${baseUrl}/api/groups`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'Creator Gate Test', currency: 'NIS' }),
+  });
+  assert.equal(anonymousGroupCreation.status, 401);
+  assert.equal((await anonymousGroupCreation.json()).errorCode, 'CREATOR_ACCOUNT_REQUIRED');
 
   const sessionDiscovery = await fetch(`${baseUrl}/api/session/4321`);
   assert.equal(sessionDiscovery.status, 200);

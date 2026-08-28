@@ -605,8 +605,9 @@ app.prepare().then(() => {
     dailyMax: 25,
     shortMessage: 'Too many receipt scans in a short period. Please wait a few minutes before trying again.',
     dailyMessage: 'Daily receipt scan limit reached (25 scans per day). Please try again tomorrow.',
-    requireAuth: process.env.NODE_ENV === 'production' || process.env.REQUIRE_OCR_AUTH === 'true',
-    unauthMessage: 'Please sign in with Google or Email to scan receipts with AI.',
+    // OCR is deliberately available before account creation. Anonymous scans
+    // remain protected by the same limiter using the request IP as its key.
+    requireAuth: false,
   });
 
   function ocrRateLimit(req, res, nextMiddleware) {
@@ -919,7 +920,7 @@ app.prepare().then(() => {
     }
   });
 
-  server.post('/api/receipt/scan', authenticateUser, appCheckProtection, sessionCreateRateLimit, ocrRateLimit, async (req, res) => {
+  server.post('/api/receipt/scan', authenticateUser, security.requireAuthenticatedCreator, appCheckProtection, sessionCreateRateLimit, ocrRateLimit, async (req, res) => {
     const startedAt = Date.now();
     const ocrSource = getOcrSource(req.body);
     void trackAnalyticsEvent('ocr_scan_started', {
@@ -1380,7 +1381,7 @@ app.prepare().then(() => {
   // GROUPS API ENDPOINTS
 
   // 1. Create Group
-  server.post('/api/groups', authenticateUser, sessionCreateRateLimit, async (req, res) => {
+  server.post('/api/groups', authenticateUser, security.requireAuthenticatedCreator, sessionCreateRateLimit, async (req, res) => {
     try {
       const { name, currency, hostName, hostPhone } = req.body;
       const cleanName = security.sanitizeString(name || 'Trip Group', 40);

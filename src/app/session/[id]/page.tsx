@@ -33,6 +33,7 @@ import { useLanguage } from '../../../components/LanguageContext';
 import { QRCodeModal } from '../../../components/QRCodeModal';
 import { AttachToGroupModal } from '../../../components/AttachToGroupModal';
 import { ReceiptSkeleton } from '../../../components/SkeletonLoader';
+import { AnimatedRollingNumber } from '../../../components/AnimatedRollingNumber';
 import { getCookie, setCookie } from '../../../../lib/cookies';
 import { cleanIsraeliPhone, isValidIsraeliPhone, triggerBitPayment } from '../../../../lib/bitDeepLink';
 import { triggerHaptic } from '../../../../lib/haptics';
@@ -93,77 +94,6 @@ class SessionErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
     return this.props.children;
   }
-}
-
-function AnimatedPriceCounter({
-  amount,
-  formatDual,
-  currency,
-  className = 'text-xl sm:text-2xl font-black text-slate-900 dark:text-white',
-  hideSecondary = false,
-}: {
-  amount: number;
-  formatDual?: (amount: number, currency: string) => { primary: string; secondary?: string };
-  currency: string;
-  className?: string;
-  hideSecondary?: boolean;
-}) {
-  const [displayAmount, setDisplayAmount] = useState(amount);
-  const [isChanging, setIsChanging] = useState(false);
-  const prevAmountRef = useRef(amount);
-
-  useEffect(() => {
-    if (Math.abs(prevAmountRef.current - amount) < 0.005) {
-      setDisplayAmount(amount);
-      return;
-    }
-    const startValue = displayAmount;
-    const endValue = amount;
-    const startTime = performance.now();
-    const duration = 340;
-    setIsChanging(true);
-
-    let animationFrameId: number;
-
-    const animate = (currentTime: number) => {
-      const elapsed = currentTime - startTime;
-      const progress = Math.min(elapsed / duration, 1);
-      // smooth easeOutExpo
-      const ease = progress === 1 ? 1 : 1 - Math.pow(2, -10 * progress);
-      const current = startValue + (endValue - startValue) * ease;
-      setDisplayAmount(current);
-
-      if (progress < 1) {
-        animationFrameId = requestAnimationFrame(animate);
-      } else {
-        setDisplayAmount(endValue);
-        prevAmountRef.current = endValue;
-        setTimeout(() => setIsChanging(false), 140);
-      }
-    };
-
-    animationFrameId = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(animationFrameId);
-  }, [amount]);
-
-  const dual = formatDual ? formatDual(displayAmount, currency) : { primary: `${displayAmount.toFixed(2)}` };
-
-  return (
-    <div className="flex items-baseline gap-1.5 inline-flex">
-      <span
-        className={`transition-all duration-200 ${className} ${
-          isChanging ? 'text-brand-600 dark:text-brand-300 scale-105 inline-block' : ''
-        }`}
-      >
-        {dual.primary}
-      </span>
-      {!hideSecondary && dual.secondary && (
-        <span className="text-xs font-bold text-slate-400">
-          ({dual.secondary})
-        </span>
-      )}
-    </div>
-  );
 }
 
 function SessionWorkspaceInner() {
@@ -1229,10 +1159,12 @@ function SessionWorkspaceInner() {
       {!isSessionClosed && <div className="session-bottom-bar relative z-40 w-full shrink-0 p-5 bg-white/95 dark:bg-brand-950/90 border-t border-slate-100 dark:border-white/5 backdrop-blur-xl flex items-center justify-between shadow-2xl">
         <div>
           <span className="text-xs text-slate-500 dark:text-slate-400 block">{t('yourShareLabel', undefined, 'Your Share')}</span>
-          <AnimatedPriceCounter
-            amount={memberCalculations.myShare || 0}
+          <AnimatedRollingNumber
+            value={memberCalculations.myShare || 0}
             formatDual={formatDual}
             currency={session?.currency || 'NIS'}
+            isDual
+            className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white"
           />
           {isGroupLinked && <span className="text-[9px] font-bold text-brand-600 dark:text-brand-300">{isRtl ? 'ייכלל במאזן הקבוצה' : 'Included in group balance'}</span>}
         </div>
@@ -1564,10 +1496,11 @@ function SessionWorkspaceInner() {
                 )}
                 <div className="flex justify-between text-slate-500 dark:text-slate-400 items-center">
                   <span>{t('tipAmountLabel', { pct: tipPercentage }, `Tip (${tipPercentage}%)`)}</span>
-                  <AnimatedPriceCounter 
-                    amount={tipVal} 
-                    currency={session.currency || 'NIS'} 
-                    formatDual={formatDual} 
+                  <AnimatedRollingNumber
+                    value={tipVal}
+                    currency={session.currency || 'NIS'}
+                    formatDual={formatDual}
+                    isDual
                     className="text-xs font-bold text-slate-900 dark:text-white" 
                   />
                 </div>
@@ -1591,10 +1524,11 @@ function SessionWorkspaceInner() {
                       </button>
                     )}
                   </div>
-                  <AnimatedPriceCounter 
-                    amount={finalDueVal} 
-                    currency={session.currency || 'NIS'} 
-                    formatDual={formatDual} 
+                  <AnimatedRollingNumber
+                    value={finalDueVal}
+                    currency={session.currency || 'NIS'}
+                    formatDual={formatDual}
+                    isDual
                     className="text-base font-black text-slate-900 dark:text-white" 
                   />
                 </div>

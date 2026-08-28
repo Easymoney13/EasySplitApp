@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createUserRateLimiter } = require('../lib/security');
+const { createUserRateLimiter, requireAuthenticatedCreator } = require('../lib/security');
 
 test('createUserRateLimiter enforces authentication when requireAuth is enabled', () => {
   const limiter = createUserRateLimiter({
@@ -144,4 +144,47 @@ test('createUserRateLimiter skips rate limiting for manual/confirmed bills', () 
   });
 
   assert.equal(nextCalled, true);
+});
+
+test('createUserRateLimiter allows anonymous OCR while retaining IP quotas', () => {
+  const limiter = createUserRateLimiter({
+    shortMax: 2,
+    dailyMax: 10,
+    requireAuth: false,
+  });
+  const req = { body: { imageBase64: 'fake-data' }, user: null, ip: '203.0.113.8' };
+  const createRes = () => ({
+    setHeader() {},
+    status(code) { this.statusCode = code; return this; },
+    json(payload) { this.payload = payload; return this; },
+  });
+
+  let firstAllowed = false;
+  limiter.middleware(req, createRes(), () => { firstAllowed = true; });
+  let secondAllowed = false;
+  limiter.middleware(req, createRes(), () => { secondAllowed = true; });
+  const thirdResponse = createRes();
+  let thirdAllowed = false;
+  limiter.middleware(req, thirdResponse, () => { thirdAllowed = true; });
+
+  assert.equal(firstAllowed, true);
+  assert.equal(secondAllowed, true);
+  assert.equal(thirdAllowed, false);
+  assert.equal(thirdResponse.statusCode, 429);
+});
+
+test('creator authentication is required only for creating a new split or group', () => {
+  const response = {
+    status(code) { this.statusCode = code; return this; },
+    json(payload) { this.payload = payload; return this; },
+  };
+  let guestNextCalled = false;
+  requireAuthenticatedCreator({ user: null }, response, () => { guestNextCalled = true; });
+  assert.equal(guestNextCalled, false);
+  assert.equal(response.statusCode, 401);
+  assert.equal(response.payload.errorCode, 'CREATOR_ACCOUNT_REQUIRED');
+
+  let accountNextCalled = false;
+  requireAuthenticatedCreator({ user: { uid: 'creator-123' } }, {}, () => { accountNextCalled = true; });
+  assert.equal(accountNextCalled, true);
 });

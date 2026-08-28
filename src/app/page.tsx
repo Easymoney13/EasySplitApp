@@ -50,6 +50,13 @@ import { triggerHaptic } from '../../lib/haptics';
 import { clearRoomCredentials, roomHeaders, saveRoomCredentials } from '../../lib/roomTokens';
 import { fetchPaginatedAccountData } from '../../lib/accountClient';
 import { apiUrl, publicWebUrl } from '../../lib/platformTransport';
+import {
+  clearCreatorIntent,
+  readCreatorIntent,
+  saveCreatorIntent,
+  type CreatorIntent,
+} from '../../lib/creatorIntent';
+import { isValidIsraeliPhone } from '../../lib/bitDeepLink';
 import { Capacitor } from '@capacitor/core';
 import { Camera as CapCamera, CameraResultType, CameraSource } from '@capacitor/camera';
 
@@ -156,6 +163,13 @@ export default function HomePage() {
   const [groupModalDragY, setGroupModalDragY] = useState(0);
   const groupTouchStartY = useRef<number | null>(null);
 
+  const closeGroupModal = () => {
+    setSelectedGroupForModal(null);
+    setGroupModalTab('options');
+    setGroupModalDragY(0);
+    groupTouchStartY.current = null;
+  };
+
   const handleGroupTouchStart = (e: React.TouchEvent) => {
     groupTouchStartY.current = e.touches[0].clientY;
   };
@@ -166,7 +180,8 @@ export default function HomePage() {
   };
   const handleGroupTouchEnd = () => {
     if (groupModalDragY > 75) {
-      setSelectedGroupForModal(null);
+      closeGroupModal();
+      return;
     }
     setGroupModalDragY(0);
     groupTouchStartY.current = null;
@@ -206,28 +221,7 @@ export default function HomePage() {
     }
   };
 
-  const ensureAuthenticatedForScan = async (): Promise<boolean> => {
-    if (firebaseUser) return true;
-    triggerHaptic('warning');
-    const confirmed = confirm(
-      language === 'he'
-        ? 'כדי לסרוק קבלות עם AI, יש להתחבר עם חשבון Google. להתחבר עכשיו?'
-        : 'Please sign in with Google to scan receipts with AI. Sign in now?'
-    );
-    if (confirmed) {
-      try {
-        await loginWithGoogle();
-      } catch (_) {}
-    }
-    return false;
-  };
-
   const handleScanCamera = async () => {
-    if (!firebaseUser) {
-      const ok = await ensureAuthenticatedForScan();
-      if (!ok) return;
-    }
-
     if (Capacitor.isNativePlatform()) {
       try {
         const photo = await CapCamera.getPhoto({
@@ -571,13 +565,6 @@ export default function HomePage() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!firebaseUser) {
-      const ok = await ensureAuthenticatedForScan();
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      if (cameraInputRef.current) cameraInputRef.current.value = '';
-      if (!ok) return;
-    }
-
     setIsUploading(true);
     try {
       const draft = await createReceiptDraft(file, profile.displayName || 'Host');
@@ -595,22 +582,30 @@ export default function HomePage() {
     }
   };
 
-  const handleLaunchManualSession = async (billData: { storeName: string; date?: string; currency: string; items: any[] }) => {
+  const creatorIntentInFlightRef = useRef(false);
+
+  const launchManualSession = async (
+    billData: { storeName: string; date?: string; currency: string; items: any[] },
+    intent?: Extract<CreatorIntent, { type: 'receipt-session' }>,
+  ): Promise<boolean> => {
     try {
+      const receiptDraft = intent?.receiptDraft ?? pendingReceiptDraft;
+      const scanId = intent?.scanId ?? pendingScanId;
+      const recoveryToken = intent?.recoveryToken ?? pendingRecoveryToken;
       const res = await fetch(apiUrl('/api/receipt/scan'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           parsedBill: {
             ...billData,
-            ...receiptConfirmationPayload(pendingReceiptDraft),
+            ...receiptConfirmationPayload(receiptDraft),
           },
           hostName: profile.displayName || 'Host',
           hostPhone: profile.phoneNumber || '',
-          scanId: pendingScanId || undefined,
-          recoveryToken: pendingRecoveryToken || undefined,
+          scanId: scanId || undefined,
+          recoveryToken: recoveryToken || undefined,
           confirmedByUser: true,
-          imageQuality: pendingReceiptDraft?.imageQuality || undefined,
+          imageQuality: receiptDraft?.imageQuality || undefined,
         })
       });
 
@@ -632,13 +627,37 @@ export default function HomePage() {
         setPendingScanId('');
         setPendingRecoveryToken('');
         router.push(`/session/${data.sessionId}`);
+        return true;
       } else {
         alert(data.error || 'Failed to create manual session.');
+        return false;
       }
     } catch (err) {
       console.error(err);
       alert('Error creating manual session.');
+      return false;
     }
+  };
+
+  const handleLaunchManualSession = async (billData: { storeName: string; date?: string; currency: string; items: any[] }) => {
+    if (!firebaseUser) {
+      const { _previewImages, ...receiptDraft } = pendingReceiptDraft || {};
+      saveCreatorIntent(sessionStorage, {
+        type: 'receipt-session',
+        createdAt: Date.now(),
+        billData,
+        receiptDraft,
+        scanId: pendingScanId,
+        recoveryToken: pendingRecoveryToken,
+      });
+      triggerHaptic('medium');
+      const loginResult = await loginWithGoogle();
+      if (loginResult === 'cancelled' || loginResult === 'failed') {
+        clearCreatorIntent(sessionStorage);
+      }
+      return;
+    }
+    await launchManualSession(billData);
   };
 
   const saveGroupToLocalList = (newGroup: any) => {
@@ -661,7 +680,7 @@ export default function HomePage() {
     });
   };
 
-  const handleCreateGroup = async (groupData: { name: string; currency: string }) => {
+  const createGroup = async (groupData: { name: string; currency: string }): Promise<boolean> => {
     try {
       setIsUploading(true);
       const res = await fetch(apiUrl('/api/groups'), {
@@ -685,16 +704,61 @@ export default function HomePage() {
         });
         setShowCreateGroupModal(false);
         router.push(`/group/${data.groupId}`);
+        return true;
       } else {
         alert(data.error || 'Failed to create group.');
+        return false;
       }
     } catch (err) {
       console.error(err);
       alert('Error creating group.');
+      return false;
     } finally {
       setIsUploading(false);
     }
   };
+
+  const handleCreateGroup = async (groupData: { name: string; currency: string }) => {
+    if (!firebaseUser) {
+      saveCreatorIntent(sessionStorage, {
+        type: 'group',
+        createdAt: Date.now(),
+        groupData,
+      });
+      triggerHaptic('medium');
+      const loginResult = await loginWithGoogle();
+      if (loginResult === 'cancelled' || loginResult === 'failed') {
+        clearCreatorIntent(sessionStorage);
+      }
+      return;
+    }
+    await createGroup(groupData);
+  };
+
+  useEffect(() => {
+    if (
+      !firebaseUser
+      || creatorIntentInFlightRef.current
+      || !profile.displayName.trim()
+      || !profile.phoneNumber
+      || !isValidIsraeliPhone(profile.phoneNumber)
+    ) return;
+
+    const intent = readCreatorIntent(sessionStorage);
+    if (!intent) return;
+    creatorIntentInFlightRef.current = true;
+
+    const resume = intent.type === 'receipt-session'
+      ? launchManualSession(intent.billData, intent)
+      : createGroup(intent.groupData);
+    void resume
+      .then((success) => {
+        if (success) clearCreatorIntent(sessionStorage);
+      })
+      .finally(() => {
+        creatorIntentInFlightRef.current = false;
+      });
+  }, [firebaseUser, profile.displayName, profile.phoneNumber]);
 
 
 
@@ -1937,9 +2001,33 @@ export default function HomePage() {
 
       {/* Active Group Context Modal */}
       {selectedGroupForModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md animate-fadeIn text-slate-900 dark:text-white">
-          <div className="relative w-full max-w-xs rounded-3xl bg-white dark:bg-brand-950 border border-slate-200 dark:border-slate-800 p-5 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md animate-fadeIn text-slate-900 dark:text-white"
+          onClick={closeGroupModal}
+        >
+          <div
+            style={{
+              transform: groupModalDragY > 0 ? `translateY(${groupModalDragY}px)` : undefined,
+              transition: groupModalDragY === 0 ? 'transform 0.25s cubic-bezier(0.16, 1, 0.3, 1)' : 'none',
+            }}
+            onClick={(event) => event.stopPropagation()}
+            className="relative w-full max-w-xs rounded-3xl bg-white dark:bg-brand-950 border border-slate-200 dark:border-slate-800 p-5 pt-3 shadow-2xl space-y-4"
+          >
+            <div
+              onTouchStart={handleGroupTouchStart}
+              onTouchMove={handleGroupTouchMove}
+              onTouchEnd={handleGroupTouchEnd}
+              className="-mt-1 -mb-2 py-2 cursor-grab active:cursor-grabbing touch-none select-none flex justify-center"
+              aria-hidden="true"
+            >
+              <div className="w-12 h-1.5 rounded-full bg-slate-300 dark:bg-slate-700 opacity-80" />
+            </div>
+            <div
+              onTouchStart={handleGroupTouchStart}
+              onTouchMove={handleGroupTouchMove}
+              onTouchEnd={handleGroupTouchEnd}
+              className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3 touch-none select-none"
+            >
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-full bg-brand-600 dark:bg-brand-300 text-white dark:text-brand-950 flex items-center justify-center font-black text-xs">
                   {(selectedGroupForModal.name || 'G').substring(0, 2).toUpperCase()}
@@ -1951,7 +2039,7 @@ export default function HomePage() {
               </div>
 
               <button
-                onClick={() => setSelectedGroupForModal(null)}
+                onClick={closeGroupModal}
                 className="p-1.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-slate-700"
               >
                 <X className="w-4 h-4" />
@@ -1994,7 +2082,7 @@ export default function HomePage() {
                           localStorage.setItem(`billsplit_user_groups_${userKey}`, JSON.stringify(updated));
                         }
                         clearRoomCredentials('group', groupId);
-                        setSelectedGroupForModal(null);
+                        closeGroupModal();
                         triggerHaptic('success');
                       } catch (err) {
                         alert(err instanceof Error ? err.message : 'Could not leave group');
@@ -2038,7 +2126,7 @@ export default function HomePage() {
                           localStorage.setItem(`billsplit_user_groups_${userKey}`, JSON.stringify(updated));
                         }
                         clearRoomCredentials('group', groupId);
-                        setSelectedGroupForModal(null);
+                        closeGroupModal();
                         triggerHaptic('success');
                       } catch (err) {
                         alert(err instanceof Error ? err.message : 'Could not delete group');
@@ -2069,7 +2157,7 @@ export default function HomePage() {
                       await navigator.clipboard.writeText(groupUrl);
                       alert('Group invite link copied to clipboard! 🔗');
                     }
-                    setSelectedGroupForModal(null);
+                    closeGroupModal();
                   }}
                   className="w-full py-2.5 px-3 rounded-xl bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-900 dark:text-white text-xs font-bold flex items-center justify-between transition-colors"
                 >

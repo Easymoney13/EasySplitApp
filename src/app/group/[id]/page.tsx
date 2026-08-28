@@ -33,6 +33,7 @@ import { ManualBillModal } from '../../../components/ManualBillModal';
 import { CameraViewfinder } from '../../../components/CameraViewfinder';
 import { OCRProgressOverlay } from '../../../components/OCRProgressOverlay';
 import { SwipeableCard } from '../../../components/SwipeableCard';
+import { AnimatedRollingNumber } from '../../../components/AnimatedRollingNumber';
 import { createReceiptDraft, receiptConfirmationPayload, receiptScanUserMessage } from '../../../../lib/receiptScanClient';
 import { getCookie, setCookie } from '../../../../lib/cookies';
 import { formatCurrency } from '../../../../lib/i18n';
@@ -842,14 +843,20 @@ export default function GroupWorkspacePage() {
       </header>
 
       {/* Group Overview — keep the same visual language, but lead with the event instead of debt math. */}
-      <div className="relative overflow-hidden rounded-[24px] p-5 bg-gradient-to-br from-brand-500 via-brand-700 to-brand-950 text-white border border-brand-700 shadow-md space-y-3">
-        <div className="brand-peach-glow absolute -top-16 -right-10 h-52 w-52 rounded-full opacity-35" aria-hidden="true" />
+      <div className="relative isolate min-h-[132px] overflow-hidden rounded-[24px] p-5 bg-gradient-to-br from-brand-500 via-brand-700 to-brand-950 text-white border border-brand-700 shadow-md flex flex-col justify-between gap-3">
+        <div className="brand-peach-glow pointer-events-none absolute -top-16 -right-10 h-52 w-52 rounded-full opacity-35" aria-hidden="true" />
         <div className="relative z-10 flex items-center justify-between gap-3">
           <div className="min-w-0">
             <p className="text-[10px] font-extrabold uppercase tracking-wider text-white/65">
               {isGroupClosed ? (isRtl ? 'קבוצה שהסתיימה' : 'Closed group') : isGroupSettling ? (isRtl ? 'התחשבנות סופית' : 'Final settlement') : (isRtl ? 'קבוצה פעילה' : 'Active group')}
             </p>
-            <h2 className="text-3xl font-black text-white tracking-tight leading-tight mt-1">{formatCurrency(totalGroupSpent, group.currency || 'NIS')}</h2>
+            <AnimatedRollingNumber
+              value={totalGroupSpent}
+              currency={group.currency || 'NIS'}
+              formatPrice={formatCurrency}
+              className="block text-3xl font-black text-white tracking-tight leading-tight mt-1"
+              rollingClassName="text-white"
+            />
           </div>
           <div className="shrink-0 rounded-2xl bg-white/10 border border-white/15 px-3 py-2 text-center">
             <span className="block text-base font-black">{validBills.length}</span>
@@ -1055,8 +1062,14 @@ export default function GroupWorkspacePage() {
             return (
               <div key={balance.memberId} className="p-3 rounded-2xl bg-slate-50 dark:bg-[#131B2A] border border-slate-200/80 dark:border-slate-800/80 min-w-0">
                 <span className="text-xs font-black text-slate-900 dark:text-white truncate block">{balance.name}</span>
-                <span className={`text-[10px] font-extrabold font-mono mt-1 inline-block ${isCreditor ? 'text-mint-600 dark:text-mint-400' : isDebtor ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'}`}>
-                  {isCreditor ? '+' : isDebtor ? '-' : ''}{formatCurrency(Math.abs(Number(balance.netBalance || 0)), group.currency || 'NIS')}
+                <span dir="ltr" className={`text-[10px] font-extrabold font-mono mt-1 inline-flex items-baseline ${isCreditor ? 'text-mint-600 dark:text-mint-400' : isDebtor ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'}`}>
+                  <span>{isCreditor ? '+' : isDebtor ? '-' : ''}</span>
+                  <AnimatedRollingNumber
+                    value={Math.abs(Number(balance.netBalance || 0))}
+                    currency={group.currency || 'NIS'}
+                    formatPrice={formatCurrency}
+                    rollingClassName=""
+                  />
                 </span>
               </div>
             );

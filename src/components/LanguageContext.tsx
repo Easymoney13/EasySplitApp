@@ -37,6 +37,8 @@ export interface AuthNotification {
   message: string;
 }
 
+export type GoogleLoginResult = 'authenticated' | 'redirecting' | 'cancelled' | 'failed' | 'busy';
+
 interface LanguageContextType {
   language: Language;
   setLanguage: (lang: Language) => void;
@@ -55,7 +57,7 @@ interface LanguageContextType {
   isAuthenticating: boolean;
   authNotification: AuthNotification | null;
   clearAuthNotification: () => void;
-  loginWithGoogle: () => Promise<void>;
+  loginWithGoogle: () => Promise<GoogleLoginResult>;
   logout: () => Promise<void>;
 }
 
@@ -95,7 +97,8 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   useEffect(() => {
     const preload = async () => {
       try {
-        const { auth, googleProvider, getGoogleProvider } = await import('../../lib/firebase');
+        const { auth, googleProvider, getGoogleProvider, ensureAuthPersistence } = await import('../../lib/firebase');
+        await ensureAuthPersistence();
         const { signInWithPopup, signInWithRedirect } = await import('firebase/auth');
         setAuthModules({ auth, googleProvider, getGoogleProvider, signInWithPopup, signInWithRedirect });
       } catch (e) {
@@ -197,7 +200,8 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     // Auth subscription
     const initAuth = async () => {
       try {
-        const { auth } = await import('../../lib/firebase');
+        const { auth, ensureAuthPersistence } = await import('../../lib/firebase');
+        await ensureAuthPersistence();
         const { onAuthStateChanged, getRedirectResult } = await import('firebase/auth');
         
         // Handle redirect result if returning from a Google redirect flow
@@ -374,22 +378,27 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   }, [language, theme]);
 
-  const loginWithGoogle = async () => {
-    if (isAuthenticating) return;
+  const loginWithGoogle = async (): Promise<GoogleLoginResult> => {
+    if (isAuthenticating) return 'busy';
     setIsAuthenticating(true);
     clearAuthNotification();
 
     if (isNativeGoogleAuthPlatform()) {
+      let result: GoogleLoginResult = 'failed';
       try {
-        const [{ auth }, { GoogleAuthProvider, signInWithCredential }] = await Promise.all([
+        const [{ auth, ensureAuthPersistence }, { GoogleAuthProvider, signInWithCredential }] = await Promise.all([
           import('../../lib/firebase'),
           import('firebase/auth'),
         ]);
+        await ensureAuthPersistence();
         const { idToken } = await signInNativeGoogle({ forceAccountSelection: Boolean(firebaseUser) });
         const credential = GoogleAuthProvider.credential(idToken);
         await signInWithCredential(auth, credential);
+        result = 'authenticated';
       } catch (e: any) {
-        if (!isNativeGoogleSignInCancellation(e)) {
+        if (isNativeGoogleSignInCancellation(e)) {
+          result = 'cancelled';
+        } else {
           console.error('Native Google Sign-In failed:', e);
           showAuthMessage(
             language === 'he'
@@ -402,7 +411,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setIsAuthenticating(false);
       }
       // Native apps must never fall through to Firebase Web popup/redirect OAuth.
-      return;
+      return result;
     }
 
     try {
@@ -419,6 +428,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       } else {
         const fb = await import('../../lib/firebase');
         const fbAuth = await import('firebase/auth');
+        await fb.ensureAuthPersistence();
         activeAuth = fb.auth;
         activeGetProvider = fb.getGoogleProvider;
         activeSignInWithPopup = fbAuth.signInWithPopup;
@@ -439,7 +449,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       if (isMobileDevice) {
         try {
           await activeSignInWithRedirect(activeAuth, provider);
-          return;
+          return 'redirecting';
         } catch (redirectErr: any) {
           console.warn('Direct mobile redirect failed, trying popup fallback:', redirectErr);
         }
@@ -449,6 +459,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       try {
         await activeSignInWithPopup(activeAuth, provider);
         setIsAuthenticating(false);
+        return 'authenticated';
       } catch (popupError: any) {
         console.warn('Google popup encounter:', popupError);
 
@@ -461,14 +472,14 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               : `Google Sign-In is not authorized for ${window.location.hostname}. Add this domain in Firebase Authentication > Settings > Authorized domains.`,
             'error'
           );
-          return;
+          return 'failed';
         }
 
         // Clean user dismissal on desktop (don't show harsh error if user clicked X intentionally)
         if (popupError?.code === 'auth/popup-closed-by-user' || popupError?.code === 'auth/cancelled-popup-request') {
           if (!isMobileDevice) {
             setIsAuthenticating(false);
-            return;
+            return 'cancelled';
           }
         }
 
@@ -476,6 +487,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         try {
           console.log('Falling back to Google Sign-In redirect flow...');
           await activeSignInWithRedirect(activeAuth, provider);
+          return 'redirecting';
         } catch (redirectError: any) {
           console.error('Google Sign-In redirect fallback failed:', redirectError);
           setIsAuthenticating(false);
@@ -494,6 +506,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               'error'
             );
           }
+          return 'failed';
         }
       }
     } catch (e: any) {
@@ -507,6 +520,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             ? 'ההתחברות באמצעות Google נכשלה. אנא נסו שוב.'
             : 'Failed to sign in with Google. Please try again.');
       showAuthMessage(message, 'error');
+      return 'failed';
     }
   };
 
