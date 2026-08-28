@@ -70,6 +70,29 @@ const PASTEL_COLORS = [
   { bg: 'bg-zinc-100 dark:bg-zinc-800', text: 'text-zinc-700 dark:text-zinc-300' },
 ];
 
+function savePendingCreatorIntent(intent: CreatorIntent): void {
+  saveCreatorIntent(localStorage, intent);
+  clearCreatorIntent(sessionStorage);
+}
+
+function readPendingCreatorIntent(): CreatorIntent | null {
+  const durableIntent = readCreatorIntent(localStorage);
+  if (durableIntent) return durableIntent;
+
+  // Migrate an intent created by an older build before the next auth attempt.
+  const legacyIntent = readCreatorIntent(sessionStorage);
+  if (legacyIntent) {
+    saveCreatorIntent(localStorage, legacyIntent);
+    clearCreatorIntent(sessionStorage);
+  }
+  return legacyIntent;
+}
+
+function clearPendingCreatorIntent(): void {
+  clearCreatorIntent(localStorage);
+  clearCreatorIntent(sessionStorage);
+}
+
 function PorcelainReceiptMark() {
   return (
     <svg
@@ -592,6 +615,7 @@ export default function HomePage() {
       const receiptDraft = intent?.receiptDraft ?? pendingReceiptDraft;
       const scanId = intent?.scanId ?? pendingScanId;
       const recoveryToken = intent?.recoveryToken ?? pendingRecoveryToken;
+      const creatorProfile = intent?.creatorProfile;
       const res = await fetch(apiUrl('/api/receipt/scan'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -600,8 +624,8 @@ export default function HomePage() {
             ...billData,
             ...receiptConfirmationPayload(receiptDraft),
           },
-          hostName: profile.displayName || 'Host',
-          hostPhone: profile.phoneNumber || '',
+          hostName: creatorProfile?.displayName || profile.displayName || 'Host',
+          hostPhone: creatorProfile?.phoneNumber || profile.phoneNumber || '',
           scanId: scanId || undefined,
           recoveryToken: recoveryToken || undefined,
           confirmedByUser: true,
@@ -642,18 +666,31 @@ export default function HomePage() {
   const handleLaunchManualSession = async (billData: { storeName: string; date?: string; currency: string; items: any[] }) => {
     if (!firebaseUser) {
       const { _previewImages, ...receiptDraft } = pendingReceiptDraft || {};
-      saveCreatorIntent(sessionStorage, {
+      const intent: Extract<CreatorIntent, { type: 'receipt-session' }> = {
         type: 'receipt-session',
         createdAt: Date.now(),
         billData,
         receiptDraft,
         scanId: pendingScanId,
         recoveryToken: pendingRecoveryToken,
-      });
+        creatorProfile: {
+          displayName: profile.displayName.trim(),
+          phoneNumber: profile.phoneNumber || '',
+        },
+      };
+      savePendingCreatorIntent(intent);
+      creatorIntentInFlightRef.current = true;
       triggerHaptic('medium');
-      const loginResult = await loginWithGoogle();
-      if (loginResult === 'cancelled' || loginResult === 'failed') {
-        clearCreatorIntent(sessionStorage);
+      try {
+        const loginResult = await loginWithGoogle();
+        if (loginResult === 'authenticated') {
+          const success = await launchManualSession(billData, intent);
+          if (success) clearPendingCreatorIntent();
+        } else if (loginResult === 'cancelled' || loginResult === 'failed') {
+          clearPendingCreatorIntent();
+        }
+      } finally {
+        creatorIntentInFlightRef.current = false;
       }
       return;
     }
@@ -680,7 +717,10 @@ export default function HomePage() {
     });
   };
 
-  const createGroup = async (groupData: { name: string; currency: string }): Promise<boolean> => {
+  const createGroup = async (
+    groupData: { name: string; currency: string },
+    intent?: Extract<CreatorIntent, { type: 'group' }>,
+  ): Promise<boolean> => {
     try {
       setIsUploading(true);
       const res = await fetch(apiUrl('/api/groups'), {
@@ -689,8 +729,8 @@ export default function HomePage() {
         body: JSON.stringify({
           name: groupData.name,
           currency: groupData.currency,
-          hostName: profile.displayName || 'Host',
-          hostPhone: profile.phoneNumber || '',
+          hostName: intent?.creatorProfile?.displayName || profile.displayName || 'Host',
+          hostPhone: intent?.creatorProfile?.phoneNumber || profile.phoneNumber || '',
         })
       });
 
@@ -720,15 +760,28 @@ export default function HomePage() {
 
   const handleCreateGroup = async (groupData: { name: string; currency: string }) => {
     if (!firebaseUser) {
-      saveCreatorIntent(sessionStorage, {
+      const intent: Extract<CreatorIntent, { type: 'group' }> = {
         type: 'group',
         createdAt: Date.now(),
         groupData,
-      });
+        creatorProfile: {
+          displayName: profile.displayName.trim(),
+          phoneNumber: profile.phoneNumber || '',
+        },
+      };
+      savePendingCreatorIntent(intent);
+      creatorIntentInFlightRef.current = true;
       triggerHaptic('medium');
-      const loginResult = await loginWithGoogle();
-      if (loginResult === 'cancelled' || loginResult === 'failed') {
-        clearCreatorIntent(sessionStorage);
+      try {
+        const loginResult = await loginWithGoogle();
+        if (loginResult === 'authenticated') {
+          const success = await createGroup(groupData, intent);
+          if (success) clearPendingCreatorIntent();
+        } else if (loginResult === 'cancelled' || loginResult === 'failed') {
+          clearPendingCreatorIntent();
+        }
+      } finally {
+        creatorIntentInFlightRef.current = false;
       }
       return;
     }
@@ -736,24 +789,21 @@ export default function HomePage() {
   };
 
   useEffect(() => {
-    if (
-      !firebaseUser
-      || creatorIntentInFlightRef.current
-      || !profile.displayName.trim()
-      || !profile.phoneNumber
-      || !isValidIsraeliPhone(profile.phoneNumber)
-    ) return;
+    if (!firebaseUser || creatorIntentInFlightRef.current) return;
 
-    const intent = readCreatorIntent(sessionStorage);
+    const intent = readPendingCreatorIntent();
     if (!intent) return;
+    const creatorName = intent.creatorProfile?.displayName || profile.displayName.trim();
+    const creatorPhone = intent.creatorProfile?.phoneNumber || profile.phoneNumber || '';
+    if (!creatorName || !isValidIsraeliPhone(creatorPhone)) return;
     creatorIntentInFlightRef.current = true;
 
     const resume = intent.type === 'receipt-session'
       ? launchManualSession(intent.billData, intent)
-      : createGroup(intent.groupData);
+      : createGroup(intent.groupData, intent);
     void resume
       .then((success) => {
-        if (success) clearCreatorIntent(sessionStorage);
+        if (success) clearPendingCreatorIntent();
       })
       .finally(() => {
         creatorIntentInFlightRef.current = false;
@@ -1540,7 +1590,7 @@ export default function HomePage() {
                   </div>
                   <button
                     type="button"
-                    onClick={loginWithGoogle}
+                    onClick={() => void loginWithGoogle({ forceAccountSelection: true })}
                     disabled={isAuthenticating}
                     className="text-[11px] font-bold text-brand-600 dark:text-brand-300 px-3 py-1.5 rounded-xl bg-brand-50 hover:bg-brand-100 dark:bg-brand-950/60 dark:hover:bg-brand-900/60 transition-all shrink-0 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
@@ -1572,7 +1622,7 @@ export default function HomePage() {
                   </div>
                   <button
                     type="button"
-                    onClick={loginWithGoogle}
+                    onClick={() => void loginWithGoogle()}
                     disabled={isAuthenticating}
                     className="w-full py-2.5 px-4 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-[#1C2638] dark:hover:bg-[#222E45] border border-slate-200 dark:border-[#2a374f] text-slate-800 dark:text-slate-100 text-xs font-bold shadow-xs transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
                   >

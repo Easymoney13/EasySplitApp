@@ -1,6 +1,11 @@
 export const CREATOR_INTENT_KEY = 'easysplit_pending_creator_intent';
 export const CREATOR_INTENT_TTL_MS = 10 * 60 * 1000;
 
+export type CreatorProfile = {
+  displayName: string;
+  phoneNumber: string;
+};
+
 export type ReceiptSessionCreatorIntent = {
   type: 'receipt-session';
   createdAt: number;
@@ -13,6 +18,7 @@ export type ReceiptSessionCreatorIntent = {
   receiptDraft: any;
   scanId: string;
   recoveryToken: string;
+  creatorProfile?: CreatorProfile;
 };
 
 export type GroupCreatorIntent = {
@@ -22,6 +28,7 @@ export type GroupCreatorIntent = {
     name: string;
     currency: string;
   };
+  creatorProfile?: CreatorProfile;
 };
 
 export type CreatorIntent = ReceiptSessionCreatorIntent | GroupCreatorIntent;

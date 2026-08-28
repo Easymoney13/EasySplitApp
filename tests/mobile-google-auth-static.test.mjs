@@ -29,18 +29,18 @@ test('native Google auth uses Capacitor platform detection and exchanges only an
   assert.doesNotMatch(helper, /console\.(log|debug)\([^\n]*(idToken|accessToken)/);
 });
 
-test('LanguageContext keeps web auth and uses Firebase JS credential exchange on native', async () => {
+test('LanguageContext uses popup-only web auth and Firebase JS credential exchange on native', async () => {
   const source = await read('src/components/LanguageContext.tsx');
   assert.match(source, /isNativeGoogleAuthPlatform\(\)/);
-  assert.match(source, /signInNativeGoogle\(\{ forceAccountSelection: Boolean\(firebaseUser\) \}\)/);
+  assert.match(source, /signInNativeGoogle\(\{[\s\S]*?forceAccountSelection: options\.forceAccountSelection \|\| Boolean\(activeAuth\.currentUser\)/);
   assert.match(source, /GoogleAuthProvider\.credential\(idToken\)/);
-  assert.match(source, /signInWithCredential\(auth, credential\)/);
+  assert.match(source, /signInWithCredential\(activeAuth, credential\)/);
   assert.match(source, /signInWithPopup/);
-  assert.match(source, /signInWithRedirect/);
+  assert.doesNotMatch(source, /signInWithRedirect|getRedirectResult|isMobileDevice/);
   assert.match(source, /signOutNativeGoogle\(\)/);
   assert.ok(
-    source.indexOf('isNativeGoogleAuthPlatform()') < source.indexOf('const isMobileDevice'),
-    'native platform branch must run before UA-based mobile-web redirect logic',
+    source.indexOf('isNativeGoogleAuthPlatform()') < source.indexOf('activeSignInWithPopup(activeAuth, provider)'),
+    'native platform branch must run before Firebase web popup auth',
   );
 });
 

@@ -5,6 +5,7 @@ import { Sparkles, Phone, User, Globe, LogOut, Loader2, AlertCircle, CheckCircle
 import defaultTranslations, { translations as namedTranslations, formatCurrency, convertCurrency, formatDualPrice, updateLiveExchangeRates } from '../../lib/i18n';
 import { getCookie, setCookie, removeCookie } from '../../lib/cookies';
 import { clearAccountScopedStorage, transitionAccountScope } from '../../lib/accountIsolation';
+import { clearCreatorIntent, readCreatorIntent } from '../../lib/creatorIntent';
 import { isProtectedApi } from '../../lib/authFetch';
 import { cleanIsraeliPhone, isValidIsraeliPhone } from '../../lib/bitDeepLink';
 import { apiUrl, getApiOrigin } from '../../lib/platformTransport';
@@ -37,7 +38,11 @@ export interface AuthNotification {
   message: string;
 }
 
-export type GoogleLoginResult = 'authenticated' | 'redirecting' | 'cancelled' | 'failed' | 'busy';
+export type GoogleLoginResult = 'authenticated' | 'cancelled' | 'failed' | 'busy';
+
+export interface GoogleLoginOptions {
+  forceAccountSelection?: boolean;
+}
 
 interface LanguageContextType {
   language: Language;
@@ -57,7 +62,7 @@ interface LanguageContextType {
   isAuthenticating: boolean;
   authNotification: AuthNotification | null;
   clearAuthNotification: () => void;
-  loginWithGoogle: () => Promise<GoogleLoginResult>;
+  loginWithGoogle: (options?: GoogleLoginOptions) => Promise<GoogleLoginResult>;
   logout: () => Promise<void>;
 }
 
@@ -99,8 +104,11 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       try {
         const { auth, googleProvider, getGoogleProvider, ensureAuthPersistence } = await import('../../lib/firebase');
         await ensureAuthPersistence();
-        const { signInWithPopup, signInWithRedirect } = await import('firebase/auth');
-        setAuthModules({ auth, googleProvider, getGoogleProvider, signInWithPopup, signInWithRedirect });
+        if (typeof auth.authStateReady === 'function') {
+          await auth.authStateReady();
+        }
+        const { signInWithPopup } = await import('firebase/auth');
+        setAuthModules({ auth, googleProvider, getGoogleProvider, signInWithPopup });
       } catch (e) {
         console.error('Failed to preload auth modules:', e);
       }
@@ -202,41 +210,24 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       try {
         const { auth, ensureAuthPersistence } = await import('../../lib/firebase');
         await ensureAuthPersistence();
-        const { onAuthStateChanged, getRedirectResult } = await import('firebase/auth');
-        
-        // Handle redirect result if returning from a Google redirect flow
-        getRedirectResult(auth)
-          .then((result) => {
-            if (result) {
-              console.log('Successfully authenticated user via redirect:', result.user);
-              setIsAuthenticating(false);
-            }
-          })
-          .catch((err) => {
-            console.error('Error handling redirect authentication:', err);
-            setIsAuthenticating(false);
-            if (err?.code === 'auth/unauthorized-domain') {
-              showAuthMessage(
-                savedLang === 'he'
-                  ? `Google Sign-In אינו מאושר עבור הדומיין ${window.location.hostname}. יש להוסיף את הדומיין בהגדרות Firebase Authentication.`
-                  : `Google Sign-In is not authorized for ${window.location.hostname}. Add this domain in Firebase Authentication settings.`,
-                'error'
-              );
-            } else if (err?.code && err.code !== 'auth/popup-closed-by-user') {
-              showAuthMessage(
-                savedLang === 'he'
-                  ? 'ההתחברות באמצעות Google נכשלה. אנא נסו שוב.'
-                  : 'Failed to sign in with Google. Please try again.',
-                'error'
-              );
-            }
-          });
+        const { onAuthStateChanged } = await import('firebase/auth');
 
         onAuthStateChanged(auth, async (user) => {
           setIsAuthenticating(false);
+          const pendingCreatorIntent = readCreatorIntent(localStorage);
           const accountTransition = transitionAccountScope(localStorage, user?.uid || '');
           if (accountTransition.changed) {
             removeCookie('billsplit_user_groups');
+            const pendingCreatorProfile = pendingCreatorIntent?.creatorProfile;
+            if (pendingCreatorProfile?.displayName && pendingCreatorProfile?.phoneNumber) {
+              const preservedProfile = {
+                displayName: pendingCreatorProfile.displayName,
+                phoneNumber: pendingCreatorProfile.phoneNumber,
+                avatarColor: '#4DE1A1',
+              };
+              localStorage.setItem('billsplit_local_profile', JSON.stringify(preservedProfile));
+              localStorage.setItem('billsplit_phone', pendingCreatorProfile.phoneNumber);
+            }
             savedLocalProfile = null;
             setProfile({ displayName: '', avatarColor: '#4DE1A1', avatarUrl: undefined, phoneNumber: undefined });
             setGuestName('');
@@ -378,61 +369,47 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   }, [language, theme]);
 
-  const loginWithGoogle = async (): Promise<GoogleLoginResult> => {
+  const loginWithGoogle = async (options: GoogleLoginOptions = {}): Promise<GoogleLoginResult> => {
     if (isAuthenticating) return 'busy';
     setIsAuthenticating(true);
     clearAuthNotification();
 
-    if (isNativeGoogleAuthPlatform()) {
-      let result: GoogleLoginResult = 'failed';
-      try {
-        const [{ auth, ensureAuthPersistence }, { GoogleAuthProvider, signInWithCredential }] = await Promise.all([
-          import('../../lib/firebase'),
-          import('firebase/auth'),
-        ]);
-        await ensureAuthPersistence();
-        const { idToken } = await signInNativeGoogle({ forceAccountSelection: Boolean(firebaseUser) });
-        const credential = GoogleAuthProvider.credential(idToken);
-        await signInWithCredential(auth, credential);
-        result = 'authenticated';
-      } catch (e: any) {
-        if (isNativeGoogleSignInCancellation(e)) {
-          result = 'cancelled';
-        } else {
-          console.error('Native Google Sign-In failed:', e);
-          showAuthMessage(
-            language === 'he'
-              ? 'ההתחברות באמצעות Google נכשלה. אנא נסו שוב.'
-              : 'Failed to sign in with Google. Please try again.',
-            'error'
-          );
-        }
-      } finally {
-        setIsAuthenticating(false);
-      }
-      // Native apps must never fall through to Firebase Web popup/redirect OAuth.
-      return result;
-    }
-
     try {
-      let activeAuth: any;
-      let activeGetProvider: any;
-      let activeSignInWithPopup: any;
-      let activeSignInWithRedirect: any;
-      
-      if (authModules) {
-        activeAuth = authModules.auth;
-        activeGetProvider = authModules.getGoogleProvider;
-        activeSignInWithPopup = authModules.signInWithPopup;
-        activeSignInWithRedirect = authModules.signInWithRedirect;
-      } else {
-        const fb = await import('../../lib/firebase');
+      let firebaseModule: any = null;
+      let activeAuth = authModules?.auth;
+      let activeGetProvider = authModules?.getGoogleProvider;
+      let activeSignInWithPopup = authModules?.signInWithPopup;
+
+      if (!activeAuth) {
+        firebaseModule = await import('../../lib/firebase');
+        await firebaseModule.ensureAuthPersistence();
+        activeAuth = firebaseModule.auth;
+        if (typeof activeAuth.authStateReady === 'function') {
+          await activeAuth.authStateReady();
+        }
+        activeGetProvider = firebaseModule.getGoogleProvider;
+      }
+
+      // Firebase is the source of truth. React state may briefly be stale after
+      // a reload, but a persisted user must never be asked to sign in again.
+      if (activeAuth.currentUser && !options.forceAccountSelection) {
+        setFirebaseUser(activeAuth.currentUser);
+        return 'authenticated';
+      }
+
+      if (isNativeGoogleAuthPlatform()) {
+        const { GoogleAuthProvider, signInWithCredential } = await import('firebase/auth');
+        const { idToken } = await signInNativeGoogle({
+          forceAccountSelection: options.forceAccountSelection || Boolean(activeAuth.currentUser),
+        });
+        const credential = GoogleAuthProvider.credential(idToken);
+        await signInWithCredential(activeAuth, credential);
+        return 'authenticated';
+      }
+
+      if (!activeSignInWithPopup) {
         const fbAuth = await import('firebase/auth');
-        await fb.ensureAuthPersistence();
-        activeAuth = fb.auth;
-        activeGetProvider = fb.getGoogleProvider;
         activeSignInWithPopup = fbAuth.signInWithPopup;
-        activeSignInWithRedirect = fbAuth.signInWithRedirect;
       }
 
       const provider = typeof activeGetProvider === 'function'
@@ -440,87 +417,33 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         : (authModules?.googleProvider || new (await import('firebase/auth')).GoogleAuthProvider());
       provider.setCustomParameters({ prompt: 'select_account' });
 
-      const isMobileDevice = typeof navigator !== 'undefined' && (
-        /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent || '') ||
-        (navigator.maxTouchPoints && navigator.maxTouchPoints > 2 && /Macintosh/i.test(navigator.userAgent || ''))
-      );
-
-      // On mobile devices, redirect is significantly more reliable than popup windows
-      if (isMobileDevice) {
-        try {
-          await activeSignInWithRedirect(activeAuth, provider);
-          return 'redirecting';
-        } catch (redirectErr: any) {
-          console.warn('Direct mobile redirect failed, trying popup fallback:', redirectErr);
-        }
-      }
-
-      // Try popup first on desktop
-      try {
-        await activeSignInWithPopup(activeAuth, provider);
-        setIsAuthenticating(false);
-        return 'authenticated';
-      } catch (popupError: any) {
-        console.warn('Google popup encounter:', popupError);
-
-        // Terminal configuration error
-        if (popupError?.code === 'auth/unauthorized-domain') {
-          setIsAuthenticating(false);
-          showAuthMessage(
-            language === 'he'
-              ? `Google Sign-In אינו מאושר עבור הדומיין ${window.location.hostname}. יש להוסיף את הדומיין בהגדרות Firebase Authentication > Settings > Authorized domains.`
-              : `Google Sign-In is not authorized for ${window.location.hostname}. Add this domain in Firebase Authentication > Settings > Authorized domains.`,
-            'error'
-          );
-          return 'failed';
-        }
-
-        // Clean user dismissal on desktop (don't show harsh error if user clicked X intentionally)
-        if (popupError?.code === 'auth/popup-closed-by-user' || popupError?.code === 'auth/cancelled-popup-request') {
-          if (!isMobileDevice) {
-            setIsAuthenticating(false);
-            return 'cancelled';
-          }
-        }
-
-        // Seamless fallback to redirect for any popup issues (blocked, COOP, iframe, network, closed unexpectedly)
-        try {
-          console.log('Falling back to Google Sign-In redirect flow...');
-          await activeSignInWithRedirect(activeAuth, provider);
-          return 'redirecting';
-        } catch (redirectError: any) {
-          console.error('Google Sign-In redirect fallback failed:', redirectError);
-          setIsAuthenticating(false);
-          if (redirectError?.code === 'auth/unauthorized-domain') {
-            showAuthMessage(
-              language === 'he'
-                ? `Google Sign-In אינו מאושר עבור הדומיין ${window.location.hostname}. יש להוסיף את הדומיין בהגדרות Firebase.`
-                : `Google Sign-In is not authorized for ${window.location.hostname}. Add this domain in Firebase Authentication settings.`,
-              'error'
-            );
-          } else {
-            showAuthMessage(
-              language === 'he'
-                ? 'ההתחברות באמצעות Google נכשלה. אנא נסו שוב.'
-                : 'Failed to sign in with Google. Please try again.',
-              'error'
-            );
-          }
-          return 'failed';
-        }
-      }
+      // Popup is required on the hosted web app. Firebase redirect auth depends
+      // on third-party storage when authDomain is on firebaseapp.com, which is
+      // blocked by modern Safari/Firefox/Chrome privacy protections.
+      await activeSignInWithPopup(activeAuth, provider);
+      return 'authenticated';
     } catch (e: any) {
       console.error('Google Sign-In failed:', e);
-      setIsAuthenticating(false);
+      if (isNativeGoogleSignInCancellation(e)
+        || e?.code === 'auth/popup-closed-by-user'
+        || e?.code === 'auth/cancelled-popup-request') {
+        return 'cancelled';
+      }
       const message = e?.code === 'auth/unauthorized-domain'
         ? (language === 'he'
             ? `Google Sign-In אינו מאושר עבור הדומיין ${window.location.hostname}. יש להוסיף את הדומיין בהגדרות Firebase.`
             : `Google Sign-In is not authorized for ${window.location.hostname}. Add this domain in Firebase Authentication > Settings > Authorized domains.`)
+        : e?.code === 'auth/popup-blocked'
+          ? (language === 'he'
+              ? 'הדפדפן חסם את חלונית ההתחברות של Google. יש לאפשר חלונות קופצים ולנסות שוב.'
+              : 'The browser blocked the Google sign-in window. Allow pop-ups and try again.')
         : (language === 'he'
             ? 'ההתחברות באמצעות Google נכשלה. אנא נסו שוב.'
             : 'Failed to sign in with Google. Please try again.');
       showAuthMessage(message, 'error');
       return 'failed';
+    } finally {
+      setIsAuthenticating(false);
     }
   };
 
@@ -528,6 +451,8 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     try {
       if (typeof window !== 'undefined') {
         clearAccountScopedStorage(localStorage);
+        clearCreatorIntent(localStorage);
+        clearCreatorIntent(sessionStorage);
         removeCookie('billsplit_user_groups');
       }
       setProfile({ displayName: '', avatarColor: '#4DE1A1', avatarUrl: undefined, phoneNumber: undefined });
@@ -546,6 +471,8 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       await signOut(auth);
       if (typeof window !== 'undefined') {
         clearAccountScopedStorage(localStorage);
+        clearCreatorIntent(localStorage);
+        clearCreatorIntent(sessionStorage);
         removeCookie('billsplit_user_groups');
         window.location.href = '/';
       }
@@ -556,6 +483,8 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setGuestPhone('');
       if (typeof window !== 'undefined') {
         clearAccountScopedStorage(localStorage);
+        clearCreatorIntent(localStorage);
+        clearCreatorIntent(sessionStorage);
         removeCookie('billsplit_user_groups');
         window.location.href = '/';
       }
@@ -729,7 +658,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
                 <button
                   type="button"
-                  onClick={loginWithGoogle}
+                  onClick={() => void loginWithGoogle({ forceAccountSelection: true })}
                   disabled={isAuthenticating}
                   className="text-[11px] font-bold text-brand-600 dark:text-brand-300 px-3 py-1.5 rounded-xl bg-brand-50 hover:bg-brand-100 dark:bg-brand-950/60 dark:hover:bg-brand-900/60 transition-all shrink-0 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                   title={language === 'he' ? 'החלף חשבון Google' : 'Switch Google account'}
@@ -817,7 +746,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 </div>
                 <button
                   type="button"
-                  onClick={loginWithGoogle}
+                  onClick={() => void loginWithGoogle()}
                   disabled={isAuthenticating}
                   className="w-full py-3.5 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-[#1C2638] dark:hover:bg-[#222E45] border border-slate-200 dark:border-[#2a374f] text-slate-800 dark:text-slate-100 text-sm font-bold shadow-md hover:shadow-lg transition-all active:scale-95 flex items-center justify-center gap-3 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
