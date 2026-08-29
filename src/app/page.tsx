@@ -47,6 +47,7 @@ import { compressAvatarImage } from '../../lib/imageUtils';
 import { createReceiptDraft, receiptConfirmationPayload, receiptScanUserMessage } from '../../lib/receiptScanClient';
 import { getCookie, setCookie } from '../../lib/cookies';
 import { triggerHaptic } from '../../lib/haptics';
+import { MOBILE_BACK_REQUEST_EVENT } from '../../lib/mobileEvents';
 import { clearRoomCredentials, roomHeaders, saveRoomCredentials } from '../../lib/roomTokens';
 import { fetchPaginatedAccountData } from '../../lib/accountClient';
 import { apiUrl, publicWebUrl } from '../../lib/platformTransport';
@@ -162,6 +163,17 @@ export default function HomePage() {
   const [showStartSplitModal, setShowStartSplitModal] = useState(false);
   const [showJoinSessionModal, setShowJoinSessionModal] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+
+  useEffect(() => {
+    if (Capacitor.getPlatform() !== 'android' || !showStartSplitModal) return;
+
+    const consumeNativeBack = (event: Event) => {
+      event.preventDefault();
+      setShowStartSplitModal(false);
+    };
+    window.addEventListener(MOBILE_BACK_REQUEST_EVENT, consumeNativeBack);
+    return () => window.removeEventListener(MOBILE_BACK_REQUEST_EVENT, consumeNativeBack);
+  }, [showStartSplitModal]);
 
   // Swipe-down to dismiss gestures for start split & group modals
   const [splitModalDragY, setSplitModalDragY] = useState(0);
@@ -1001,6 +1013,7 @@ export default function HomePage() {
               {/* Left Column: Tall Purple Card (start split) */}
               <button
                 type="button"
+                data-testid="start-split-button"
                 onClick={() => {
                   setShowStartSplitModal(true);
                   triggerHaptic('medium');
@@ -1896,7 +1909,11 @@ export default function HomePage() {
 
       {/* Start Split Options Popup Modal */}
       {showStartSplitModal && (
-        <div className="fixed inset-0 z-50 flex flex-col justify-end bg-slate-950/60 backdrop-blur-xs animate-fadeIn" onClick={() => setShowStartSplitModal(false)}>
+        <div
+          data-testid="start-split-sheet"
+          className="fixed inset-0 z-50 flex flex-col justify-end bg-slate-950/60 backdrop-blur-xs animate-fadeIn"
+          onClick={() => setShowStartSplitModal(false)}
+        >
           <div 
             style={{
               transform: splitModalDragY > 0 ? `translateY(${splitModalDragY}px)` : undefined,

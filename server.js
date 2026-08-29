@@ -42,7 +42,7 @@ const parseReceiptImage = geminiModule.parseReceiptImage || geminiModule.default
 const parseReceiptTextWithGemini = geminiModule.parseReceiptTextWithGemini || geminiModule.default?.parseReceiptTextWithGemini;
 
 const security = require('./lib/security');
-const { createApiCorsMiddleware, isAllowedClientOrigin, parseAllowedOrigins } = require('./lib/platformSecurity');
+const { createApiCorsMiddleware, isAllowedClientOrigin, resolveAllowedMobileOrigins } = require('./lib/platformSecurity');
 const debtMinimizer = require('./lib/debtMinimizer');
 const calculateDebtMinimization = debtMinimizer.calculateDebtMinimization;
 const allocateCentsProportionally = debtMinimizer.allocateCentsProportionally;
@@ -162,7 +162,7 @@ const dev = process.env.NODE_ENV !== 'production';
 const app = next({ dev });
 const handle = app.getRequestHandler();
 const PORT = process.env.PORT || 3000;
-const allowedMobileOrigins = parseAllowedOrigins(process.env.EASYSPLIT_ALLOWED_MOBILE_ORIGINS || '');
+const allowedMobileOrigins = resolveAllowedMobileOrigins(process.env.EASYSPLIT_ALLOWED_MOBILE_ORIGINS || '');
 
 function getLocalNetworkIp() {
   try {

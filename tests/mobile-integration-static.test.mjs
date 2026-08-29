@@ -66,3 +66,20 @@ test('committed native projects wire Camera and Haptics on both iOS and Android'
   assert.match(androidBuild, /implementation project\(':capacitor-camera'\)/);
   assert.match(androidBuild, /implementation project\(':capacitor-haptics'\)/);
 });
+
+test('Android back gives an open Start Split sheet first refusal before shell navigation', async () => {
+  const events = await read('lib/mobileEvents.ts');
+  const runtime = await read('mobile/runtime/mobileRuntime.ts');
+  const home = await read('src/app/page.tsx');
+  const config = await read('capacitor.config.ts');
+
+  assert.match(events, /MOBILE_BACK_REQUEST_EVENT/);
+  assert.match(runtime, /new Event\(MOBILE_BACK_REQUEST_EVENT, \{ cancelable: true \}\)/);
+  assert.match(runtime, /if \(backRequest\.defaultPrevented\) return/);
+  assert.match(home, /window\.addEventListener\(MOBILE_BACK_REQUEST_EVENT/);
+  assert.match(home, /event\.preventDefault\(\)/);
+  assert.match(home, /setShowStartSplitModal\(false\)/);
+  assert.match(home, /data-testid="start-split-button"/);
+  assert.match(home, /data-testid="start-split-sheet"/);
+  assert.doesNotMatch(config, /disableBackButtonHandler:\s*true/);
+});

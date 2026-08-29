@@ -5,12 +5,24 @@ const {
   isAllowedClientOrigin,
   normalizeOrigin,
   parseAllowedOrigins,
+  resolveAllowedMobileOrigins,
 } = require('../lib/platformSecurity');
 
 test('normalizes standard and Capacitor origins exactly', () => {
   assert.equal(normalizeOrigin('https://localhost/'), 'https://localhost');
   assert.equal(normalizeOrigin('capacitor://localhost/'), 'capacitor://localhost');
   assert.equal(normalizeOrigin('not a url'), '');
+});
+
+test('native Capacitor origins are exact safe defaults and explicit values only extend them', () => {
+  const defaults = resolveAllowedMobileOrigins();
+  assert.deepEqual([...defaults].sort(), ['capacitor://localhost', 'https://localhost'].sort());
+  assert.equal(defaults.has('https://localhost.attacker.example'), false);
+
+  const extended = resolveAllowedMobileOrigins('https://native-preview.easysplit.example');
+  assert.equal(extended.has('capacitor://localhost'), true);
+  assert.equal(extended.has('https://localhost'), true);
+  assert.equal(extended.has('https://native-preview.easysplit.example'), true);
 });
 
 test('origin allowlist preserves same-origin web and admits only configured native origins', () => {
@@ -51,6 +63,7 @@ test('CORS middleware leaves web requests untouched and only opens exact configu
   assert.equal(ios.ended, true);
   assert.equal(ios.headers.get('access-control-allow-origin'), 'capacitor://localhost');
   assert.match(ios.headers.get('access-control-allow-headers'), /X-Room-Token/);
+  assert.match(ios.headers.get('access-control-allow-headers'), /X-Firebase-AppCheck/);
 
   const android = run({ origin: 'https://localhost', method: 'OPTIONS' });
   assert.equal(android.statusCode, 204);

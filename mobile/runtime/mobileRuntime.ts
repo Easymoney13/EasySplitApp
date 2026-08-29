@@ -1,7 +1,7 @@
 import { App } from '@capacitor/app';
 import { Network } from '@capacitor/network';
 import { StatusBar, Style } from '@capacitor/status-bar';
-import { MOBILE_RECOVERY_EVENT } from '../../lib/mobileEvents';
+import { MOBILE_BACK_REQUEST_EVENT, MOBILE_RECOVERY_EVENT } from '../../lib/mobileEvents';
 import {
   NAV_EVENT,
   backAction,
@@ -45,6 +45,10 @@ export async function installMobileRuntime() {
   // Keep the App plugin's default back handler enabled in config. Registering this
   // listener intentionally takes ownership of Android back navigation.
   handles.push(await App.addListener('backButton', async () => {
+    const backRequest = new Event(MOBILE_BACK_REQUEST_EVENT, { cancelable: true });
+    window.dispatchEvent(backRequest);
+    if (backRequest.defaultPrevented) return;
+
     const action = backAction(window.location.search, window.history.state);
     if (action === 'history-back') {
       window.history.back();
