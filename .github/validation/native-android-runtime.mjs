@@ -5,6 +5,7 @@ const ADB = process.env.ADB || 'adb';
 const PACKAGE = 'com.easysplit.app';
 const ACTIVITY = `${PACKAGE}/.MainActivity`;
 const DEVTOOLS_PORT = 9222;
+const RUNTIME_TIMEOUT_MS = 120_000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -67,16 +68,24 @@ async function cdpEvaluate(webSocketDebuggerUrl, expression) {
   });
 }
 
-async function connectWebView() {
-  const pid = await waitFor('EasySplit process', async () => adb('shell', 'pidof', PACKAGE) || null);
-  const socketTable = adb('shell', 'cat', '/proc/net/unix');
-  const socketLine = socketTable
-    .split('\n')
-    .find((line) => line.includes(`webview_devtools_remote_${pid}`))
-    || socketTable.split('\n').reverse().find((line) => line.includes('webview_devtools_remote'));
-  if (!socketLine) throw new Error(`No WebView DevTools socket found for PID ${pid}`);
-  const socketName = socketLine.match(/@(webview_devtools_remote[^\s]*)/)?.[1];
-  if (!socketName) throw new Error(`Could not parse WebView socket: ${socketLine}`);
+function launchAccepted(output) {
+  // Android's `am start -W` can report Status: timeout on heavily loaded hosted
+  // emulators even while MainActivity is already launching. Runtime state below
+  // is the source of truth; any other launch status remains a hard failure.
+  return /Status:\s*(?:ok|timeout)/i.test(String(output || ''));
+}
+
+async function connectWebView(timeoutMs = RUNTIME_TIMEOUT_MS) {
+  const pid = await waitFor('EasySplit process', async () => adb('shell', 'pidof', PACKAGE) || null, timeoutMs);
+
+  const socketName = await waitFor('EasySplit WebView DevTools socket', async () => {
+    const socketTable = adb('shell', 'cat', '/proc/net/unix');
+    const socketLine = socketTable
+      .split('\n')
+      .find((line) => line.includes(`webview_devtools_remote_${pid}`))
+      || socketTable.split('\n').reverse().find((line) => line.includes('webview_devtools_remote'));
+    return socketLine?.match(/@(webview_devtools_remote[^\s]*)/)?.[1] || null;
+  }, timeoutMs);
 
   try {
     adb('forward', '--remove', `tcp:${DEVTOOLS_PORT}`);
@@ -90,12 +99,16 @@ async function connectWebView() {
     return pages.find((page) => page.type === 'page' && page.url.startsWith('https://localhost/'))
       || pages.find((page) => page.type === 'page')
       || null;
-  });
+  }, timeoutMs);
 }
 
 function isEasySplitFocused() {
   const activities = adb('shell', 'dumpsys', 'activity', 'activities');
   return /topResumedActivity=.*com\.easysplit\.app\/\.MainActivity/.test(activities);
+}
+
+async function waitForEasySplitFocused(label = 'EasySplit foreground activity') {
+  return waitFor(label, async () => isEasySplitFocused(), RUNTIME_TIMEOUT_MS, 750);
 }
 
 async function expectRoute(page, route, { paramName, paramValue, hash } = {}) {
@@ -108,7 +121,7 @@ async function expectRoute(page, route, { paramName, paramValue, hash } = {}) {
       const hashOk = ${hash ? `window.location.hash === ${JSON.stringify(hash)}` : 'true'};
       return routeOk && paramOk && hashOk;
     })()`,
-  ));
+  ), RUNTIME_TIMEOUT_MS);
 }
 
 function openDeepLink(url) {
@@ -134,13 +147,16 @@ async function main() {
   adb('shell', 'am', 'force-stop', PACKAGE);
 
   const launch = adb('shell', 'am', 'start', '-W', '-n', ACTIVITY);
-  if (!/Status: ok/.test(launch)) throw new Error(`Cold launch failed:\n${launch}`);
+  if (!launchAccepted(launch)) throw new Error(`Cold launch dispatch failed:\n${launch}`);
 
+  // Do not trust `am start -W` alone. A cold launch passes only when the actual
+  // EasySplit WebView exists, the activity is foreground, and React hydrated.
   let page = await connectWebView();
+  await waitForEasySplitFocused('EasySplit foreground after cold launch');
   await waitFor('hydrated EasySplit home', async () => cdpEvaluate(
     page.webSocketDebuggerUrl,
     `Boolean(document.querySelector('[data-testid="start-split-button"]'))`,
-  ));
+  ), RUNTIME_TIMEOUT_MS);
 
   const clicked = await cdpEvaluate(
     page.webSocketDebuggerUrl,
@@ -151,7 +167,7 @@ async function main() {
   await waitFor('Start Split sheet', async () => cdpEvaluate(
     page.webSocketDebuggerUrl,
     `Boolean(document.querySelector('[data-testid="start-split-sheet"]'))`,
-  ));
+  ), RUNTIME_TIMEOUT_MS);
 
   adb('shell', 'input', 'keyevent', '4');
   await sleep(1_000);
@@ -165,8 +181,9 @@ async function main() {
   if (sheetStillOpen) throw new Error('Back did not dismiss the Start Split sheet');
 
   const liveDeepLink = openDeepLink('easysplit://session/smoke-session?groupId=smoke-group#invite=smoke-token');
-  if (!/Status: ok/.test(liveDeepLink)) throw new Error(`Live deep-link dispatch failed:\n${liveDeepLink}`);
+  if (!launchAccepted(liveDeepLink)) throw new Error(`Live deep-link dispatch failed:\n${liveDeepLink}`);
   page = await connectWebView();
+  await waitForEasySplitFocused('EasySplit foreground after live deep link');
   await expectRoute(page, '/session/smoke-session', {
     paramName: 'groupId',
     paramValue: 'smoke-group',
@@ -180,8 +197,9 @@ async function main() {
 
   adb('shell', 'am', 'force-stop', PACKAGE);
   const coldDeepLink = openDeepLink('easysplit://group/smoke-group');
-  if (!/Status: ok/.test(coldDeepLink)) throw new Error(`Cold deep-link dispatch failed:\n${coldDeepLink}`);
+  if (!launchAccepted(coldDeepLink)) throw new Error(`Cold deep-link dispatch failed:\n${coldDeepLink}`);
   page = await connectWebView();
+  await waitForEasySplitFocused('EasySplit foreground after cold deep link');
   await expectRoute(page, '/group/smoke-group');
 
   adb('shell', 'input', 'keyevent', '4');
@@ -194,9 +212,13 @@ async function main() {
   if (isEasySplitFocused()) throw new Error('Back on root did not return control to Android');
 
   const warmLaunch = adb('shell', 'am', 'start', '-W', '-n', ACTIVITY);
-  if (!/Status: ok/.test(warmLaunch)) throw new Error(`Warm resume failed:\n${warmLaunch}`);
-  await sleep(1_000);
-  if (!isEasySplitFocused()) throw new Error('EasySplit did not resume after normal backgrounding');
+  if (!launchAccepted(warmLaunch)) throw new Error(`Warm resume dispatch failed:\n${warmLaunch}`);
+  await waitForEasySplitFocused('EasySplit foreground after warm resume');
+  page = await connectWebView();
+  await waitFor('hydrated EasySplit home after warm resume', async () => cdpEvaluate(
+    page.webSocketDebuggerUrl,
+    `Boolean(document.querySelector('[data-testid="start-split-button"]'))`,
+  ), RUNTIME_TIMEOUT_MS);
 
   assertNoNativeCrash();
 
