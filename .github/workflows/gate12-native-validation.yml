@@ -9,9 +9,11 @@ on:
 permissions:
   contents: read
 
+# Validation SHAs are immutable candidates. Include the SHA so a stale hosted
+# runner from an older candidate can never block the final verification run.
 concurrency:
-  group: gate12-native-validation-${{ github.ref }}
-  cancel-in-progress: true
+  group: gate12-native-validation-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
 
 env:
   NODE_VERSION: 22.23.2
