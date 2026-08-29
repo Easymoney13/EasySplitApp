@@ -67,6 +67,45 @@ test('committed native projects wire Camera and Haptics on both iOS and Android'
   assert.match(androidBuild, /implementation project\(':capacitor-haptics'\)/);
 });
 
+test('native projects wire sharing, external payment apps, and inbound app links', async () => {
+  const pkg = JSON.parse(await read('package.json'));
+  const runtime = await read('mobile/runtime/mobileRuntime.ts');
+  const manifest = await read('android/app/src/main/AndroidManifest.xml');
+  const androidSettings = await read('android/capacitor.settings.gradle');
+  const androidBuild = await read('android/app/capacitor.build.gradle');
+  const plist = await read('ios/App/App/Info.plist');
+  const iosPackage = await read('ios/App/CapApp-SPM/Package.swift');
+
+  assert.ok(pkg.dependencies['@capacitor/share']);
+  assert.ok(pkg.dependencies['@capacitor/app-launcher']);
+  assert.match(runtime, /App\.addListener\('appUrlOpen'/);
+  assert.match(runtime, /App\.getLaunchUrl\(\)/);
+  assert.match(manifest, /android:scheme="easysplit"/);
+  assert.match(manifest, /android:scheme="bit"/);
+  assert.match(manifest, /android:scheme="paybox"/);
+  assert.match(plist, /<string>easysplit<\/string>/);
+  assert.match(plist, /LSApplicationQueriesSchemes/);
+  assert.match(androidSettings, /include ':capacitor-app-launcher'/);
+  assert.match(androidSettings, /include ':capacitor-share'/);
+  assert.match(androidBuild, /implementation project\(':capacitor-app-launcher'\)/);
+  assert.match(androidBuild, /implementation project\(':capacitor-share'\)/);
+  assert.match(iosPackage, /CapacitorAppLauncher/);
+  assert.match(iosPackage, /CapacitorShare/);
+
+  const home = await read('src/app/page.tsx');
+  const session = await read('src/app/session/[id]/page.tsx');
+  const group = await read('src/app/group/[id]/page.tsx');
+  const qrModal = await read('src/components/QRCodeModal.tsx');
+  for (const source of [home, qrModal]) {
+    assert.doesNotMatch(source, /navigator\.share/);
+    assert.match(source, /shareInvite/);
+  }
+  for (const source of [session, group]) {
+    assert.doesNotMatch(source, /paybox:\/\//);
+    assert.match(source, /openPayBoxPayment/);
+  }
+});
+
 test('Android back gives an open Start Split sheet first refusal before shell navigation', async () => {
   const events = await read('lib/mobileEvents.ts');
   const runtime = await read('mobile/runtime/mobileRuntime.ts');

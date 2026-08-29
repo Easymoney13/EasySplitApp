@@ -44,6 +44,7 @@ import { fetchPaginatedAccountData } from '../../../../lib/accountClient';
 import { apiUrl, realtimeUrl } from '../../../../lib/platformTransport';
 import { MOBILE_RECOVERY_EVENT } from '../../../../lib/mobileEvents';
 import { purgeDeletedSessionFromStorage } from '../../../../lib/localLifecycle';
+import { openPayBoxPayment } from '../../../../lib/nativeActions';
 
 function createClientActionId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -816,7 +817,7 @@ function SessionWorkspaceInner() {
 
       const amount = serverAmount;
       if (method === 'bit') {
-        triggerBitPayment({
+        await triggerBitPayment({
           phone,
           amount,
           storeName: session?.storeName || 'EasySplit Room',
@@ -824,21 +825,7 @@ function SessionWorkspaceInner() {
         return;
       }
 
-      const formattedAmount = amount.toFixed(2);
-      try {
-        await navigator.clipboard.writeText(`${phone} ${formattedAmount}`);
-      } catch (error) {
-        console.warn('Could not copy Paybox details:', error);
-      }
-      const isMobile = typeof window !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-      if (isMobile) {
-        window.location.href = `paybox://pay?phone=${phone}&amount=${formattedAmount}`;
-        setTimeout(() => {
-          window.open(`https://payboxapp.page.link/pay?phone=${phone}&amount=${formattedAmount}`, '_blank');
-        }, 800);
-      } else {
-        window.open(`https://payboxapp.page.link/pay?phone=${phone}&amount=${formattedAmount}`, '_blank');
-      }
+      await openPayBoxPayment(phone, amount);
     } catch (error) {
       console.error('Payment target lookup failed:', error);
       alert(t('payerPhoneNotSetNote', { name: activePayerName }, `${activePayerName} has not added a valid payment phone number yet.`));

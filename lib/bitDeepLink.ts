@@ -1,3 +1,5 @@
+import { copyText, openExternalApp } from './nativeActions';
+
 export interface BitPaymentParams {
   phone: string;
   amount: number | string;
@@ -52,36 +54,21 @@ export function generateBitUrl(params: BitPaymentParams): {
   };
 }
 
-export function triggerBitPayment(params: BitPaymentParams) {
+export async function triggerBitPayment(params: BitPaymentParams): Promise<boolean> {
   if (!isValidIsraeliPhone(params.phone)) return false;
-  const { meUrl, deepLink, intentUrl, formattedAmount, cleanPhone, displayText } = generateBitUrl(params);
+  const { meUrl, deepLink, formattedAmount, cleanPhone } = generateBitUrl(params);
 
   try {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      navigator.clipboard.writeText(`${cleanPhone} ${formattedAmount}`);
+      await copyText(`${cleanPhone} ${formattedAmount}`);
     }
   } catch (e) {}
 
   if (typeof window === 'undefined') return false;
 
-  const userAgent = navigator.userAgent || '';
-  const isAndroid = /Android/i.test(userAgent);
-  const isIOS = /iPhone|iPad|iPod/i.test(userAgent);
-
-  alert(`Opening Bit! 📲\nRecipient: ${cleanPhone}\nAmount: ${formattedAmount} ₪\nFor: ${displayText}\n\n(Copied to clipboard 📋)`);
-
-  if (isAndroid) {
-    window.location.href = intentUrl;
-    setTimeout(() => {
-      window.open(meUrl, '_blank');
-    }, 1000);
-  } else if (isIOS) {
-    window.location.href = deepLink;
-    setTimeout(() => {
-      window.open(meUrl, '_blank');
-    }, 1000);
-  } else {
-    window.open(meUrl, '_blank');
-  }
-  return true;
+  return openExternalApp({
+    appUrl: deepLink,
+    fallbackUrl: meUrl,
+    browserFallbackDelayMs: 1000,
+  });
 }

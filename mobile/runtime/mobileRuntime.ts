@@ -6,8 +6,10 @@ import {
   NAV_EVENT,
   backAction,
   buildShellSearch,
+  currentDepth,
   initialHistoryPlan,
 } from '../router-core.mjs';
+import { incomingRouteFromUrl } from '../deep-link-core.mjs';
 
 
 export async function installMobileRuntime() {
@@ -41,6 +43,29 @@ export async function installMobileRuntime() {
   }));
 
   handles.push(await App.addListener('resume', emitResume));
+
+  let lastHandledUrl = '';
+  let lastHandledUrlAt = 0;
+  const handleIncomingUrl = (url: string) => {
+    const now = Date.now();
+    if (!url || (url === lastHandledUrl && now - lastHandledUrlAt < 1000)) return;
+    const target = incomingRouteFromUrl(url);
+    if (!target) return;
+    lastHandledUrl = url;
+    lastHandledUrlAt = now;
+    const depth = currentDepth(window.history.state) + 1;
+    const shellUrl = `${window.location.pathname}${buildShellSearch(target.path)}${target.hash}`;
+    window.history.pushState({ ...(window.history.state || {}), esDepth: depth }, '', shellUrl);
+    window.dispatchEvent(new Event(NAV_EVENT));
+  };
+
+  handles.push(await App.addListener('appUrlOpen', ({ url }) => handleIncomingUrl(url)));
+  try {
+    const launch = await App.getLaunchUrl();
+    if (launch?.url) handleIncomingUrl(launch.url);
+  } catch (_) {
+    // Non-fatal: the live appUrlOpen listener still handles future links.
+  }
 
   // Keep the App plugin's default back handler enabled in config. Registering this
   // listener intentionally takes ownership of Android back navigation.

@@ -29,11 +29,24 @@
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.easysplit.app.links</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>easysplit</string>
+			</array>
+		</dict>
+		<dict>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>com.googleusercontent.apps.510350845002-11pq3jtk5vb5f2kv1nrn1jqd02f04dqp</string>
 			</array>
 		</dict>
+	</array>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>bit</string>
+		<string>paybox</string>
 	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>

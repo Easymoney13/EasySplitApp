@@ -5,6 +5,7 @@ import { X, Copy, Check, Share2, QrCode, UserPlus, Link, Smartphone } from 'luci
 import { useLanguage } from './LanguageContext';
 import QRCode from 'qrcode';
 import { hasConfiguredApiOrigin, publicWebUrl } from '../../lib/platformTransport';
+import { shareInvite } from '../../lib/nativeActions';
 
 interface QRCodeModalProps {
   isOpen: boolean;
@@ -92,19 +93,13 @@ export const QRCodeModal: React.FC<QRCodeModalProps> = ({
   };
 
   const shareNative = async () => {
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: hideCode ? 'Join EasySplit' : `Join EasySplit Session #${sessionCode}`,
-          text: hideCode ? t('secureGroupInviteText', undefined, 'Join our bill splitting room with this secure link.') : `Join our bill splitting room with code ${sessionCode}!`,
-          url: joinUrl,
-        });
-      } catch (err) {
-        // ignore
-      }
-    } else {
-      copyToClipboard();
-    }
+    const result = await shareInvite({
+      title: hideCode ? 'Join EasySplit' : `Join EasySplit Session #${sessionCode}`,
+      text: hideCode ? t('secureGroupInviteText', undefined, 'Join our bill splitting room with this secure link.') : `Join our bill splitting room with code ${sessionCode}!`,
+      url: joinUrl,
+      dialogTitle: t('shareRoomTitle', undefined, 'Invite Friends to Room'),
+    });
+    if (result === 'unavailable') await copyToClipboard();
   };
 
   const handleAddFriendSubmit = (e: React.FormEvent) => {

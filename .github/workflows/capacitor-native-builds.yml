@@ -1,0 +1,116 @@
+name: EasySplit Capacitor Native Builds
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'android/**'
+      - 'ios/**'
+      - 'lib/**'
+      - 'mobile/**'
+      - 'src/**'
+      - 'tests/mobile-*.test.mjs'
+      - 'capacitor.config.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.mobile.config.ts'
+      - '.github/workflows/capacitor-native-builds.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - 'ios/**'
+      - 'lib/**'
+      - 'mobile/**'
+      - 'src/**'
+      - 'tests/mobile-*.test.mjs'
+      - 'capacitor.config.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.mobile.config.ts'
+      - '.github/workflows/capacitor-native-builds.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: easysplit-native-builds-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile-native-projects:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      NEXT_PUBLIC_EASYSPLIT_API_ORIGIN: https://api.easysplit.invalid
+      NEXT_PUBLIC_EASYSPLIT_WEB_ORIGIN: https://easysplit.invalid
+      NEXT_PUBLIC_EASYSPLIT_WS_ORIGIN: wss://api.easysplit.invalid
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22.16.0
+          cache: npm
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android API 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platform-tools' 'platforms;android-36' 'build-tools;36.0.0'
+
+      - name: Install exact dependencies
+        run: npm ci
+
+      - name: Verify shared and mobile code
+        run: |
+          npm test
+          npm run typecheck
+          npm run verify:mobile-shell
+
+      - name: Synchronize native projects
+        run: npm run mobile:sync
+
+      - name: Verify synchronized plugins and native config
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx cap ls
+          git diff --check
+          grep -q 'CapacitorAppLauncher' ios/App/CapApp-SPM/Package.swift
+          grep -q 'CapacitorShare' ios/App/CapApp-SPM/Package.swift
+          grep -q "capacitor-app-launcher" android/app/capacitor.build.gradle
+          grep -q "capacitor-share" android/app/capacitor.build.gradle
+
+      - name: Compile iOS simulator without signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -sdk iphonesimulator \
+            -configuration Debug \
+            -derivedDataPath "$RUNNER_TEMP/EasySplitDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Compile Android debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd android
+          ./gradlew assembleDebug --no-daemon --stacktrace

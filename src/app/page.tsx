@@ -52,6 +52,7 @@ import { clearRoomCredentials, clearSessionInviteToken, getOrCreateRoomClientId,
 import { fetchPaginatedAccountData } from '../../lib/accountClient';
 import { apiUrl, publicWebUrl } from '../../lib/platformTransport';
 import { cleanIsraeliPhone, isValidIsraeliPhone } from '../../lib/bitDeepLink';
+import { copyText, shareInvite } from '../../lib/nativeActions';
 import {
   collectCachedRoomIds,
   purgeDeletedGroupFromStorage,
@@ -2299,18 +2300,13 @@ export default function HomePage() {
                 <button
                   onClick={async () => {
                     const groupUrl = publicWebUrl(`/group/${selectedGroupForModal.id}`);
-                    if (navigator.share) {
-                      try {
-                        await navigator.share({
-                          title: `Join Group ${selectedGroupForModal.name}`,
-                          text: `Join our group ${selectedGroupForModal.name} with code ${selectedGroupForModal.code}!`,
-                          url: groupUrl
-                        });
-                      } catch (e) {}
-                    } else {
-                      await navigator.clipboard.writeText(groupUrl);
-                      alert('Group invite link copied to clipboard! 🔗');
-                    }
+                    const result = await shareInvite({
+                      title: `Join Group ${selectedGroupForModal.name}`,
+                      text: `Join our group ${selectedGroupForModal.name} with code ${selectedGroupForModal.code}!`,
+                      url: groupUrl,
+                      dialogTitle: t('shareGroupItem', undefined, 'Share Group'),
+                    });
+                    if (result === 'unavailable') await copyText(groupUrl);
                     closeGroupModal();
                   }}
                   className="w-full py-2.5 px-3 rounded-xl bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-900 dark:text-white text-xs font-bold flex items-center justify-between transition-colors"

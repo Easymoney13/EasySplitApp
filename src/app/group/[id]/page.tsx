@@ -45,6 +45,7 @@ import { MOBILE_RECOVERY_EVENT } from '../../../../lib/mobileEvents';
 import { purgeDeletedGroupFromStorage } from '../../../../lib/localLifecycle';
 import { Capacitor } from '@capacitor/core';
 import { Camera as CapCamera, CameraResultType, CameraSource } from '@capacitor/camera';
+import { openPayBoxPayment } from '../../../../lib/nativeActions';
 
 function createClientActionId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -596,20 +597,10 @@ export default function GroupWorkspacePage() {
         return;
       }
       if (method === 'bit') {
-        triggerBitPayment({ phone, amount, title: `${group.name} settlement` });
+        await triggerBitPayment({ phone, amount, title: `${group.name} settlement` });
         return;
       }
-      const formattedAmount = amount.toFixed(2);
-      try { await navigator.clipboard.writeText(`${phone} ${formattedAmount}`); } catch (_) {}
-      const isMobile = typeof window !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-      if (isMobile) {
-        window.location.href = `paybox://pay?phone=${phone}&amount=${formattedAmount}`;
-        setTimeout(() => {
-          window.open(`https://payboxapp.page.link/pay?phone=${phone}&amount=${formattedAmount}`, '_blank');
-        }, 800);
-      } else {
-        window.open(`https://payboxapp.page.link/pay?phone=${phone}&amount=${formattedAmount}`, '_blank');
-      }
+      await openPayBoxPayment(phone, amount);
     } finally {
       paymentLookupRef.current = false;
       setPaymentLookupKey('');
