@@ -20,6 +20,7 @@ def append_once(relative_path: str, marker: str, addition: str) -> None:
     path.write_text(text.rstrip() + "\n\n" + addition.strip() + "\n", encoding="utf-8")
 
 
+# Native CORS: add only EasySplit's exact Capacitor origins as safe defaults.
 replace_once(
     "lib/platformSecurity.js",
     """function parseAllowedOrigins(value) {
@@ -81,7 +82,6 @@ replace_once(
 };
 """,
 )
-
 replace_once(
     "server.js",
     "const { createApiCorsMiddleware, isAllowedClientOrigin, parseAllowedOrigins } = require('./lib/platformSecurity');",
@@ -92,7 +92,6 @@ replace_once(
     "const allowedMobileOrigins = parseAllowedOrigins(process.env.EASYSPLIT_ALLOWED_MOBILE_ORIGINS || '');",
     "const allowedMobileOrigins = resolveAllowedMobileOrigins(process.env.EASYSPLIT_ALLOWED_MOBILE_ORIGINS || '');",
 )
-
 replace_once(
     "tests/platform-security.test.js",
     """  normalizeOrigin,
@@ -121,10 +120,7 @@ replace_once(
 
 test('native Capacitor origins are exact safe defaults and explicit values only extend them', () => {
   const defaults = resolveAllowedMobileOrigins();
-  assert.deepEqual(
-    [...defaults].sort(),
-    ['capacitor://localhost', 'https://localhost'].sort(),
-  );
+  assert.deepEqual([...defaults].sort(), ['capacitor://localhost', 'https://localhost'].sort());
   assert.equal(defaults.has('https://localhost.attacker.example'), false);
 
   const extended = resolveAllowedMobileOrigins('https://native-preview.easysplit.example');
@@ -141,44 +137,41 @@ replace_once(
   assert.match(ios.headers.get('access-control-allow-headers'), /X-Firebase-AppCheck/);""",
 )
 
+# Android Back: preserve the existing global Capacitor router handler. An open
+# Start Split sheet gets first refusal through one cancelable browser event.
 replace_once(
-    ".env.example",
-    """# Exact Capacitor WebView origins permitted by the EasySplit server (comma-separated).
-# Capacitor defaults are capacitor://localhost on iOS and https://localhost on Android.
-# EASYSPLIT_ALLOWED_MOBILE_ORIGINS=capacitor://localhost,https://localhost
+    "lib/mobileEvents.ts",
+    """/** Neutral browser event shared by the bundled mobile runtime and existing room pages. */
+export const MOBILE_RECOVERY_EVENT = 'easysplit:runtime-recover' as const;
 """,
-    """# Additional exact native origins permitted by the EasySplit server (comma-separated).
-# The standard Capacitor origins capacitor://localhost and https://localhost are built in.
-# EASYSPLIT_ALLOWED_MOBILE_ORIGINS=https://native-preview.easysplit.example
+    """/** Neutral browser events shared by the bundled mobile runtime and existing pages. */
+export const MOBILE_RECOVERY_EVENT = 'easysplit:runtime-recover' as const;
+export const MOBILE_BACK_REQUEST_EVENT = 'easysplit:native-back-request' as const;
 """,
 )
+replace_once(
+    "mobile/runtime/mobileRuntime.ts",
+    "import { MOBILE_RECOVERY_EVENT } from '../../lib/mobileEvents';",
+    "import { MOBILE_BACK_REQUEST_EVENT, MOBILE_RECOVERY_EVENT } from '../../lib/mobileEvents';",
+)
+replace_once(
+    "mobile/runtime/mobileRuntime.ts",
+    """  handles.push(await App.addListener('backButton', async () => {
+    const action = backAction(window.location.search, window.history.state);
+""",
+    """  handles.push(await App.addListener('backButton', async () => {
+    const backRequest = new Event(MOBILE_BACK_REQUEST_EVENT, { cancelable: true });
+    window.dispatchEvent(backRequest);
+    if (backRequest.defaultPrevented) return;
 
-replace_once(
-    "capacitor.config.ts",
-    """  plugins: {
-    // Do NOT set App.disableBackButtonHandler=true: our App.addListener('backButton')
-    // relies on the native callback remaining enabled.
-    Keyboard: {
+    const action = backAction(window.location.search, window.history.state);
 """,
-    """  plugins: {
-    App: {
-      // Android 16 predictive back stays system-owned until a page explicitly
-      // enables Capacitor's callback for a visible native sheet.
-      disableBackButtonHandler: true,
-    },
-    Keyboard: {
-""",
-)
-replace_once(
-    "android/variables.gradle",
-    "androidxActivityVersion = '1.11.0'",
-    "androidxActivityVersion = '1.12.4'",
 )
 replace_once(
     "src/app/page.tsx",
-    "import { Camera as CapCamera, CameraResultType, CameraSource } from '@capacitor/camera';\n",
-    """import { Camera as CapCamera, CameraResultType, CameraSource } from '@capacitor/camera';
-import { App as CapacitorApp } from '@capacitor/app';
+    "import { triggerHaptic } from '../../lib/haptics';\n",
+    """import { triggerHaptic } from '../../lib/haptics';
+import { MOBILE_BACK_REQUEST_EVENT } from '../../lib/mobileEvents';
 """,
 )
 replace_once(
@@ -196,31 +189,12 @@ replace_once(
   useEffect(() => {
     if (Capacitor.getPlatform() !== 'android' || !showStartSplitModal) return;
 
-    let cancelled = false;
-    let backListener: { remove: () => Promise<void> } | null = null;
-
-    const enableSheetBack = async () => {
-      try {
-        const handle = await CapacitorApp.addListener('backButton', () => {
-          setShowStartSplitModal(false);
-        });
-        if (cancelled) {
-          await handle.remove();
-          return;
-        }
-        backListener = handle;
-        await CapacitorApp.toggleBackButtonHandler({ enabled: true });
-      } catch (error) {
-        console.warn('Native sheet back handling could not be enabled:', error);
-      }
+    const consumeNativeBack = (event: Event) => {
+      event.preventDefault();
+      setShowStartSplitModal(false);
     };
-
-    void enableSheetBack();
-    return () => {
-      cancelled = true;
-      void CapacitorApp.toggleBackButtonHandler({ enabled: false }).catch(() => {});
-      if (backListener) void backListener.remove();
-    };
+    window.addEventListener(MOBILE_BACK_REQUEST_EVENT, consumeNativeBack);
+    return () => window.removeEventListener(MOBILE_BACK_REQUEST_EVENT, consumeNativeBack);
   }, [showStartSplitModal]);
 
   // Swipe-down to dismiss gestures for start split & group modals
@@ -253,25 +227,24 @@ replace_once(
         >
 """,
 )
-
 append_once(
     "tests/mobile-integration-static.test.mjs",
-    "Android 16 back is system-owned except while the Start Split sheet is open",
-    """test('Android 16 back is system-owned except while the Start Split sheet is open', async () => {
-  const config = await read('capacitor.config.ts');
+    "Android back gives an open Start Split sheet first refusal before shell navigation",
+    """test('Android back gives an open Start Split sheet first refusal before shell navigation', async () => {
+  const events = await read('lib/mobileEvents.ts');
+  const runtime = await read('mobile/runtime/mobileRuntime.ts');
   const home = await read('src/app/page.tsx');
-  const variables = await read('android/variables.gradle');
-  const mainActivity = await read('android/app/src/main/java/com/easysplit/app/MainActivity.java');
+  const config = await read('capacitor.config.ts');
 
-  assert.match(config, /disableBackButtonHandler:\s*true/);
-  assert.match(home, /App as CapacitorApp/);
-  assert.match(home, /CapacitorApp\.addListener\(['\"]backButton['\"]/);
-  assert.match(home, /toggleBackButtonHandler\(\{ enabled: true \}\)/);
-  assert.match(home, /toggleBackButtonHandler\(\{ enabled: false \}\)/);
+  assert.match(events, /MOBILE_BACK_REQUEST_EVENT/);
+  assert.match(runtime, /new Event\(MOBILE_BACK_REQUEST_EVENT, \{ cancelable: true \}\)/);
+  assert.match(runtime, /if \(backRequest\.defaultPrevented\) return/);
+  assert.match(home, /window\.addEventListener\(MOBILE_BACK_REQUEST_EVENT/);
+  assert.match(home, /event\.preventDefault\(\)/);
+  assert.match(home, /setShowStartSplitModal\(false\)/);
   assert.match(home, /data-testid=\"start-split-button\"/);
   assert.match(home, /data-testid=\"start-split-sheet\"/);
-  assert.match(variables, /androidxActivityVersion = '1\.12\.4'/);
-  assert.doesNotMatch(mainActivity, /OnBackInvokedDispatcher|onBackPressed\(/);
+  assert.doesNotMatch(config, /disableBackButtonHandler:\s*true/);
 });""",
 )
 
