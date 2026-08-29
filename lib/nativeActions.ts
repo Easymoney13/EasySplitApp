@@ -1,6 +1,7 @@
 import { AppLauncher } from '@capacitor/app-launcher';
 import { Capacitor } from '@capacitor/core';
 import { Share } from '@capacitor/share';
+import { nativeInviteUrlFromWeb } from '../mobile/deep-link-core.mjs';
 
 export interface ShareInviteOptions {
   title: string;
@@ -19,7 +20,15 @@ export async function shareInvite(options: ShareInviteOptions): Promise<'shared'
     if (Capacitor.isNativePlatform()) {
       const { value } = await Share.canShare();
       if (!value) return 'unavailable';
-      await Share.share(options);
+      const nativeUrl = nativeInviteUrlFromWeb(options.url);
+      const payload = nativeUrl
+        ? {
+            ...options,
+            text: `${options.text}\n${options.url}`,
+            url: nativeUrl,
+          }
+        : options;
+      await Share.share(payload);
       return 'shared';
     }
 
