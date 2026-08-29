@@ -9,8 +9,6 @@ on:
 permissions:
   contents: read
 
-# Validation SHAs are immutable candidates. Include the SHA so a stale hosted
-# runner from an older candidate can never block the final verification run.
 concurrency:
   group: gate12-native-validation-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
@@ -60,15 +58,32 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          PORT=3100 npm start >"$RUNNER_TEMP/gate12-ios/server.log" 2>&1 &
+          # verify:mobile-shell produces the Vite bundle after the Next.js build.
+          # Recreate the production Next.js output immediately before starting
+          # the custom production server so the CORS probe tests the product,
+          # not stale/missing CI build artifacts.
+          npm run build
+          SERVER_LOG="$RUNNER_TEMP/gate12-ios/server.log"
+          PORT=3100 npm start >"$SERVER_LOG" 2>&1 &
           SERVER_PID=$!
           cleanup() { kill "$SERVER_PID" 2>/dev/null || true; }
           trap cleanup EXIT
+          READY=false
           for attempt in $(seq 1 60); do
-            if curl -fsS "http://127.0.0.1:3100/api/exchange-rates" >/dev/null; then break; fi
+            if curl -fsS "http://127.0.0.1:3100/api/exchange-rates" >/dev/null; then
+              READY=true
+              break
+            fi
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+              cat "$SERVER_LOG"
+              exit 1
+            fi
             sleep 1
           done
-          kill -0 "$SERVER_PID"
+          if [ "$READY" != 'true' ]; then
+            cat "$SERVER_LOG"
+            exit 1
+          fi
 
           for origin in 'capacitor://localhost' 'https://localhost'; do
             headers="$RUNNER_TEMP/gate12-ios/$(echo "$origin" | tr '/:' '_').headers"
