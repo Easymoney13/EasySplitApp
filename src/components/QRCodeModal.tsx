@@ -12,6 +12,7 @@ interface QRCodeModalProps {
   sessionCode: string;
   sessionId: string;
   isGroup?: boolean;
+  inviteToken?: string;
   hideCode?: boolean;
   onAddFriend?: (friendName: string) => void;
 }
@@ -22,6 +23,7 @@ export const QRCodeModal: React.FC<QRCodeModalProps> = ({
   sessionCode,
   sessionId,
   isGroup = false,
+  inviteToken = '',
   hideCode = false,
   onAddFriend
 }) => {
@@ -33,7 +35,17 @@ export const QRCodeModal: React.FC<QRCodeModalProps> = ({
   const [friendAddedMsg, setFriendAddedMsg] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState('');
 
-  const basePath = isGroup ? `/group/${sessionId}` : `/session/${sessionId}`;
+  // Keep the bearer invite in the URL fragment so browsers never send it in
+  // HTTP requests, access logs, analytics URLs, or Referer headers.
+  const inviteQuery = !isGroup && inviteToken ? `#invite=${encodeURIComponent(inviteToken)}` : '';
+  // Participants who entered a valid manual code do not possess the host's
+  // signed bearer invite. Their re-shared QR therefore uses the currently
+  // active code path instead of producing a dead durable-ID link.
+  const codeInvite = !isGroup && !inviteToken && /^\d{5}$/.test(sessionCode)
+    ? `?code=${encodeURIComponent(sessionCode)}`
+    : '';
+  const sessionInviteTarget = codeInvite ? sessionCode : sessionId;
+  const basePath = `${isGroup ? `/group/${sessionId}` : `/session/${sessionInviteTarget}`}${codeInvite}${inviteQuery}`;
   const joinUrl = networkUrl || publicWebUrl(basePath);
 
   useEffect(() => {
@@ -45,13 +57,13 @@ export const QRCodeModal: React.FC<QRCodeModalProps> = ({
         .then((res) => res.json())
         .then((data) => {
           if (data.ip && data.ip !== 'localhost') {
-            const basePath = isGroup ? `/group/${sessionId}` : `/session/${sessionId}`;
+            const basePath = `${isGroup ? `/group/${sessionId}` : `/session/${sessionInviteTarget}`}${codeInvite}${inviteQuery}`;
             setNetworkUrl(`http://${data.ip}:${data.port || 3000}${basePath}`);
           }
         })
         .catch(() => {});
     }
-  }, [sessionId, isGroup]);
+  }, [sessionId, sessionInviteTarget, isGroup, codeInvite, inviteQuery]);
 
   useEffect(() => {
     if (!isOpen || !joinUrl) return;

@@ -39,9 +39,10 @@ import { getCookie, setCookie } from '../../../../lib/cookies';
 import { formatCurrency } from '../../../../lib/i18n';
 import { cleanIsraeliPhone, isValidIsraeliPhone, triggerBitPayment } from '../../../../lib/bitDeepLink';
 import { triggerHaptic } from '../../../../lib/haptics';
-import { clearRoomCredentials, getOrCreateRoomClientId, getRoomMemberId, getRoomToken, roomHeaders, saveRoomCredentials } from '../../../../lib/roomTokens';
+import { clearRoomCredentials, getOrCreateRoomClientId, getRoomToken, roomHeaders, saveRoomCredentials } from '../../../../lib/roomTokens';
 import { apiUrl, realtimeUrl } from '../../../../lib/platformTransport';
 import { MOBILE_RECOVERY_EVENT } from '../../../../lib/mobileEvents';
+import { purgeDeletedGroupFromStorage } from '../../../../lib/localLifecycle';
 import { Capacitor } from '@capacitor/core';
 import { Camera as CapCamera, CameraResultType, CameraSource } from '@capacitor/camera';
 
@@ -71,6 +72,7 @@ export default function GroupWorkspacePage() {
   const [editingBill, setEditingBill] = useState<any>(null);
   const [pendingReceiptDraft, setPendingReceiptDraft] = useState<any>(null);
   const [pendingScanId, setPendingScanId] = useState('');
+  const [pendingRecoveryToken, setPendingRecoveryToken] = useState('');
   const [expandedBillId, setExpandedBillId] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -101,6 +103,26 @@ export default function GroupWorkspacePage() {
         const userKey = rawName.toLowerCase();
         if (rawName) localStorage.setItem(`billsplit_user_groups_${rawName}`, JSON.stringify(updated));
         if (userKey) localStorage.setItem(`billsplit_user_groups_${userKey}`, JSON.stringify(updated));
+        const closedSummary = grp.summary || {
+          id: grp.id,
+          code: grp.code,
+          name: grp.name,
+          currency: grp.currency,
+          status: 'closed',
+          membersCount: Array.isArray(grp.members) ? grp.members.length : 0,
+          billsCount: Array.isArray(grp.bills) ? grp.bills.length : 0,
+          totalSpent: Array.isArray(grp.bills)
+            ? grp.bills.reduce((sum: number, bill: any) => sum + (Number(bill.amount) || 0), 0)
+            : 0,
+          closedAt: grp.closedAt || Date.now(),
+        };
+        const closedKey = userKey ? `billsplit_closed_groups_${userKey}` : 'billsplit_closed_groups';
+        const existingClosedRaw = localStorage.getItem(closedKey) || localStorage.getItem('billsplit_closed_groups');
+        const existingClosed = existingClosedRaw ? JSON.parse(existingClosedRaw) : [];
+        const closedList = Array.isArray(existingClosed) ? existingClosed : [];
+        const nextClosed = [closedSummary, ...closedList.filter((candidate: any) => candidate.id !== grp.id)];
+        localStorage.setItem(closedKey, JSON.stringify(nextClosed));
+        localStorage.setItem('billsplit_closed_groups', JSON.stringify(nextClosed));
         return;
       }
 
@@ -127,6 +149,27 @@ export default function GroupWorkspacePage() {
     } catch (e) {}
   };
 
+  const handleGroupDeleted = (id: string) => {
+    activeGroupIdRef.current = '';
+    activeGroupTokenRef.current = '';
+    const socket = socketRef.current;
+    socketRef.current = null;
+    if (socket) {
+      socket.onclose = null;
+      try { socket.close(); } catch (_) {}
+    }
+    clearRoomCredentials('group', id);
+    purgeDeletedGroupFromStorage(localStorage, id);
+    const cookieGroups = getCookie('billsplit_user_groups');
+    const updatedCookieGroups = Array.isArray(cookieGroups)
+      ? cookieGroups.filter((candidate: any) => candidate?.id !== id)
+      : [];
+    setCookie('billsplit_user_groups', updatedCookieGroups);
+    setGroup(null);
+    setFetchError('Group not found or deleted');
+    router.replace('/');
+  };
+
   const handleScanCamera = async () => {
     if (Capacitor.isNativePlatform()) {
       try {
@@ -144,6 +187,7 @@ export default function GroupWorkspacePage() {
             setEditingBill(null);
             setPendingReceiptDraft({ ...draft.receipt, imageQuality: draft.imageQuality, _previewImages: draft.previewImages });
             setPendingScanId(draft.scanId);
+            setPendingRecoveryToken(draft.recoveryToken);
             setShowCreateBillModal(true);
           } catch (err) {
             console.error(err);
@@ -181,25 +225,13 @@ export default function GroupWorkspacePage() {
     const initializeGroup = async () => {
       try {
         const initialRes = await fetch(apiUrl(`/api/groups/${groupId}`), { headers: roomHeaders('group', groupId, false) });
+        if (initialRes.status === 404) {
+          if (!disposed) handleGroupDeleted(groupId);
+          return;
+        }
         const initialData = await initialRes.json();
         if (!initialRes.ok || !initialData.group) throw new Error(initialData.error || 'Group not found');
         const resolvedId = initialData.group.id;
-        const existingToken = getRoomToken('group', resolvedId) || getRoomToken('group', groupId);
-        const persistedMemberId = getRoomMemberId('group', resolvedId) || getRoomMemberId('group', groupId);
-        const existingMember = (initialData.group.members || []).find((m: any) => m.id === persistedMemberId);
-        if (existingToken && existingMember) {
-          saveRoomCredentials('group', resolvedId, existingMember.id, existingToken);
-          if (!disposed) {
-            setCurrentMemberId(existingMember.id);
-            setGroup(initialData.group);
-            persistGroupToLocal(initialData.group);
-            setFetchError(null);
-            connectWebSocket(resolvedId, existingToken);
-            interval = setInterval(() => fetchGroupData(resolvedId), 15_000);
-            if (resolvedId !== groupId) router.replace(`/group/${resolvedId}`);
-          }
-          return;
-        }
 
         let joinEntry = joinInFlightRef.current;
         if (!joinEntry || joinEntry.roomId !== resolvedId) {
@@ -305,7 +337,7 @@ export default function GroupWorkspacePage() {
           }
         }
       } else if (res.status === 404) {
-        setFetchError('Group not found or code invalid');
+        handleGroupDeleted(id);
       }
     } catch (err) {
       console.error('Error fetching group:', err);
@@ -339,10 +371,7 @@ export default function GroupWorkspacePage() {
             setGroup(data.group);
             persistGroupToLocal(data.group);
           } else if (data.type === 'GROUP_DELETED') {
-            socketRef.current = null;
-            try { ws.close(); } catch (_) {}
-            clearRoomCredentials('group', id);
-            router.push('/');
+            handleGroupDeleted(id);
           }
         } catch (e) {
           console.error(e);
@@ -411,11 +440,11 @@ export default function GroupWorkspacePage() {
   };
 
   const handleDeleteBill = async (billId: string) => {
-    if (!group) return;
+    if (!group) return false;
     const isPaymentLocked = group.bills?.find((b: any) => b.id === billId)?.status === 'settled';
     if (isPaymentLocked) {
       alert(t('cannotDeleteSettledBill', undefined, 'This bill is settled or has completed payments. It cannot be deleted.'));
-      return;
+      return false;
     }
     const resolvedId = group.id || groupId;
     try {
@@ -429,9 +458,11 @@ export default function GroupWorkspacePage() {
         setGroup(data.group);
         persistGroupToLocal(data.group);
       }
+      return true;
     } catch (err) {
       console.error(err);
       alert('Failed to delete bill');
+      return false;
     }
   };
 
@@ -472,6 +503,7 @@ export default function GroupWorkspacePage() {
       setEditingBill(null);
       setPendingReceiptDraft({ ...draft.receipt, imageQuality: draft.imageQuality, _previewImages: draft.previewImages });
       setPendingScanId(draft.scanId);
+      setPendingRecoveryToken(draft.recoveryToken);
       setShowCreateBillModal(true);
     } catch (err) {
       console.error(err);
@@ -489,6 +521,7 @@ export default function GroupWorkspacePage() {
       setEditingBill(null);
       setPendingReceiptDraft(parsedReceipt);
       setPendingScanId(scanResult.scanId || '');
+      setPendingRecoveryToken(scanResult.recoveryToken || '');
       setShowCreateBillModal(true);
     }
   };
@@ -662,6 +695,7 @@ export default function GroupWorkspacePage() {
             setEditingBill(null);
             setPendingReceiptDraft(null);
             setPendingScanId('');
+            setPendingRecoveryToken('');
           }}
           onLaunchSession={(data) => {
             return handleAddBillToGroup({
@@ -671,9 +705,15 @@ export default function GroupWorkspacePage() {
               currency: data.currency,
               items: data.items,
               payerId: editingBill?.payerId || currentMemberId,
-              receipt: pendingReceiptDraft
-                ? { ...receiptConfirmationPayload(pendingReceiptDraft), scanId: pendingScanId, confirmedByUser: true }
-                : undefined,
+              receipt: {
+                ...(pendingReceiptDraft ? receiptConfirmationPayload(pendingReceiptDraft) : {}),
+                ...(data.restaurant ? { restaurant: data.restaurant } : {}),
+                ...(pendingScanId ? {
+                  scanId: pendingScanId,
+                  recoveryToken: pendingRecoveryToken,
+                  confirmedByUser: true,
+                } : {}),
+              },
               scanId: pendingScanId || undefined,
               confirmedByUser: Boolean(pendingScanId),
             });
@@ -748,6 +788,7 @@ export default function GroupWorkspacePage() {
                   setShowStartSplitModal(false);
                   setPendingReceiptDraft(null);
                   setPendingScanId('');
+                  setPendingRecoveryToken('');
                   setEditingBill(null);
                   setShowCreateBillModal(true);
                 }}
@@ -954,6 +995,14 @@ export default function GroupWorkspacePage() {
               const payer = validMembers.find((member: any) => member.id === bill.payerId) || validMembers[0];
               const canManageBill = isGroupActive && (isGroupHost || bill.createdByMemberId === currentMemberId);
               const hasLegacyPaidMembers = Array.isArray(bill.settledMemberIds) && bill.settledMemberIds.length > 0;
+              const finishedMemberIds = Array.isArray(bill.finishedMemberIds) ? bill.finishedMemberIds : [];
+              const trackedParticipantIds = Array.isArray(bill.participantMemberIds)
+                ? bill.participantMemberIds.filter((memberId: string) => validMembers.some((member: any) => member.id === memberId))
+                : [];
+              const finishTargetCount = trackedParticipantIds.length > 0 ? trackedParticipantIds.length : validMembers.length;
+              const finishedCount = finishedMemberIds.filter((memberId: string) => (
+                (trackedParticipantIds.length > 0 ? trackedParticipantIds : validMembers.map((member: any) => member.id)).includes(memberId)
+              )).length;
               const targetSessionId = bill.sessionId || `sess_g_${bill.id}`;
               const openLiveSplit = () => {
                 saveRoomCredentials('session', targetSessionId, currentMemberId, getRoomToken('group', group.id));
@@ -978,7 +1027,14 @@ export default function GroupWorkspacePage() {
                     </div>
 
                     {billStatus === 'active' && (
-                      <div className="flex items-center gap-2">
+                      <div className="space-y-2">
+                        {bill.sessionId && (
+                          <div className="flex items-center justify-between text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                            <span>{isRtl ? `${finishedCount} מתוך ${finishTargetCount} סיימו` : `${finishedCount} of ${finishTargetCount} finished`}</span>
+                            <span>{finishTargetCount > 0 ? Math.round((finishedCount / finishTargetCount) * 100) : 0}%</span>
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2">
                         <button
                           type="button"
                           onClick={openLiveSplit}
@@ -987,7 +1043,7 @@ export default function GroupWorkspacePage() {
                           <span>{isRtl ? 'המשך חלוקה' : 'Continue Split'}</span>
                           <ArrowRight className={`w-3.5 h-3.5 ${isRtl ? 'rotate-180' : ''}`} />
                         </button>
-                        {canManageBill && !hasLegacyPaidMembers && (
+                        {canManageBill && !hasLegacyPaidMembers && !bill.sessionId && (
                           <button
                             type="button"
                             onClick={async () => {
@@ -999,6 +1055,7 @@ export default function GroupWorkspacePage() {
                             {isRtl ? 'סיים חלוקה' : 'Finish Split'}
                           </button>
                         )}
+                        </div>
                       </div>
                     )}
 
@@ -1046,7 +1103,13 @@ export default function GroupWorkspacePage() {
               );
 
               return billStatus === 'active' && canManageBill ? (
-                <SwipeableCard key={bill.id} onDelete={() => handleDeleteBill(bill.id)} className="shadow-xs">
+                <SwipeableCard
+                  key={bill.id}
+                  onDelete={() => handleDeleteBill(bill.id)}
+                  confirmationTitle={isRtl ? 'למחוק את החלוקה?' : 'Delete this split?'}
+                  confirmationDescription={isRtl ? 'החלוקה החיה תימחק לכל חברי הקבוצה.' : 'The live split will be deleted for every group member.'}
+                  className="shadow-xs"
+                >
                   {card}
                 </SwipeableCard>
               ) : (

@@ -20,7 +20,9 @@ test('Groups Stage 2 keeps group overview lightweight and settlement group-level
 test('group-linked split UI defers payment and normal splits retain the existing settlement path', () => {
   const sessionPage = source('src/app/session/[id]/page.tsx');
   assert.match(sessionPage, /isGroupLinked/);
-  assert.match(sessionPage, /FINALIZE_BILL/);
+  assert.match(sessionPage, /finishMyGroupShare/);
+  assert.match(sessionPage, /sendAction\('TOGGLE_SETTLED'/);
+  assert.doesNotMatch(sessionPage, /action: 'FINALIZE_BILL'/);
   assert.match(sessionPage, /showSettleModal && !isGroupLinked/);
   assert.match(sessionPage, /Settle & Pay/);
 });

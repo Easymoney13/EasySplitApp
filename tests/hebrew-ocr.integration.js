@@ -108,3 +108,33 @@ test('Hebrew OCR preserves explicitly printed restaurant identity outside purcha
   });
   assert.deepEqual(receipt.items.map(({ name }) => name), ['קפה']);
 });
+
+test('Hebrew OCR never turns numeric restaurant metadata into purchased items', () => {
+  const { parseReceiptText } = loadBrowserOcrModule();
+  const receipt = parseReceiptText([
+    'קפה הבדיקה',
+    'כתובת: הרצל 12',
+    'מספר שולחן 7',
+    'טלפון: 03-5551234',
+    'ח.פ: 515123456',
+    'קפה 12.00',
+    'סה"כ 12.00',
+  ].join('\n'));
+  assert.ok(receipt);
+  assert.equal(receipt.restaurant.address, 'הרצל 12');
+  assert.deepEqual(receipt.items.map(({ name, price }) => ({ name, price })), [
+    { name: 'קפה', price: 12 },
+  ]);
+});
+
+test('Hebrew OCR recognizes business identifiers printed with gershayim', () => {
+  const { parseReceiptText } = loadBrowserOcrModule();
+  const receipt = parseReceiptText([
+    'מסעדת ניסיון',
+    'ח״פ: 515123456',
+    'מנה 25.00',
+    'סה״כ 25.00',
+  ].join('\n'));
+  assert.ok(receipt);
+  assert.equal(receipt.restaurant.businessId, '515123456');
+});

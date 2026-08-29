@@ -348,7 +348,7 @@ select:focus-visible {
 
 .safe-bottom-nav {
   margin-bottom: 0 !important;
-  padding-bottom: max(0.25rem, env(safe-area-inset-bottom)) !important;
+  padding-bottom: max(0.25rem, var(--safe-area-inset-bottom, env(safe-area-inset-bottom)));
 }
 
 .dark .safe-bottom-nav {
