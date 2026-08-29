@@ -1,6 +1,6 @@
 const ROUTABLE_PATH = /^\/(session|group)\/[^/]+$/;
 
-export function incomingRouteFromUrl(input) {
+function normalizedRouteParts(input) {
   let parsed;
   try {
     parsed = new URL(String(input || ''));
@@ -26,7 +26,34 @@ export function incomingRouteFromUrl(input) {
   const invite = isSession ? new URLSearchParams(parsed.hash.replace(/^#/, '')).get('invite') : null;
 
   return {
-    path: `${pathname}${routeSearch ? `?${routeSearch}` : ''}`,
-    hash: invite ? `#invite=${encodeURIComponent(invite)}` : '',
+    pathname,
+    routeSearch,
+    invite,
   };
+}
+
+export function incomingRouteFromUrl(input) {
+  const target = normalizedRouteParts(input);
+  if (!target) return null;
+  return {
+    path: `${target.pathname}${target.routeSearch ? `?${target.routeSearch}` : ''}`,
+    hash: target.invite ? `#invite=${encodeURIComponent(target.invite)}` : '',
+  };
+}
+
+export function nativeInviteUrlFromWeb(input) {
+  let parsed;
+  try {
+    parsed = new URL(String(input || ''));
+  } catch (_) {
+    return '';
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return '';
+
+  const target = normalizedRouteParts(parsed.href);
+  if (!target) return '';
+  const route = target.pathname.replace(/^\//, '');
+  const search = target.routeSearch ? `?${target.routeSearch}` : '';
+  const hash = target.invite ? `#invite=${encodeURIComponent(target.invite)}` : '';
+  return `easysplit://${route}${search}${hash}`;
 }
