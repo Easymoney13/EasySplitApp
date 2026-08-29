@@ -88,6 +88,10 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          pre-emulator-launch-script: |
+            adb kill-server || true
+            adb start-server
+            adb devices
           script: |
             adb install -r android/app/build/outputs/apk/debug/app-debug.apk
             node .github/validation/validate-android-back.mjs | tee "$RUNNER_TEMP/gate12-android/android-smoke-result.txt"
