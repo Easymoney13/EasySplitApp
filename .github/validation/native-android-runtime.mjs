@@ -255,7 +255,7 @@ async function expectRoute(page, route, { paramName, paramValue, hash } = {}) {
     page.webSocketDebuggerUrl,
     `(() => {
       const params = new URLSearchParams(window.location.search);
-      const routeOk = params.get('esRoute') === ${JSON.stringify(route)};
+      const routeOk = (params.get('esRoute') || '/') === ${JSON.stringify(route)};
       const paramOk = ${paramName ? `params.get(${JSON.stringify(paramName)}) === ${JSON.stringify(paramValue)}` : 'true'};
       const hashOk = ${hash ? `window.location.hash === ${JSON.stringify(hash)}` : 'true'};
       return routeOk && paramOk && hashOk;
@@ -336,7 +336,7 @@ async function main() {
 
   await performAndroidBack('live-deep-link', async () => cdpEvaluate(
     page.webSocketDebuggerUrl,
-    `new URLSearchParams(window.location.search).get('esRoute') === '/'`,
+    `(new URLSearchParams(window.location.search).get('esRoute') || '/') === '/'`,
   ));
   page = await connectWebView();
   await expectRoute(page, '/');
@@ -350,7 +350,7 @@ async function main() {
 
   await performAndroidBack('cold-deep-link', async () => cdpEvaluate(
     page.webSocketDebuggerUrl,
-    `new URLSearchParams(window.location.search).get('esRoute') === '/'`,
+    `(new URLSearchParams(window.location.search).get('esRoute') || '/') === '/'`,
   ));
   page = await connectWebView();
   await expectRoute(page, '/');

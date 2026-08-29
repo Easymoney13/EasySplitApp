@@ -148,3 +148,10 @@ test('Android runtime smoke uses a short predictive Back gesture with verified c
   assert.match(runtimeSmoke, /waitForAndroidBackOutcome\(baselineNotifications, completionCheck\)/);
   assert.match(runtimeSmoke, /Once either signal changes, never inject a second Back/);
 });
+
+test('Android runtime treats an omitted shell route as Home', async () => {
+  const runtimeSmoke = await read('.github/validation/native-android-runtime.mjs');
+
+  assert.match(runtimeSmoke, /\(params\.get\('esRoute'\) \|\| '\/'\) ===/);
+  assert.match(runtimeSmoke, /\(new URLSearchParams\(window\.location\.search\)\.get\('esRoute'\) \|\| '\/'\) === '\/'/);
+});
