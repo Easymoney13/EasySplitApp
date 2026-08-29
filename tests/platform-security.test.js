@@ -63,11 +63,13 @@ test('CORS middleware leaves web requests untouched and only opens exact configu
   assert.equal(ios.ended, true);
   assert.equal(ios.headers.get('access-control-allow-origin'), 'capacitor://localhost');
   assert.match(ios.headers.get('access-control-allow-headers'), /X-Room-Token/);
+  assert.match(ios.headers.get('access-control-allow-headers'), /X-EasySplit-Client-Id/);
   assert.match(ios.headers.get('access-control-allow-headers'), /X-Firebase-AppCheck/);
 
   const android = run({ origin: 'https://localhost', method: 'OPTIONS' });
   assert.equal(android.statusCode, 204);
   assert.equal(android.headers.get('access-control-allow-origin'), 'https://localhost');
+  assert.match(android.headers.get('access-control-allow-headers'), /X-EasySplit-Client-Id/);
 
   const attacker = run({ origin: 'https://attacker.example', method: 'OPTIONS' });
   assert.equal(attacker.statusCode, 403);
