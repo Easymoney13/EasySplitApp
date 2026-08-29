@@ -21,12 +21,12 @@ env:
 
 # Run 12 already proved the unchanged candidate on the full web regression,
 # live native CORS probe, iOS compile, install, and cold launch. This final
-# workflow is Android-only and delegates emulator/KVM lifecycle to the
-# maintained emulator action instead of our previous hand-rolled boot loop.
+# workflow is Android-only and runs the x86_64 emulator on an Intel macOS
+# runner so Android 16 has hardware acceleration instead of timing out without KVM.
 jobs:
   android-api-36:
     name: Android 16 / API 36 final device smoke
-    runs-on: ubuntu-latest
+    runs-on: macos-15-intel
     timeout-minutes: 35
     steps:
       - name: Checkout validation branch
