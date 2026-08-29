@@ -155,3 +155,9 @@ test('Android runtime treats an omitted shell route as Home', async () => {
   assert.match(runtimeSmoke, /\(params\.get\('esRoute'\) \|\| '\/'\) ===/);
   assert.match(runtimeSmoke, /\(new URLSearchParams\(window\.location\.search\)\.get\('esRoute'\) \|\| '\/'\) === '\/'/);
 });
+
+test('Android runtime allows full logcat output for crash scanning', async () => {
+  const runtimeSmoke = await read('.github/validation/native-android-runtime.mjs');
+
+  assert.match(runtimeSmoke, /maxBuffer: 16 \* 1024 \* 1024/);
+});
