@@ -136,3 +136,15 @@ test('Android runtime smoke completes first-run onboarding before testing Back',
   assert.ok(onboardingSetup < sheetClick);
   assert.match(runtimeSmoke, /waitFor\('guest onboarding dismissal'/);
 });
+
+test('Android runtime smoke uses a short predictive Back gesture with verified completion', async () => {
+  const runtimeSmoke = await read('.github/validation/native-android-runtime.mjs');
+
+  assert.match(runtimeSmoke, /const edgeOffset = Math\.max\(24, Math\.round\(width \* 0\.03\)\)/);
+  assert.match(runtimeSmoke, /'touchscreen', '-d', '0', 'swipe'/);
+  assert.match(runtimeSmoke, /String\(startX\).*String\(endX\).*'120'/s);
+  assert.match(runtimeSmoke, /for \(const edge of \['left', 'right'\]\)/);
+  assert.match(runtimeSmoke, /Notifying listeners for event backButton/);
+  assert.match(runtimeSmoke, /waitForAndroidBackOutcome\(baselineNotifications, completionCheck\)/);
+  assert.match(runtimeSmoke, /Once either signal changes, never inject a second Back/);
+});

@@ -174,7 +174,15 @@ function assertEmulatorSystemHealthy() {
   }
 }
 
-function androidBackGesture() {
+function capacitorBackNotificationCount() {
+  const logcat = adb(
+    'logcat', '-d', '-v', 'brief',
+    '-s', 'Capacitor/AppPlugin:V', '*:S',
+  );
+  return (logcat.match(/Notifying listeners for event backButton/g) || []).length;
+}
+
+function androidBackGesture(edge) {
   // EasySplit targets Android 16 (API 36), where KEYCODE_BACK interception is no
   // longer a valid way to exercise predictive Back. Inject the same left-edge
   // touchscreen gesture a user performs so AndroidX OnBackPressedDispatcher and
@@ -187,16 +195,59 @@ function androidBackGesture() {
   const width = Number(size[1]);
   const height = Number(size[2]);
   const y = Math.round(height * 0.5);
-  const endX = Math.max(320, Math.round(width * 0.42));
-  adb('shell', 'input', 'touchscreen', 'swipe', '1', String(y), String(endX), String(y), '300');
+  const edgeOffset = Math.max(24, Math.round(width * 0.03));
+  const travel = Math.max(320, Math.round(width * 0.38));
+  const startX = edge === 'left' ? edgeOffset : width - edgeOffset;
+  const endX = edge === 'left' ? startX + travel : startX - travel;
+
+  // Keep the injected swipe well below Android's long-press cutoff. The former
+  // 300 ms duration was cancelled by SystemUI before predictive Back started.
+  adb(
+    'shell', 'input', 'touchscreen', '-d', '0', 'swipe',
+    String(startX), String(y), String(endX), String(y), '120',
+  );
 }
 
-async function performAndroidBack(label) {
+async function waitForAndroidBackOutcome(baselineNotifications, completionCheck, timeoutMs = 6_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const completed = await completionCheck();
+    const callbackObserved = capacitorBackNotificationCount() > baselineNotifications;
+    if (completed || callbackObserved) return { completed, callbackObserved };
+    await sleep(250);
+  }
+  return null;
+}
+
+async function performAndroidBack(label, completionCheck) {
   assertEmulatorSystemHealthy();
-  androidBackGesture();
-  await sleep(1_500);
-  assertEmulatorSystemHealthy();
-  if (label) console.log(`ANDROID_BACK_GESTURE_OK=${label}`);
+  const baselineNotifications = capacitorBackNotificationCount();
+
+  for (const edge of ['left', 'right']) {
+    androidBackGesture(edge);
+    const outcome = await waitForAndroidBackOutcome(baselineNotifications, completionCheck);
+    if (!outcome) continue;
+
+    // Once either signal changes, never inject a second Back: the UI transition
+    // can trail the native callback on a loaded hosted emulator.
+    if (!outcome.callbackObserved) {
+      await waitFor(
+        `Capacitor backButton callback for ${label}`,
+        async () => capacitorBackNotificationCount() > baselineNotifications,
+        5_000,
+        250,
+      );
+    }
+    if (!outcome.completed) {
+      await waitFor(`Android Back completion for ${label}`, completionCheck, 15_000, 250);
+    }
+
+    assertEmulatorSystemHealthy();
+    console.log(`ANDROID_BACK_GESTURE_OK=${label}:${edge}`);
+    return;
+  }
+
+  throw new Error(`Android Back gesture did not reach Capacitor for ${label} from either edge`);
 }
 
 async function expectRoute(page, route, { paramName, paramValue, hash } = {}) {
@@ -260,7 +311,10 @@ async function main() {
     `Boolean(document.querySelector('[data-testid="start-split-sheet"]'))`,
   ), RUNTIME_TIMEOUT_MS);
 
-  await performAndroidBack('sheet');
+  await performAndroidBack('sheet', async () => !await cdpEvaluate(
+    page.webSocketDebuggerUrl,
+    `Boolean(document.querySelector('[data-testid="start-split-sheet"]'))`,
+  ));
   if (!isEasySplitFocused()) throw new Error('Back from Start Split sheet backgrounded the app');
 
   page = await connectWebView();
@@ -280,7 +334,10 @@ async function main() {
     hash: '#invite=smoke-token',
   });
 
-  await performAndroidBack('live-deep-link');
+  await performAndroidBack('live-deep-link', async () => cdpEvaluate(
+    page.webSocketDebuggerUrl,
+    `new URLSearchParams(window.location.search).get('esRoute') === '/'`,
+  ));
   page = await connectWebView();
   await expectRoute(page, '/');
 
@@ -291,11 +348,14 @@ async function main() {
   await waitForEasySplitFocused('EasySplit foreground after cold deep link');
   await expectRoute(page, '/group/smoke-group');
 
-  await performAndroidBack('cold-deep-link');
+  await performAndroidBack('cold-deep-link', async () => cdpEvaluate(
+    page.webSocketDebuggerUrl,
+    `new URLSearchParams(window.location.search).get('esRoute') === '/'`,
+  ));
   page = await connectWebView();
   await expectRoute(page, '/');
 
-  await performAndroidBack('root');
+  await performAndroidBack('root', async () => !isEasySplitFocused());
   if (isEasySplitFocused()) throw new Error('Back on root did not return control to Android');
 
   const warmLaunch = adb('shell', 'am', 'start', '-W', '-n', ACTIVITY);
