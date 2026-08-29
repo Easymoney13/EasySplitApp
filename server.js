@@ -29,10 +29,19 @@ function loadEnvFiles() {
 loadEnvFiles();
 
 if (process.env.NODE_ENV === 'production') {
-  for (const key of ['EASYSPLIT_IDENTITY_HMAC_SECRET', 'EASYSPLIT_RESTAURANT_ATTESTATION_SECRET']) {
-    if (!process.env[key] || String(process.env[key]).length < 24) {
-      throw new Error(`${key} must be configured with a dedicated production secret`);
-    }
+  const { assessProductionSecurityConfig } = require('./lib/productionSecurity');
+  const { missingSecrets } = assessProductionSecurityConfig(process.env);
+  if (missingSecrets.length > 0) {
+    // These secrets protect the new restaurant intelligence records, but they
+    // must never become a deployment-wide kill switch. The underlying helpers
+    // already fail closed when no signing/HMAC material is available: they omit
+    // phone aliases and unsigned correction evidence instead of persisting weak
+    // identities. Keep the existing receipt-splitting flow available and make
+    // the degraded telemetry state explicit in the service logs.
+    console.warn(
+      `EasySplit restaurant-data protection is degraded; configure: ${missingSecrets.join(', ')}. `
+      + 'Core receipt splitting remains available.',
+    );
   }
 }
 
