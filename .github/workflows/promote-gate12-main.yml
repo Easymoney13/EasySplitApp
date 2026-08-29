@@ -1,0 +1,107 @@
+name: Promote Gate 1+2 Candidate
+
+on:
+  push:
+    branches:
+      - validation-gate12-native-20260828
+    paths:
+      - .github/workflows/promote-gate12-main.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: promote-gate12-main
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout validation tooling
+        uses: actions/checkout@v5
+        with:
+          ref: validation-gate12-native-20260828
+          path: validator
+
+      - name: Checkout exact main base
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+          path: app
+
+      - name: Verify main has not moved
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="60eff90f2577ae1571fb309b02ee041c7b7da79d"
+          actual=$(git -C app rev-parse HEAD)
+          test "$actual" = "$expected" || { echo "main moved: $actual"; exit 1; }
+
+      - name: Apply only the verified product candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p app/.github/validation
+          cp validator/.github/validation/apply-gate12-candidate.py app/.github/validation/apply-gate12-candidate.py
+          (cd app && python3 .github/validation/apply-gate12-candidate.py)
+          rm -f app/.github/validation/apply-gate12-candidate.py
+          rmdir app/.github/validation 2>/dev/null || true
+          (cd app && git diff --check)
+
+          cat > /tmp/expected-files <<'EOF'
+          lib/mobileEvents.ts
+          lib/platformSecurity.js
+          mobile/runtime/mobileRuntime.ts
+          server.js
+          src/app/page.tsx
+          tests/mobile-integration-static.test.mjs
+          tests/platform-security.test.js
+          EOF
+          sed -i 's/^          //' /tmp/expected-files
+          (cd app && git diff --name-only | sort) > /tmp/actual-files
+          sort /tmp/expected-files -o /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+
+      - name: Validate candidate before push
+        working-directory: app
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          node --test tests/platform-security.test.js tests/mobile-integration-static.test.mjs
+          npm run typecheck
+          NEXT_PUBLIC_EASYSPLIT_API_ORIGIN=https://billspltapp.onrender.com \
+          NEXT_PUBLIC_EASYSPLIT_WEB_ORIGIN=https://billspltapp.onrender.com \
+          NEXT_PUBLIC_EASYSPLIT_WS_ORIGIN=wss://billspltapp.onrender.com \
+          npm run mobile:build
+
+      - name: Create one atomic product commit and push main
+        working-directory: app
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "EasySplit Gate Validator"
+          git config user.email "actions@users.noreply.github.com"
+          git add \
+            lib/mobileEvents.ts \
+            lib/platformSecurity.js \
+            mobile/runtime/mobileRuntime.ts \
+            server.js \
+            src/app/page.tsx \
+            tests/mobile-integration-static.test.mjs \
+            tests/platform-security.test.js
+
+          git diff --cached --check
+          git diff --cached --name-only | sort > /tmp/staged-files
+          diff -u /tmp/expected-files /tmp/staged-files
+
+          git commit -m "fix(native): harden mobile CORS and Android back"
+
+          expected="60eff90f2577ae1571fb309b02ee041c7b7da79d"
+          git fetch origin main
+          current=$(git rev-parse origin/main)
+          test "$current" = "$expected" || { echo "main moved before push: $current"; exit 1; }
+          git push origin HEAD:main
