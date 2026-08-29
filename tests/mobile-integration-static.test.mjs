@@ -125,3 +125,14 @@ test('Android back gives an open Start Split sheet first refusal before shell na
   assert.match(home, /data-testid="start-split-sheet"/);
   assert.doesNotMatch(config, /disableBackButtonHandler:\s*true/);
 });
+
+test('Android runtime smoke completes first-run onboarding before testing Back', async () => {
+  const runtimeSmoke = await read('.github/validation/native-android-runtime.mjs');
+  const onboardingSetup = runtimeSmoke.indexOf('await completeGuestOnboardingIfNeeded(page)');
+  const sheetClick = runtimeSmoke.indexOf("document.querySelector('[data-testid=\"start-split-button\"]');");
+
+  assert.notEqual(onboardingSetup, -1);
+  assert.notEqual(sheetClick, -1);
+  assert.ok(onboardingSetup < sheetClick);
+  assert.match(runtimeSmoke, /waitFor\('guest onboarding dismissal'/);
+});

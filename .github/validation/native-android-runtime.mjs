@@ -111,6 +111,59 @@ async function waitForEasySplitFocused(label = 'EasySplit foreground activity') 
   return waitFor(label, async () => isEasySplitFocused(), RUNTIME_TIMEOUT_MS, 750);
 }
 
+async function completeGuestOnboardingIfNeeded(page) {
+  const onboardingVisible = await cdpEvaluate(
+    page.webSocketDebuggerUrl,
+    `Boolean(document.querySelector('[role="dialog"][aria-modal="true"]'))`,
+  );
+  if (!onboardingVisible) return;
+
+  const fieldsFilled = await cdpEvaluate(
+    page.webSocketDebuggerUrl,
+    `(() => {
+      const dialog = document.querySelector('[role="dialog"][aria-modal="true"]');
+      const fields = dialog?.querySelectorAll('input');
+      if (!fields || fields.length < 2) return false;
+      const setValue = (field, value) => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        if (!setter) return false;
+        setter.call(field, value);
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+        field.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      };
+      return setValue(fields[0], 'Android Smoke') && setValue(fields[1], '0501234567');
+    })()`,
+  );
+  if (!fieldsFilled) throw new Error('Guest onboarding fields could not be filled');
+
+  await waitFor('enabled guest onboarding submit', async () => cdpEvaluate(
+    page.webSocketDebuggerUrl,
+    `(() => {
+      const dialog = document.querySelector('[role="dialog"][aria-modal="true"]');
+      const submit = dialog?.querySelector('button[type="submit"]');
+      return Boolean(submit && !submit.disabled);
+    })()`,
+  ));
+
+  const submitted = await cdpEvaluate(
+    page.webSocketDebuggerUrl,
+    `(() => {
+      const dialog = document.querySelector('[role="dialog"][aria-modal="true"]');
+      const submit = dialog?.querySelector('button[type="submit"]');
+      if (!submit || submit.disabled) return false;
+      submit.click();
+      return true;
+    })()`,
+  );
+  if (!submitted) throw new Error('Guest onboarding could not be submitted');
+
+  await waitFor('guest onboarding dismissal', async () => cdpEvaluate(
+    page.webSocketDebuggerUrl,
+    `!document.querySelector('[role="dialog"][aria-modal="true"]')`,
+  ));
+}
+
 function assertEmulatorSystemHealthy() {
   const windows = adb('shell', 'dumpsys', 'window', 'windows');
   const infrastructureAnrs = [...windows.matchAll(/Application Not Responding:\s*([^\r\n}]+)/g)]
@@ -193,6 +246,7 @@ async function main() {
     page.webSocketDebuggerUrl,
     `Boolean(document.querySelector('[data-testid="start-split-button"]'))`,
   ), RUNTIME_TIMEOUT_MS);
+  await completeGuestOnboardingIfNeeded(page);
   assertEmulatorSystemHealthy();
 
   const clicked = await cdpEvaluate(
