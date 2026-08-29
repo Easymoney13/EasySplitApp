@@ -1,4 +1,5 @@
 import { copyText, openExternalApp } from './nativeActions';
+import { Capacitor } from '@capacitor/core';
 
 export interface BitPaymentParams {
   phone: string;
@@ -56,7 +57,7 @@ export function generateBitUrl(params: BitPaymentParams): {
 
 export async function triggerBitPayment(params: BitPaymentParams): Promise<boolean> {
   if (!isValidIsraeliPhone(params.phone)) return false;
-  const { meUrl, deepLink, formattedAmount, cleanPhone } = generateBitUrl(params);
+  const { meUrl, deepLink, intentUrl, formattedAmount, cleanPhone, displayText } = generateBitUrl(params);
 
   try {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
@@ -66,8 +67,14 @@ export async function triggerBitPayment(params: BitPaymentParams): Promise<boole
 
   if (typeof window === 'undefined') return false;
 
+  const isAndroidBrowser = /Android/i.test(navigator.userAgent || '');
+  if (!Capacitor.isNativePlatform()) {
+    alert(`Opening Bit! 📲\nRecipient: ${cleanPhone}\nAmount: ${formattedAmount} ₪\nFor: ${displayText}\n\n(Copied to clipboard 📋)`);
+  }
+
   return openExternalApp({
     appUrl: deepLink,
+    webAppUrl: isAndroidBrowser ? intentUrl : deepLink,
     fallbackUrl: meUrl,
     browserFallbackDelayMs: 1000,
   });

@@ -96,6 +96,7 @@ test('native projects wire sharing, external payment apps, and inbound app links
   const session = await read('src/app/session/[id]/page.tsx');
   const group = await read('src/app/group/[id]/page.tsx');
   const qrModal = await read('src/components/QRCodeModal.tsx');
+  const bit = await read('lib/bitDeepLink.ts');
   for (const source of [home, qrModal]) {
     assert.doesNotMatch(source, /navigator\.share/);
     assert.match(source, /shareInvite/);
@@ -104,6 +105,8 @@ test('native projects wire sharing, external payment apps, and inbound app links
     assert.doesNotMatch(source, /paybox:\/\//);
     assert.match(source, /openPayBoxPayment/);
   }
+  assert.match(bit, /webAppUrl: isAndroidBrowser \? intentUrl : deepLink/);
+  assert.match(bit, /if \(!Capacitor\.isNativePlatform\(\)\)/);
 });
 
 test('Android back gives an open Start Split sheet first refusal before shell navigation', async () => {

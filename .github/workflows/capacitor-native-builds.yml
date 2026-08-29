@@ -76,8 +76,8 @@ jobs:
 
       - name: Verify shared and mobile code
         run: |
-          npm test
-          npm run typecheck
+          npm run verify
+          npm run test:strain
           npm run verify:mobile-shell
 
       - name: Synchronize native projects

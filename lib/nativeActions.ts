@@ -49,12 +49,14 @@ export async function copyText(text: string): Promise<boolean> {
 export interface ExternalAppOptions {
   appUrl: string;
   fallbackUrl: string;
+  webAppUrl?: string;
   browserFallbackDelayMs?: number;
 }
 
 export async function openExternalApp({
   appUrl,
   fallbackUrl,
+  webAppUrl = appUrl,
   browserFallbackDelayMs = 900,
 }: ExternalAppOptions): Promise<boolean> {
   if (Capacitor.isNativePlatform()) {
@@ -80,7 +82,7 @@ export async function openExternalApp({
   if (typeof window === 'undefined') return false;
   const isMobileBrowser = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '');
   if (isMobileBrowser) {
-    window.location.href = appUrl;
+    window.location.href = webAppUrl;
     window.setTimeout(() => window.open(fallbackUrl, '_blank', 'noopener,noreferrer'), browserFallbackDelayMs);
     return true;
   }

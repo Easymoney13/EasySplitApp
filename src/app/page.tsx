@@ -2306,7 +2306,12 @@ export default function HomePage() {
                       url: groupUrl,
                       dialogTitle: t('shareGroupItem', undefined, 'Share Group'),
                     });
-                    if (result === 'unavailable') await copyText(groupUrl);
+                    if (result === 'unavailable') {
+                      const copied = await copyText(groupUrl);
+                      if (copied && !Capacitor.isNativePlatform()) {
+                        alert('Group invite link copied to clipboard! 🔗');
+                      }
+                    }
                     closeGroupModal();
                   }}
                   className="w-full py-2.5 px-3 rounded-xl bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-900 dark:text-white text-xs font-bold flex items-center justify-between transition-colors"
