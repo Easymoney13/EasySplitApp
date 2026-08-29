@@ -111,6 +111,41 @@ async function waitForEasySplitFocused(label = 'EasySplit foreground activity') 
   return waitFor(label, async () => isEasySplitFocused(), RUNTIME_TIMEOUT_MS, 750);
 }
 
+function assertEmulatorSystemHealthy() {
+  const windows = adb('shell', 'dumpsys', 'window', 'windows');
+  const infrastructureAnrs = [...windows.matchAll(/Application Not Responding:\s*([^\r\n}]+)/g)]
+    .map((match) => match[1].trim())
+    .filter((processName) => processName !== PACKAGE);
+  if (infrastructureAnrs.length) {
+    throw new Error(`Android emulator infrastructure ANR detected: ${[...new Set(infrastructureAnrs)].join(', ')}`);
+  }
+}
+
+function androidBackGesture() {
+  // EasySplit targets Android 16 (API 36), where KEYCODE_BACK interception is no
+  // longer a valid way to exercise predictive Back. Inject the same left-edge
+  // touchscreen gesture a user performs so AndroidX OnBackPressedDispatcher and
+  // Capacitor's App.backButton listener are tested through the real system path.
+  const sizeOutput = adb('shell', 'wm', 'size');
+  const size = sizeOutput.match(/Physical size:\s*(\d+)x(\d+)/i)
+    || sizeOutput.match(/(\d+)x(\d+)/);
+  if (!size) throw new Error(`Could not determine emulator display size: ${sizeOutput}`);
+
+  const width = Number(size[1]);
+  const height = Number(size[2]);
+  const y = Math.round(height * 0.5);
+  const endX = Math.max(320, Math.round(width * 0.42));
+  adb('shell', 'input', 'touchscreen', 'swipe', '1', String(y), String(endX), String(y), '300');
+}
+
+async function performAndroidBack(label) {
+  assertEmulatorSystemHealthy();
+  androidBackGesture();
+  await sleep(1_500);
+  assertEmulatorSystemHealthy();
+  if (label) console.log(`ANDROID_BACK_GESTURE_OK=${label}`);
+}
+
 async function expectRoute(page, route, { paramName, paramValue, hash } = {}) {
   return waitFor(`route ${route}`, async () => cdpEvaluate(
     page.webSocketDebuggerUrl,
@@ -138,12 +173,13 @@ function assertNoNativeCrash() {
   const logcat = adb('logcat', '-d', '-v', 'brief');
   const fatal = logcat
     .split('\n')
-    .filter((line) => /FATAL EXCEPTION|ANR in com\.easysplit\.app|Process com\.easysplit\.app.*died/i.test(line));
+    .filter((line) => /ANR in com\.easysplit\.app|Process com\.easysplit\.app.*died|Process:\s*com\.easysplit\.app/i.test(line));
   if (fatal.length) throw new Error(`Native crash/ANR detected:\n${fatal.join('\n')}`);
 }
 
 async function main() {
   adb('logcat', '-c');
+  assertEmulatorSystemHealthy();
   adb('shell', 'am', 'force-stop', PACKAGE);
 
   const launch = adb('shell', 'am', 'start', '-W', '-n', ACTIVITY);
@@ -157,6 +193,7 @@ async function main() {
     page.webSocketDebuggerUrl,
     `Boolean(document.querySelector('[data-testid="start-split-button"]'))`,
   ), RUNTIME_TIMEOUT_MS);
+  assertEmulatorSystemHealthy();
 
   const clicked = await cdpEvaluate(
     page.webSocketDebuggerUrl,
@@ -169,8 +206,7 @@ async function main() {
     `Boolean(document.querySelector('[data-testid="start-split-sheet"]'))`,
   ), RUNTIME_TIMEOUT_MS);
 
-  adb('shell', 'input', 'keyevent', '4');
-  await sleep(1_000);
+  await performAndroidBack('sheet');
   if (!isEasySplitFocused()) throw new Error('Back from Start Split sheet backgrounded the app');
 
   page = await connectWebView();
@@ -190,8 +226,7 @@ async function main() {
     hash: '#invite=smoke-token',
   });
 
-  adb('shell', 'input', 'keyevent', '4');
-  await sleep(1_000);
+  await performAndroidBack('live-deep-link');
   page = await connectWebView();
   await expectRoute(page, '/');
 
@@ -202,13 +237,11 @@ async function main() {
   await waitForEasySplitFocused('EasySplit foreground after cold deep link');
   await expectRoute(page, '/group/smoke-group');
 
-  adb('shell', 'input', 'keyevent', '4');
-  await sleep(1_000);
+  await performAndroidBack('cold-deep-link');
   page = await connectWebView();
   await expectRoute(page, '/');
 
-  adb('shell', 'input', 'keyevent', '4');
-  await sleep(1_000);
+  await performAndroidBack('root');
   if (isEasySplitFocused()) throw new Error('Back on root did not return control to Android');
 
   const warmLaunch = adb('shell', 'am', 'start', '-W', '-n', ACTIVITY);
@@ -221,6 +254,7 @@ async function main() {
   ), RUNTIME_TIMEOUT_MS);
 
   assertNoNativeCrash();
+  assertEmulatorSystemHealthy();
 
   console.log('ANDROID_COLD_LAUNCH=PASS');
   console.log('ANDROID_BACK_SHEET_DISMISS=PASS');
