@@ -5,13 +5,12 @@ import { readFile } from 'node:fs/promises';
 const root = new URL('../', import.meta.url);
 const read = async (path) => readFile(new URL(path, root), 'utf8');
 
-test('Capacitor production config stays bundled and delegates Android 16 back ownership intentionally', async () => {
+test('Capacitor production config stays bundled and keeps the existing Android back handler enabled', async () => {
   const config = await read('capacitor.config.ts');
-  const home = await read('src/app/page.tsx');
+  const runtime = await read('mobile/runtime/mobileRuntime.ts');
   assert.ok(!/server\s*:\s*\{[^}]*url\s*:/s.test(config));
-  assert.match(config, /disableBackButtonHandler:\s*true/);
-  assert.match(home, /toggleBackButtonHandler\(\{ enabled: true \}\)/);
-  assert.match(home, /toggleBackButtonHandler\(\{ enabled: false \}\)/);
+  assert.ok(!config.includes('disableBackButtonHandler: true'));
+  assert.match(runtime, /App\.addListener\(['"]backButton['"]/);
   assert.match(config, /insetsHandling:\s*'css'/);
   assert.match(config, /webDir:\s*'mobile-dist'/);
 });
