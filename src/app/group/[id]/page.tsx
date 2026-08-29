@@ -271,7 +271,7 @@ export default function GroupWorkspacePage() {
           persistGroupToLocal(joined.group);
           setFetchError(null);
           connectWebSocket(resolvedId, joined.accessToken);
-          interval = setInterval(() => fetchGroupData(resolvedId), 15_000);
+          interval = setInterval(() => fetchGroupData(resolvedId), 4000);
           if (resolvedId !== groupId) router.replace(`/group/${resolvedId}`);
         }
       } catch (err) {
@@ -310,17 +310,32 @@ export default function GroupWorkspacePage() {
 
       void fetchGroupData(id);
       const staleSocket = socketRef.current;
-      socketRef.current = null;
-      if (staleSocket) {
-        staleSocket.onclose = null;
-        staleSocket.onerror = null;
-        try { staleSocket.close(); } catch (_) {}
+      if (!staleSocket || staleSocket.readyState !== WebSocket.OPEN) {
+        socketRef.current = null;
+        if (staleSocket) {
+          staleSocket.onclose = null;
+          staleSocket.onerror = null;
+          try { staleSocket.close(); } catch (_) {}
+        }
+        connectWebSocket(id, accessToken);
       }
-      connectWebSocket(id, accessToken);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        recoverMobileRuntime();
+      }
     };
 
     window.addEventListener(MOBILE_RECOVERY_EVENT, recoverMobileRuntime);
-    return () => window.removeEventListener(MOBILE_RECOVERY_EVENT, recoverMobileRuntime);
+    window.addEventListener('focus', recoverMobileRuntime);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener(MOBILE_RECOVERY_EVENT, recoverMobileRuntime);
+      window.removeEventListener('focus', recoverMobileRuntime);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [groupId]);
 
   const fetchGroupData = async (id: string) => {
@@ -328,11 +343,10 @@ export default function GroupWorkspacePage() {
       const res = await fetch(apiUrl(`/api/groups/${id}`), { headers: roomHeaders('group', id, false) });
       if (res.ok) {
         const data = await res.json();
-        if (data.group) {
+        if (data && data.group) {
           setGroup(data.group);
           persistGroupToLocal(data.group);
           setFetchError(null);
-          // Normalize a shared invite code to the durable group id.
           if (data.group.id && data.group.id !== id) {
             router.replace(`/group/${data.group.id}`);
           }
@@ -352,17 +366,26 @@ export default function GroupWorkspacePage() {
       if (socketRef.current) {
         try { socketRef.current.close(); } catch (_) {}
       }
-      const ws = new WebSocket(realtimeUrl());
+      const url = realtimeUrl();
+      if (!url) return;
+
+      const ws = new WebSocket(url);
       socketRef.current = ws;
 
+      const sendSubscription = () => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(
+            JSON.stringify({
+              type: 'SUBSCRIBE_GROUP',
+              groupId: id,
+              accessToken,
+            })
+          );
+        }
+      };
+
       ws.onopen = () => {
-        ws.send(
-          JSON.stringify({
-            type: 'SUBSCRIBE_GROUP',
-            groupId: id,
-            accessToken,
-          })
-        );
+        sendSubscription();
       };
 
       ws.onmessage = (event) => {
@@ -382,7 +405,7 @@ export default function GroupWorkspacePage() {
       ws.onclose = () => {
         setTimeout(() => {
           if (socketRef.current === ws) connectWebSocket(id, accessToken);
-        }, 2500);
+        }, 2000);
       };
       ws.onerror = () => {
         try { ws.close(); } catch (_) {}
@@ -725,56 +748,60 @@ export default function GroupWorkspacePage() {
 
             {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-              <div>
-                <h3 className="text-base font-extrabold text-slate-900 dark:text-white">{t('startSplitTitle', undefined, 'Start a New Split')}</h3>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400">{t('startSplitSubtitle', undefined, 'Choose how you want to load the bill')}</p>
+              <div className="text-left rtl:text-right">
+                <h3 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white tracking-tight">{t('startSplitTitle', undefined, 'Start a New Split')}</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{t('startSplitSubtitle', undefined, 'Choose how to add your bill')}</p>
               </div>
               <button
+                type="button"
                 onClick={() => setShowStartSplitModal(false)}
-                className="p-1.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                className="p-2 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
               >
-                <X className="w-4 h-4" />
+                <X className="w-5 h-5" />
               </button>
             </div>
 
             {/* Options List */}
-            <div className="space-y-2.5 pt-1 text-left">
+            <div className="space-y-3 pt-2 text-left rtl:text-right">
               {/* Option 1: Scan Camera */}
               <button
+                type="button"
                 onClick={() => {
                   setShowStartSplitModal(false);
                   handleScanCamera();
                 }}
-                className="w-full p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 hover:border-brand-500/50 hover:bg-brand-50/50 dark:hover:bg-brand-950/20 transition-all flex items-center gap-3.5 text-left active:scale-[0.98]"
+                className="w-full p-4 rounded-2xl border border-slate-200 dark:border-slate-800 hover:border-brand-500/50 hover:bg-brand-50/40 dark:hover:bg-brand-950/20 transition-all flex items-center gap-4 text-left rtl:text-right active:scale-[0.98] shadow-2xs"
               >
-                <div className="p-2.5 rounded-xl bg-brand-50 dark:bg-brand-950/60 text-brand-600 dark:text-brand-400 border border-brand-100 dark:border-brand-900/40">
-                  <Camera className="w-5 h-5" />
+                <div className="p-3 rounded-2xl bg-brand-50 dark:bg-brand-950/60 text-brand-600 dark:text-brand-400 border border-brand-100 dark:border-brand-900/40 shrink-0">
+                  <Camera className="w-6 h-6" />
                 </div>
-                <div>
-                  <h4 className="font-extrabold text-xs text-slate-900 dark:text-white leading-snug">{t('scanCameraOption', undefined, 'Scan Receipt Camera')}</h4>
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium leading-none mt-0.5">{t('scanCameraDesc', undefined, 'Snap a photo of the bill instantly')}</p>
+                <div className="min-w-0 flex-1 text-left rtl:text-right">
+                  <h4 className="font-black text-sm sm:text-base text-slate-900 dark:text-white leading-snug">{t('scanCameraOption', undefined, isRtl ? 'סריקת קבלה' : 'Scan Receipt')}</h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5">{t('scanCameraDesc', undefined, isRtl ? 'צילום ישיר במצלמה' : 'Snap photo with camera')}</p>
                 </div>
               </button>
 
               {/* Option 2: Upload Photo */}
               <button
+                type="button"
                 onClick={() => {
                   setShowStartSplitModal(false);
                   fileInputRef.current?.click();
                 }}
-                className="w-full p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 hover:border-brand-500/50 hover:bg-brand-50/50 dark:hover:bg-brand-950/20 transition-all flex items-center gap-3.5 text-left active:scale-[0.98]"
+                className="w-full p-4 rounded-2xl border border-slate-200 dark:border-slate-800 hover:border-brand-500/50 hover:bg-brand-50/40 dark:hover:bg-brand-950/20 transition-all flex items-center gap-4 text-left rtl:text-right active:scale-[0.98] shadow-2xs"
               >
-                <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-                  <Upload className="w-5 h-5" />
+                <div className="p-3 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 shrink-0">
+                  <Upload className="w-6 h-6" />
                 </div>
-                <div>
-                  <h4 className="font-extrabold text-xs text-slate-900 dark:text-white leading-snug">{t('uploadPhotoOption', undefined, 'Upload Image from Gallery')}</h4>
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium leading-none mt-0.5">{t('uploadPhotoDesc', undefined, 'Select a receipt screenshot or photo')}</p>
+                <div className="min-w-0 flex-1 text-left rtl:text-right">
+                  <h4 className="font-black text-sm sm:text-base text-slate-900 dark:text-white leading-snug">{t('uploadPhotoOption', undefined, isRtl ? 'העלאת תמונה' : 'Upload Image')}</h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5">{t('uploadPhotoDesc', undefined, isRtl ? 'בחירה מתוך הגלריה' : 'Select from gallery')}</p>
                 </div>
               </button>
 
               {/* Option 3: Manual Split */}
               <button
+                type="button"
                 onClick={() => {
                   setShowStartSplitModal(false);
                   setPendingReceiptDraft(null);
@@ -783,14 +810,14 @@ export default function GroupWorkspacePage() {
                   setEditingBill(null);
                   setShowCreateBillModal(true);
                 }}
-                className="w-full p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 hover:border-brand-500/50 hover:bg-brand-50/50 dark:hover:bg-brand-950/20 transition-all flex items-center gap-3.5 text-left active:scale-[0.98]"
+                className="w-full p-4 rounded-2xl border border-slate-200 dark:border-slate-800 hover:border-brand-500/50 hover:bg-brand-50/40 dark:hover:bg-brand-950/20 transition-all flex items-center gap-4 text-left rtl:text-right active:scale-[0.98] shadow-2xs"
               >
-                <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-                  <FilePlus className="w-5 h-5" />
+                <div className="p-3 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 shrink-0">
+                  <FilePlus className="w-6 h-6 text-brand-500" />
                 </div>
-                <div>
-                  <h4 className="font-extrabold text-xs text-slate-900 dark:text-white leading-snug">{t('manualSplitOption', undefined, 'Create Bill Manually')}</h4>
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium leading-none mt-0.5">{t('manualSplitDesc', undefined, 'Type in the items and prices yourself')}</p>
+                <div className="min-w-0 flex-1 text-left rtl:text-right">
+                  <h4 className="font-black text-sm sm:text-base text-slate-900 dark:text-white leading-snug">{t('manualSplitOption', undefined, isRtl ? 'יצירה ידנית' : 'Create Manually')}</h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5">{t('manualSplitDesc', undefined, isRtl ? 'הזנת פריטים ומחירים' : 'Type items & prices')}</p>
                 </div>
               </button>
             </div>

@@ -32,6 +32,7 @@ import {
   Box,
   Pencil,
   LockOpen,
+  Coffee,
   Loader2
 } from 'lucide-react';
 import { useLanguage, DEFAULT_REAL_AVATAR } from '../components/LanguageContext';
@@ -404,12 +405,31 @@ export default function HomePage() {
           const localDeleted = localStorage.getItem('billsplit_deleted_group_ids');
           const deletedIds = localDeleted ? JSON.parse(localDeleted) : [];
           const filtered = groups.filter((g: any) => !deletedIds.includes(g.id));
-          setUserGroups(() => {
-            // A successful account response is authoritative. Preserving
-            // server-missing local rows resurrects groups deleted while this
-            // device was offline. Guest-only caches remain available through
-            // the rejected/unauthenticated fallback path below.
-            const merged = filtered;
+          setUserGroups((prev) => {
+            // A successful account response is authoritative for known account records,
+            // while merging local active joined groups ensures guests and new joins are preserved.
+            const rawSaved = localStorage.getItem(userGroupsKey)
+              || localStorage.getItem(`billsplit_user_groups_${rawName}`)
+              || localStorage.getItem('billsplit_user_groups')
+              || getCookie('billsplit_user_groups');
+            let localSavedList: any[] = [];
+            try {
+              localSavedList = rawSaved ? (typeof rawSaved === 'string' ? JSON.parse(rawSaved) : rawSaved) : [];
+            } catch (_) {}
+            const activeLocalList = Array.isArray(localSavedList) ? localSavedList : [];
+
+            const combinedMap = new Map<string, any>();
+            // Add server groups first
+            filtered.forEach((g: any) => {
+              if (g?.id && !deletedIds.includes(g.id)) combinedMap.set(g.id, g);
+            });
+            // Merge in local active groups so unauthenticated or guest joined groups are preserved
+            [...(Array.isArray(prev) ? prev : []), ...activeLocalList].forEach((g: any) => {
+              if (g?.id && !deletedIds.includes(g.id) && !combinedMap.has(g.id)) {
+                combinedMap.set(g.id, g);
+              }
+            });
+            const merged = Array.from(combinedMap.values());
             localStorage.setItem(userGroupsKey, JSON.stringify(merged));
             localStorage.setItem(`billsplit_user_groups_${rawName}`, JSON.stringify(merged));
             localStorage.setItem('billsplit_user_groups', JSON.stringify(merged));
@@ -547,12 +567,11 @@ export default function HomePage() {
   const financialStats = useMemo(() => {
     let totalSpent = 0;
     const categories: Record<string, { amount: number; count: number; icon: any; color: string; stroke: string; label: string }> = {
-      Transport: { amount: 0, count: 0, icon: Plane, color: 'bg-cyan-500', stroke: '#06B6D4', label: t('catTransport', undefined, 'Transport') },
-      Food: { amount: 0, count: 0, icon: Utensils, color: 'bg-orange-500', stroke: '#F97316', label: t('catFood', undefined, 'Food') },
-      Travel: { amount: 0, count: 0, icon: Globe, color: 'bg-brand-500', stroke: '#5B52D6', label: t('catTravel', undefined, 'Travel') },
-      Shopping: { amount: 0, count: 0, icon: ShoppingCart, color: 'bg-purple-500', stroke: '#8B5CF6', label: t('catShopping', undefined, 'Shopping') },
-      Groceries: { amount: 0, count: 0, icon: Box, color: 'bg-slate-700 dark:bg-slate-300', stroke: '#64748B', label: t('catGroceries', undefined, 'Groceries') },
-      Other: { amount: 0, count: 0, icon: Sparkles, color: 'bg-amber-500', stroke: '#F59E0B', label: t('catOther', undefined, 'Other') },
+      Food: { amount: 0, count: 0, icon: Utensils, color: 'bg-orange-500', stroke: '#F97316', label: t('categoryFood', undefined, isRtl ? 'אוכל ומסעדות 🍕' : 'Food & Dining 🍕') },
+      Coffee: { amount: 0, count: 0, icon: Coffee, color: 'bg-amber-600', stroke: '#D97706', label: t('categoryCoffee', undefined, isRtl ? 'קפה ומשקאות ☕' : 'Coffee & Drinks ☕') },
+      Groceries: { amount: 0, count: 0, icon: Box, color: 'bg-emerald-500', stroke: '#10B981', label: t('categoryGroceries', undefined, isRtl ? 'סופר וקניות 🛒' : 'Groceries 🛒') },
+      Travel: { amount: 0, count: 0, icon: Plane, color: 'bg-cyan-500', stroke: '#06B6D4', label: t('categoryTravel', undefined, isRtl ? 'טיולים וחופשות ✈️' : 'Travel & Trips ✈️') },
+      Other: { amount: 0, count: 0, icon: Sparkles, color: 'bg-brand-500', stroke: '#5B52D6', label: t('categoryOther', undefined, isRtl ? 'כללי / אחר 🏷️' : 'General / Other 🏷️') },
     };
 
     historyList.forEach((item: any) => {
@@ -560,22 +579,21 @@ export default function HomePage() {
       const amount = typeof shareVal === 'number' ? shareVal : parseFloat(shareVal) || 0;
       totalSpent += amount;
 
-      const titleLower = (item.storeName || '').toLowerCase();
-      if (titleLower.includes('uber') || titleLower.includes('taxi') || titleLower.includes('flight') || titleLower.includes('train') || titleLower.includes('מונית') || titleLower.includes('רכבת') || titleLower.includes('gas') || titleLower.includes('דלק')) {
-        categories.Transport.amount += amount;
-        categories.Transport.count += 1;
-      } else if (titleLower.includes('cafe') || titleLower.includes('coffee') || titleLower.includes('starbucks') || titleLower.includes('קפה') || titleLower.includes('aroma') || titleLower.includes('pizza') || titleLower.includes('burger') || titleLower.includes('sushi') || titleLower.includes('restaurant') || titleLower.includes('food') || titleLower.includes('dinner') || titleLower.includes('bar') || titleLower.includes('מסעדה')) {
+      const titleLower = (item.storeName || item.title || '').toLowerCase();
+      const explicitCat = (item.category || '').toLowerCase();
+
+      if (explicitCat === 'coffee' || explicitCat.includes('coffee') || explicitCat.includes('drink') || explicitCat.includes('קפה') || titleLower.includes('cafe') || titleLower.includes('coffee') || titleLower.includes('starbucks') || titleLower.includes('קפה') || titleLower.includes('aroma') || titleLower.includes('drinks') || titleLower.includes('juice') || titleLower.includes('מיץ') || titleLower.includes('tea') || titleLower.includes('תה')) {
+        categories.Coffee.amount += amount;
+        categories.Coffee.count += 1;
+      } else if (explicitCat === 'food' || explicitCat.includes('food') || explicitCat.includes('dining') || explicitCat.includes('restaurant') || explicitCat.includes('אוכל') || explicitCat.includes('מסעד') || titleLower.includes('pizza') || titleLower.includes('burger') || titleLower.includes('sushi') || titleLower.includes('restaurant') || titleLower.includes('food') || titleLower.includes('dinner') || titleLower.includes('bar') || titleLower.includes('מסעדה') || titleLower.includes('פאב') || titleLower.includes('בשר') || titleLower.includes('גריל') || titleLower.includes('שניצל') || titleLower.includes('שווארמה') || titleLower.includes('פלאפל') || titleLower.includes('פסטה')) {
         categories.Food.amount += amount;
         categories.Food.count += 1;
-      } else if (titleLower.includes('hotel') || titleLower.includes('airbnb') || titleLower.includes('trip') || titleLower.includes('vienna') || titleLower.includes('booking') || titleLower.includes('vacation') || titleLower.includes('מלון') || titleLower.includes('טיול')) {
-        categories.Travel.amount += amount;
-        categories.Travel.count += 1;
-      } else if (titleLower.includes('super') || titleLower.includes('market') || titleLower.includes('grocer') || titleLower.includes('shufersal') || titleLower.includes('rami levy') || titleLower.includes('סופר') || titleLower.includes('שופרסל')) {
+      } else if (explicitCat === 'groceries' || explicitCat.includes('grocer') || explicitCat.includes('סופר') || titleLower.includes('super') || titleLower.includes('market') || titleLower.includes('grocer') || titleLower.includes('shufersal') || titleLower.includes('rami levy') || titleLower.includes('סופר') || titleLower.includes('שופרסל') || titleLower.includes('יוחננוף') || titleLower.includes('מכולת') || titleLower.includes('ויקטורי')) {
         categories.Groceries.amount += amount;
         categories.Groceries.count += 1;
-      } else if (titleLower.includes('zara') || titleLower.includes('nike') || titleLower.includes('adidas') || titleLower.includes('dkny') || titleLower.includes('shop') || titleLower.includes('store') || titleLower.includes('mall') || titleLower.includes('amazon') || titleLower.includes('clothes') || titleLower.includes('קניון') || titleLower.includes('בגדים')) {
-        categories.Shopping.amount += amount;
-        categories.Shopping.count += 1;
+      } else if (explicitCat === 'travel' || explicitCat.includes('travel') || explicitCat.includes('trip') || explicitCat.includes('flight') || explicitCat.includes('מלון') || explicitCat.includes('טיול') || titleLower.includes('hotel') || titleLower.includes('airbnb') || titleLower.includes('trip') || titleLower.includes('flight') || titleLower.includes('booking') || titleLower.includes('vacation') || titleLower.includes('uber') || titleLower.includes('taxi') || titleLower.includes('train') || titleLower.includes('מונית') || titleLower.includes('רכבת') || titleLower.includes('gas') || titleLower.includes('דלק') || titleLower.includes('טיסה')) {
+        categories.Travel.amount += amount;
+        categories.Travel.count += 1;
       } else {
         categories.Other.amount += amount;
         categories.Other.count += 1;
@@ -588,7 +606,7 @@ export default function HomePage() {
       splitsCount: historyList.length,
       groupsCount: userGroups.length
     };
-  }, [historyList, userGroups, t]);
+  }, [historyList, userGroups, t, isRtl]);
 
   const handleClearActiveSession = async () => {
     const sessionId = activeSession?.id;
@@ -1156,7 +1174,7 @@ export default function HomePage() {
                   </div>
 
                   <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 mt-2 font-normal leading-relaxed whitespace-nowrap truncate">
-                    {t('createGroupSubtitle', undefined, 'start group with friends')}
+                    {t('createGroupSubtitle', undefined, 'start a group with friends')}
                   </p>
                 </button>
               </div>
@@ -2027,58 +2045,60 @@ export default function HomePage() {
               onTouchEnd={handleSplitTouchEnd}
               className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 touch-none select-none"
             >
-              <div>
-                <h3 className="text-base font-extrabold text-slate-900 dark:text-white">{t('startSplitTitle', undefined, 'Start a New Split')}</h3>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400">{t('startSplitSubtitle', undefined, 'Choose how you want to load the bill')}</p>
+              <div className="text-left rtl:text-right">
+                <h3 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white tracking-tight">{t('startSplitTitle', undefined, 'Start a New Split')}</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{t('startSplitSubtitle', undefined, 'Choose how to add your bill')}</p>
               </div>
               <button
+                type="button"
                 onClick={() => setShowStartSplitModal(false)}
-                className="p-1.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                className="p-2 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
               >
-                <X className="w-4 h-4" />
+                <X className="w-5 h-5" />
               </button>
             </div>
 
             {/* Options List */}
-            <div className="space-y-2.5 pt-1">
+            <div className="space-y-3 pt-2">
               {/* Option 1: Scan Camera */}
               <button
+                type="button"
                 onClick={() => {
                   setShowStartSplitModal(false);
                   handleScanCamera();
                 }}
-                className="w-full p-3 rounded-2xl border border-slate-150 dark:border-[#222C3D] hover:bg-slate-50 dark:hover:bg-[#1A2333] transition-all flex items-center gap-3.5 text-left active:scale-[0.98]"
+                className="w-full p-4 rounded-2xl border border-slate-200 dark:border-[#222C3D] hover:border-brand-500/50 hover:bg-brand-50/40 dark:hover:bg-brand-950/20 transition-all flex items-center gap-4 text-left rtl:text-right active:scale-[0.98] shadow-2xs"
               >
-                <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white">
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />
-                  </svg>
+                <div className="p-3 rounded-2xl bg-brand-50 dark:bg-brand-950/60 text-brand-600 dark:text-brand-400 border border-brand-100 dark:border-brand-900/40 shrink-0">
+                  <Camera className="w-6 h-6" />
                 </div>
-                <div>
-                  <h4 className="font-extrabold text-xs text-slate-900 dark:text-white leading-snug">{t('scanCameraOption', undefined, 'Scan Receipt Camera')}</h4>
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium leading-none mt-0.5">{t('scanCameraDesc', undefined, 'Snap a photo of the bill instantly')}</p>
+                <div className="min-w-0 flex-1 text-left rtl:text-right">
+                  <h4 className="font-black text-sm sm:text-base text-slate-900 dark:text-white leading-snug">{t('scanCameraOption', undefined, isRtl ? 'סריקת קבלה' : 'Scan Receipt')}</h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5">{t('scanCameraDesc', undefined, isRtl ? 'צילום ישיר במצלמה' : 'Snap photo with camera')}</p>
                 </div>
               </button>
 
               {/* Option 2: Upload Photo */}
               <button
+                type="button"
                 onClick={() => {
                   setShowStartSplitModal(false);
                   fileInputRef.current?.click();
                 }}
-                className="w-full p-3 rounded-2xl border border-slate-150 dark:border-[#222C3D] hover:bg-slate-50 dark:hover:bg-[#1A2333] transition-all flex items-center gap-3.5 text-left active:scale-[0.98]"
+                className="w-full p-4 rounded-2xl border border-slate-200 dark:border-[#222C3D] hover:border-brand-500/50 hover:bg-brand-50/40 dark:hover:bg-brand-950/20 transition-all flex items-center gap-4 text-left rtl:text-right active:scale-[0.98] shadow-2xs"
               >
-                <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white">
-                  <Upload className="w-5 h-5" />
+                <div className="p-3 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 shrink-0">
+                  <Upload className="w-6 h-6" />
                 </div>
-                <div>
-                  <h4 className="font-extrabold text-xs text-slate-900 dark:text-white leading-snug">{t('uploadPhotoOption', undefined, 'Upload Image from Gallery')}</h4>
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium leading-none mt-0.5">{t('uploadPhotoDesc', undefined, 'Select a receipt screenshot or photo')}</p>
+                <div className="min-w-0 flex-1 text-left rtl:text-right">
+                  <h4 className="font-black text-sm sm:text-base text-slate-900 dark:text-white leading-snug">{t('uploadPhotoOption', undefined, isRtl ? 'העלאת תמונה' : 'Upload Image')}</h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5">{t('uploadPhotoDesc', undefined, isRtl ? 'בחירה מתוך הגלריה' : 'Select from gallery')}</p>
                 </div>
               </button>
 
               {/* Option 3: Manual Split */}
               <button
+                type="button"
                 onClick={() => {
                   setShowStartSplitModal(false);
                   setPendingReceiptDraft(null);
@@ -2086,16 +2106,14 @@ export default function HomePage() {
                   setPendingRecoveryToken('');
                   setShowManualModal(true);
                 }}
-                className="w-full p-3 rounded-2xl border border-slate-150 dark:border-[#222C3D] hover:bg-slate-50 dark:hover:bg-[#1A2333] transition-all flex items-center gap-3.5 text-left active:scale-[0.98]"
+                className="w-full p-4 rounded-2xl border border-slate-200 dark:border-[#222C3D] hover:border-brand-500/50 hover:bg-brand-50/40 dark:hover:bg-brand-950/20 transition-all flex items-center gap-4 text-left rtl:text-right active:scale-[0.98] shadow-2xs"
               >
-                <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white">
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 0 0 2.25-2.25V6.75A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25v10.5A2.25 2.25 0 0 0 4.5 19.5Z" />
-                  </svg>
+                <div className="p-3 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 shrink-0">
+                  <FilePlus className="w-6 h-6 text-brand-500" />
                 </div>
-                <div>
-                  <h4 className="font-extrabold text-xs text-slate-900 dark:text-white leading-snug">{t('manualSplitOption', undefined, 'Create Bill Manually')}</h4>
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium leading-none mt-0.5">{t('manualSplitDesc', undefined, 'Type in the items and prices yourself')}</p>
+                <div className="min-w-0 flex-1 text-left rtl:text-right">
+                  <h4 className="font-black text-sm sm:text-base text-slate-900 dark:text-white leading-snug">{t('manualSplitOption', undefined, isRtl ? 'יצירה ידנית' : 'Create Manually')}</h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5">{t('manualSplitDesc', undefined, isRtl ? 'הזנת פריטים ומחירים' : 'Type items & prices')}</p>
                 </div>
               </button>
             </div>
@@ -2202,8 +2220,9 @@ export default function HomePage() {
             </div>
 
             {groupModalTab === 'options' ? (
-              <div className="space-y-2">
+              <div className="space-y-2.5">
                 <button
+                  type="button"
                   onClick={async () => {
                     if (confirm(`Are you sure you want to leave group "${selectedGroupForModal.name}"?`)) {
                       try {
@@ -2232,10 +2251,10 @@ export default function HomePage() {
                         setUserGroups(updated);
                         setCookie('billsplit_user_groups', updated);
                         localStorage.setItem('billsplit_user_groups', JSON.stringify(updated));
-                        const userKey = (profile?.displayName || '').trim();
-                        if (userKey) {
-                          localStorage.setItem(`billsplit_user_groups_${userKey}`, JSON.stringify(updated));
-                        }
+                        const rawName = (profile?.displayName || '').trim();
+                        const userKey = rawName.toLowerCase();
+                        if (rawName) localStorage.setItem(`billsplit_user_groups_${rawName}`, JSON.stringify(updated));
+                        if (userKey) localStorage.setItem(`billsplit_user_groups_${userKey}`, JSON.stringify(updated));
                         clearRoomCredentials('group', groupId);
                         closeGroupModal();
                         triggerHaptic('success');
@@ -2244,26 +2263,42 @@ export default function HomePage() {
                       }
                     }
                   }}
-                  className="w-full py-2.5 px-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 text-amber-600 dark:text-amber-400 text-xs font-bold flex items-center justify-between transition-colors"
+                  className="w-full py-3 px-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/40 text-amber-700 dark:text-amber-300 text-xs sm:text-sm font-bold flex items-center justify-between transition-colors active:scale-[0.98]"
                 >
-                  <span className="flex items-center gap-2">
+                  <span className="flex items-center gap-2.5">
                     <LogOut className="w-4 h-4 text-amber-500" />
                     <span>{t('leaveGroupItem', undefined, 'Leave Group')}</span>
                   </span>
-                  <span className="text-[10px]">🚪</span>
+                  <span className="text-sm">🚪</span>
                 </button>
 
                 <button
+                  type="button"
                   onClick={async () => {
-                    if (confirm(`Are you sure you want to delete group "${selectedGroupForModal.name}"?`)) {
+                    if (confirm(`Are you sure you want to delete group "${selectedGroupForModal.name}"? This cannot be undone.`)) {
                       try {
                         const groupId = selectedGroupForModal.id;
                         const res = await fetch(apiUrl(`/api/groups/${groupId}`), {
                           method: 'DELETE',
                           headers: roomHeaders('group', groupId, false),
                         });
-                        const data = await res.json();
-                        if (!res.ok) throw new Error(data.error || 'Could not delete group');
+                        const data = await res.json().catch(() => ({}));
+                        if (res.status === 403) {
+                          if (confirm(`Only the host can delete this group for everyone. Do you want to remove it from your device?`)) {
+                            await fetch(apiUrl(`/api/groups/${groupId}/leave`), {
+                              method: 'POST',
+                              headers: {
+                                'Content-Type': 'application/json',
+                                ...roomHeaders('group', groupId, true),
+                              },
+                              body: JSON.stringify({ name: profile?.displayName || '' }),
+                            }).catch(() => {});
+                          } else {
+                            return;
+                          }
+                        } else if (!res.ok) {
+                          throw new Error(data.error || 'Could not delete group');
+                        }
 
                         const localDeleted = localStorage.getItem('billsplit_deleted_group_ids');
                         const deletedIds = localDeleted ? JSON.parse(localDeleted) : [];
@@ -2276,10 +2311,10 @@ export default function HomePage() {
                         setUserGroups(updated);
                         setCookie('billsplit_user_groups', updated);
                         localStorage.setItem('billsplit_user_groups', JSON.stringify(updated));
-                        const userKey = (profile?.displayName || '').trim();
-                        if (userKey) {
-                          localStorage.setItem(`billsplit_user_groups_${userKey}`, JSON.stringify(updated));
-                        }
+                        const rawName = (profile?.displayName || '').trim();
+                        const userKey = rawName.toLowerCase();
+                        if (rawName) localStorage.setItem(`billsplit_user_groups_${rawName}`, JSON.stringify(updated));
+                        if (userKey) localStorage.setItem(`billsplit_user_groups_${userKey}`, JSON.stringify(updated));
                         clearRoomCredentials('group', groupId);
                         closeGroupModal();
                         triggerHaptic('success');
@@ -2288,16 +2323,17 @@ export default function HomePage() {
                       }
                     }
                   }}
-                  className="w-full py-2.5 px-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 text-rose-600 dark:text-rose-400 text-xs font-bold flex items-center justify-between transition-colors"
+                  className="w-full py-3 px-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/40 text-rose-700 dark:text-rose-300 text-xs sm:text-sm font-bold flex items-center justify-between transition-colors active:scale-[0.98]"
                 >
-                  <span className="flex items-center gap-2">
+                  <span className="flex items-center gap-2.5">
                     <Trash2 className="w-4 h-4 text-rose-500" />
                     <span>{t('deleteGroupItem', undefined, 'Delete Group')}</span>
                   </span>
-                  <span className="text-[10px]">🗑️</span>
+                  <span className="text-sm">🗑️</span>
                 </button>
 
                 <button
+                  type="button"
                   onClick={async () => {
                     const groupUrl = publicWebUrl(`/group/${selectedGroupForModal.id}`);
                     const result = await shareInvite({
@@ -2314,24 +2350,25 @@ export default function HomePage() {
                     }
                     closeGroupModal();
                   }}
-                  className="w-full py-2.5 px-3 rounded-xl bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-900 dark:text-white text-xs font-bold flex items-center justify-between transition-colors"
+                  className="w-full py-3 px-3.5 rounded-xl bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-900 dark:text-white text-xs sm:text-sm font-bold flex items-center justify-between transition-colors active:scale-[0.98]"
                 >
-                  <span className="flex items-center gap-2">
+                  <span className="flex items-center gap-2.5">
                     <Share2 className="w-4 h-4 text-brand-500" />
                     <span>{t('shareGroupItem', undefined, 'Share Group')}</span>
                   </span>
-                  <span className="text-[10px] text-slate-400">🔗</span>
+                  <span className="text-xs text-slate-400">🔗</span>
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => setGroupModalTab('details')}
-                  className="w-full py-2.5 px-3 rounded-xl bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-900 dark:text-white text-xs font-bold flex items-center justify-between transition-colors"
+                  className="w-full py-3 px-3.5 rounded-xl bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-900 dark:text-white text-xs sm:text-sm font-bold flex items-center justify-between transition-colors active:scale-[0.98]"
                 >
-                  <span className="flex items-center gap-2">
+                  <span className="flex items-center gap-2.5">
                     <Users className="w-4 h-4 text-slate-700 dark:text-slate-300" />
                     <span>{t('seeGroupDetails', undefined, 'See Group Details')}</span>
                   </span>
-                  <span className="text-[10px] text-slate-400">📋</span>
+                  <span className="text-xs text-slate-400">📋</span>
                 </button>
               </div>
             ) : (
