@@ -19,10 +19,10 @@ env:
   NEXT_PUBLIC_EASYSPLIT_WEB_ORIGIN: https://billspltapp.onrender.com
   NEXT_PUBLIC_EASYSPLIT_WS_ORIGIN: wss://billspltapp.onrender.com
 
-# Run 12 already proved the unchanged candidate on the complete web regression,
-# live native CORS probe, iOS build, install, and cold launch. This final run is
-# intentionally Android-only so a hosted-emulator harness fix does not repeat
-# unrelated work.
+# Run 12 already proved the unchanged candidate on the full web regression,
+# live native CORS probe, iOS compile, install, and cold launch. This final
+# workflow is Android-only and delegates emulator/KVM lifecycle to the
+# maintained emulator action instead of our previous hand-rolled boot loop.
 jobs:
   android-api-36:
     name: Android 16 / API 36 final device smoke
@@ -65,26 +65,6 @@ jobs:
           npm run mobile:build
           npx cap sync android
 
-      - name: Install Android 16 emulator toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager \
-            'platform-tools' \
-            'emulator' \
-            'platforms;android-36' \
-            'build-tools;36.0.0' \
-            'system-images;android-36;google_apis;x86_64'
-          echo no | avdmanager create avd --force \
-            --name EasySplit_API36 \
-            --package 'system-images;android-36;google_apis;x86_64' \
-            --device pixel_6
-          if [ -e /dev/kvm ]; then
-            sudo chown "$USER" /dev/kvm 2>/dev/null || sudo chmod 666 /dev/kvm || true
-            ls -l /dev/kvm
-          fi
-
       - name: Build signed debug APK
         shell: bash
         run: |
@@ -95,66 +75,24 @@ jobs:
             | tee "$RUNNER_TEMP/gate12-android/gradle-build.log"
           APK="$GITHUB_WORKSPACE/android/app/build/outputs/apk/debug/app-debug.apk"
           test -f "$APK"
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK" \
+          BUILD_TOOLS=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)
+          "$ANDROID_HOME/build-tools/$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK" \
             | tee "$RUNNER_TEMP/gate12-android/apk-signing.txt"
 
-      - name: Boot clean Android 16 emulator with fail-fast diagnostics
-        shell: bash
-        run: |
-          set -euo pipefail
-          EMULATOR_LOG="$RUNNER_TEMP/gate12-android/emulator.log"
-          nohup emulator -avd EasySplit_API36 \
-            -no-window -noaudio -no-boot-anim -no-snapshot -wipe-data \
-            -gpu swiftshader_indirect \
-            >"$EMULATOR_LOG" 2>&1 &
-          EMULATOR_PID=$!
-          echo "$EMULATOR_PID" > "$RUNNER_TEMP/gate12-android/emulator.pid"
-
-          booted=''
-          for attempt in $(seq 1 180); do
-            if ! kill -0 "$EMULATOR_PID" 2>/dev/null; then
-              echo 'Android emulator process exited before becoming ready.'
-              cat "$EMULATOR_LOG"
-              exit 1
-            fi
-            if adb get-state 2>/dev/null | grep -q '^device$'; then
-              booted=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
-              if [ "$booted" = '1' ]; then
-                break
-              fi
-            fi
-            sleep 1
-          done
-
-          if [ "$booted" != '1' ]; then
-            echo 'Android emulator did not complete boot within the bounded window.'
-            adb devices -l || true
-            cat "$EMULATOR_LOG"
-            exit 1
-          fi
-
-          adb shell settings put global window_animation_scale 0
-          adb shell settings put global transition_animation_scale 0
-          adb shell settings put global animator_duration_scale 0
-          adb shell input keyevent 82
-          adb devices -l | tee "$RUNNER_TEMP/gate12-android/adb-devices.txt"
-
-      - name: Install and run native Android back/background smoke
-        shell: bash
-        run: |
-          set -euo pipefail
-          adb install -r android/app/build/outputs/apk/debug/app-debug.apk
-          node .github/validation/validate-android-back.mjs \
-            | tee "$RUNNER_TEMP/gate12-android/android-smoke-result.txt"
-          adb exec-out screencap -p > "$RUNNER_TEMP/gate12-android/android-home.png"
-          adb logcat -d -v threadtime > "$RUNNER_TEMP/gate12-android/logcat.txt"
-
-      - name: Capture Android evidence
-        if: always()
-        shell: bash
-        run: |
-          adb exec-out screencap -p > "$RUNNER_TEMP/gate12-android/final-screen.png" 2>/dev/null || true
-          adb logcat -d -v threadtime > "$RUNNER_TEMP/gate12-android/final-logcat.txt" 2>/dev/null || true
+      - name: Run Android 16 native Back and background smoke
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: |
+            adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+            node .github/validation/validate-android-back.mjs | tee "$RUNNER_TEMP/gate12-android/android-smoke-result.txt"
+            adb exec-out screencap -p > "$RUNNER_TEMP/gate12-android/android-home.png"
+            adb logcat -d -v threadtime > "$RUNNER_TEMP/gate12-android/logcat.txt"
 
       - name: Publish Android diagnostics
         if: always()
