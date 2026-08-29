@@ -48,16 +48,17 @@ import { createReceiptDraft, receiptConfirmationPayload, receiptScanUserMessage 
 import { getCookie, setCookie } from '../../lib/cookies';
 import { triggerHaptic } from '../../lib/haptics';
 import { MOBILE_BACK_REQUEST_EVENT } from '../../lib/mobileEvents';
-import { clearRoomCredentials, roomHeaders, saveRoomCredentials } from '../../lib/roomTokens';
+import { clearRoomCredentials, clearSessionInviteToken, getOrCreateRoomClientId, getSessionInviteToken, roomHeaders, saveRoomCredentials, saveSessionInviteToken } from '../../lib/roomTokens';
 import { fetchPaginatedAccountData } from '../../lib/accountClient';
 import { apiUrl, publicWebUrl } from '../../lib/platformTransport';
+import { cleanIsraeliPhone, isValidIsraeliPhone } from '../../lib/bitDeepLink';
 import {
-  clearCreatorIntent,
-  readCreatorIntent,
-  saveCreatorIntent,
-  type CreatorIntent,
-} from '../../lib/creatorIntent';
-import { isValidIsraeliPhone } from '../../lib/bitDeepLink';
+  collectCachedRoomIds,
+  purgeDeletedGroupFromStorage,
+  purgeDeletedRoomsFromStatus,
+  purgeDeletedSessionFromStorage,
+  purgeRoomCredentialsFromStorage,
+} from '../../lib/localLifecycle';
 import { Capacitor } from '@capacitor/core';
 import { Camera as CapCamera, CameraResultType, CameraSource } from '@capacitor/camera';
 
@@ -70,29 +71,6 @@ const PASTEL_COLORS = [
   { bg: 'bg-pink-100 dark:bg-pink-950/60', text: 'text-pink-700 dark:text-pink-300' },
   { bg: 'bg-zinc-100 dark:bg-zinc-800', text: 'text-zinc-700 dark:text-zinc-300' },
 ];
-
-function savePendingCreatorIntent(intent: CreatorIntent): void {
-  saveCreatorIntent(localStorage, intent);
-  clearCreatorIntent(sessionStorage);
-}
-
-function readPendingCreatorIntent(): CreatorIntent | null {
-  const durableIntent = readCreatorIntent(localStorage);
-  if (durableIntent) return durableIntent;
-
-  // Migrate an intent created by an older build before the next auth attempt.
-  const legacyIntent = readCreatorIntent(sessionStorage);
-  if (legacyIntent) {
-    saveCreatorIntent(localStorage, legacyIntent);
-    clearCreatorIntent(sessionStorage);
-  }
-  return legacyIntent;
-}
-
-function clearPendingCreatorIntent(): void {
-  clearCreatorIntent(localStorage);
-  clearCreatorIntent(sessionStorage);
-}
 
 function PorcelainReceiptMark() {
   return (
@@ -108,6 +86,45 @@ function PorcelainReceiptMark() {
       <path d="M14 16h20M14 24h16M14 32h12" stroke="#302DA4" strokeWidth="3.5" strokeLinecap="round" />
     </svg>
   );
+}
+
+async function convergeGuestRoomCaches(storage: Storage) {
+  const { sessionIds, groupIds } = collectCachedRoomIds(storage);
+  if (sessionIds.length === 0 && groupIds.length === 0) {
+    return { deletedSessions: [], deletedGroups: [], closedGroups: [], settledSessions: [], reopenedSessions: [] };
+  }
+  const deletedSessions: string[] = [];
+  const deletedGroups: string[] = [];
+  const closedGroups: any[] = [];
+  const settledSessions: string[] = [];
+  const reopenedSessions: string[] = [];
+  const roomRefs = [
+    ...sessionIds.map((id: string) => ({ kind: 'session', id })),
+    ...groupIds.map((id: string) => ({ kind: 'group', id })),
+  ];
+  for (let offset = 0; offset < roomRefs.length; offset += 50) {
+    const batch = roomRefs.slice(offset, offset + 50);
+    const response = await fetch(apiUrl('/api/rooms/status'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-EasySplit-Client-Id': getOrCreateRoomClientId(),
+      },
+      body: JSON.stringify({
+        sessionIds: batch.filter((entry) => entry.kind === 'session').map((entry) => entry.id),
+        groupIds: batch.filter((entry) => entry.kind === 'group').map((entry) => entry.id),
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Could not validate cached rooms');
+    const purged = purgeDeletedRoomsFromStatus(storage, data);
+    deletedSessions.push(...purged.deletedSessions);
+    deletedGroups.push(...purged.deletedGroups);
+    closedGroups.push(...(purged.closedGroups || []));
+    settledSessions.push(...(purged.settledSessions || []));
+    reopenedSessions.push(...(purged.reopenedSessions || []));
+  }
+  return { deletedSessions, deletedGroups, closedGroups, settledSessions, reopenedSessions };
 }
 
 export default function HomePage() {
@@ -313,12 +330,13 @@ export default function HomePage() {
       try {
         const parsed = JSON.parse(lastSession);
         fetch(apiUrl(`/api/session/${parsed.id}`), { headers: roomHeaders('session', parsed.id, false) })
-          .then((res) => res.json())
-          .then((data) => {
+          .then(async (res) => ({ status: res.status, data: await res.json().catch(() => ({})) }))
+          .then(({ status, data }) => {
             if (data && data.session && data.session.status !== 'settled' && !data.session.groupId) {
               setActiveSession(parsed);
             } else {
-              localStorage.removeItem('billsplit_active_session');
+              if (status === 404) purgeDeletedSessionFromStorage(localStorage, parsed.id);
+              else localStorage.removeItem('billsplit_active_session');
               setActiveSession(null);
             }
           })
@@ -385,14 +403,12 @@ export default function HomePage() {
           const localDeleted = localStorage.getItem('billsplit_deleted_group_ids');
           const deletedIds = localDeleted ? JSON.parse(localDeleted) : [];
           const filtered = groups.filter((g: any) => !deletedIds.includes(g.id));
-          setUserGroups((prev) => {
-            const serverIds = new Set(filtered.map((g) => g.id));
-            const localOnly = prev.filter((g) => (
-              !serverIds.has(g.id)
-              && !deletedIds.includes(g.id)
-              && String(g.status || 'active').toLowerCase() !== 'closed'
-            ));
-            const merged = [...filtered, ...localOnly];
+          setUserGroups(() => {
+            // A successful account response is authoritative. Preserving
+            // server-missing local rows resurrects groups deleted while this
+            // device was offline. Guest-only caches remain available through
+            // the rejected/unauthenticated fallback path below.
+            const merged = filtered;
             localStorage.setItem(userGroupsKey, JSON.stringify(merged));
             localStorage.setItem(`billsplit_user_groups_${rawName}`, JSON.stringify(merged));
             localStorage.setItem('billsplit_user_groups', JSON.stringify(merged));
@@ -409,24 +425,10 @@ export default function HomePage() {
         const localDeleted = localStorage.getItem('billsplit_deleted_history_ids');
         const deletedIds = localDeleted ? JSON.parse(localDeleted) : [];
 
-        let mergedList = Array.isArray(serverHistory) ? [...serverHistory] : [];
-
-        // Merge in local items that might not have reached server yet
-        const rawLocal = localStorage.getItem(`billsplit_history_${userKey}`)
-          || localStorage.getItem(`billsplit_history_${rawName}`)
-          || localStorage.getItem('billsplit_history');
-        if (rawLocal) {
-          try {
-            const localArr = JSON.parse(rawLocal);
-            if (Array.isArray(localArr)) {
-              localArr.forEach((loc) => {
-                if (loc?.id && !mergedList.some((s) => s.id === loc.id)) {
-                  mergedList.push(loc);
-                }
-              });
-            }
-          } catch (_) {}
-        }
+        // Once the authenticated account response succeeds, Firestore is the
+        // authority. Local-only entries are used only in the guest/offline
+        // catch path, otherwise a remotely deleted session can resurrect.
+        const mergedList = Array.isArray(serverHistory) ? [...serverHistory] : [];
 
         const filtered = mergedList
           .filter((item: any) => !deletedIds.includes(item.id))
@@ -453,6 +455,58 @@ export default function HomePage() {
           } catch (e) {}
         }
       });
+
+    const applyGuestCacheConvergence = () => {
+      void convergeGuestRoomCaches(localStorage)
+        .then(({
+          deletedSessions,
+          deletedGroups,
+          closedGroups: newlyClosedGroups,
+          settledSessions,
+          reopenedSessions,
+        }) => {
+          if (deletedSessions.length) {
+            const deleted = new Set(deletedSessions);
+            setHistoryList((current) => current.filter((entry: any) => !deleted.has(entry.id)));
+            setActiveSession((current: any) => (current?.id && deleted.has(current.id) ? null : current));
+          }
+          if (deletedGroups.length) {
+            const deleted = new Set(deletedGroups);
+            setUserGroups((current) => current.filter((entry: any) => !deleted.has(entry.id)));
+            setClosedGroups((current) => current.filter((entry: any) => !deleted.has(entry.id)));
+            setHistoryList((current) => current.filter((entry: any) => !deleted.has(entry.groupId)));
+          }
+          if (newlyClosedGroups.length) {
+            const closedIds = new Set(newlyClosedGroups.map((entry: any) => entry.id));
+            setUserGroups((current) => current.filter((entry: any) => !closedIds.has(entry.id)));
+            setClosedGroups((current) => [
+              ...newlyClosedGroups,
+              ...current.filter((entry: any) => !closedIds.has(entry.id)),
+            ]);
+          }
+          if (settledSessions.length) {
+            const settled = new Set(settledSessions);
+            setActiveSession((current: any) => (current?.id && settled.has(current.id) ? null : current));
+          }
+          if (reopenedSessions.length) {
+            const reopened = new Set(reopenedSessions);
+            setHistoryList((current) => current.filter((entry: any) => !reopened.has(entry.id)));
+          }
+        })
+        .catch(() => {});
+    };
+    applyGuestCacheConvergence();
+    const convergenceInterval = window.setInterval(applyGuestCacheConvergence, 15_000);
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') applyGuestCacheConvergence();
+    };
+    window.addEventListener('online', applyGuestCacheConvergence);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.clearInterval(convergenceInterval);
+      window.removeEventListener('online', applyGuestCacheConvergence);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   }, [profile.displayName]);
 
 
@@ -463,6 +517,17 @@ export default function HomePage() {
       return;
     }
 
+    const userKey = profile.displayName.trim().toLowerCase();
+    const localClosedRaw = localStorage.getItem(`billsplit_closed_groups_${userKey}`)
+      || localStorage.getItem('billsplit_closed_groups');
+    if (localClosedRaw) {
+      try {
+        const localClosed = JSON.parse(localClosedRaw);
+        const deletedIds = JSON.parse(localStorage.getItem('billsplit_deleted_group_ids') || '[]');
+        if (Array.isArray(localClosed)) setClosedGroups(localClosed.filter((group: any) => !deletedIds.includes(group.id)));
+      } catch (_) {}
+    }
+
     const queryParams = new URLSearchParams({
       userName: profile.displayName.trim(),
       phone: profile.phoneNumber || '',
@@ -471,7 +536,7 @@ export default function HomePage() {
 
     fetchPaginatedAccountData('/api/user/groups', queryParams, 'groups')
       .then((groups) => setClosedGroups(Array.isArray(groups) ? groups : []))
-      .catch(() => setClosedGroups([]));
+      .catch(() => {});
   }, [activeTab, profile.displayName, profile.phoneNumber]);
 
   const currentMonthName = useMemo(() => {
@@ -524,7 +589,26 @@ export default function HomePage() {
     };
   }, [historyList, userGroups, t]);
 
-  const handleClearActiveSession = () => {
+  const handleClearActiveSession = async () => {
+    const sessionId = activeSession?.id;
+    if (activeSession?.isHost && sessionId) {
+      try {
+        const response = await fetch(apiUrl(`/api/session/${encodeURIComponent(sessionId)}`), {
+          method: 'DELETE',
+          headers: roomHeaders('session', sessionId, false),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || 'Could not delete the session');
+        purgeDeletedSessionFromStorage(localStorage, sessionId);
+      } catch (error) {
+        alert(error instanceof Error ? error.message : 'Could not delete the session');
+        return false;
+      }
+    } else if (sessionId) {
+      // Leaving a live room locally must revoke every ID/code alias without
+      // hiding a future settled history entry for this participant.
+      purgeRoomCredentialsFromStorage(localStorage, 'session', sessionId);
+    }
     localStorage.removeItem('billsplit_active_session');
     setActiveSession(null);
     return true;
@@ -535,50 +619,91 @@ export default function HomePage() {
     router.push(`/session/${activeSession.id}`);
   };
 
+  const handleOpenActiveSessionQr = async () => {
+    if (!activeSession?.id) return;
+    try {
+      const response = await fetch(apiUrl(`/api/session/${activeSession.id}/refresh-invite`), {
+        method: 'POST',
+        headers: roomHeaders('session', activeSession.id),
+        body: JSON.stringify({
+          inviteToken: getSessionInviteToken(activeSession.id) || activeSession.inviteToken || '',
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.code) throw new Error(data.error || 'Could not refresh the session invitation');
+      if (data.inviteToken) saveSessionInviteToken(activeSession.id, data.inviteToken);
+      else clearSessionInviteToken(activeSession.id);
+      const refreshed = {
+        ...activeSession,
+        code: data.code,
+        inviteToken: data.inviteToken || undefined,
+      };
+      setActiveSession(refreshed);
+      localStorage.setItem('billsplit_active_session', JSON.stringify(refreshed));
+      setShowQrModal(true);
+    } catch (error) {
+      console.error('Could not refresh the active session invitation:', error);
+      alert(error instanceof Error ? error.message : 'Could not refresh the session invitation');
+    }
+  };
+
   const handleUniversalJoin = async (e: React.FormEvent) => {
     e.preventDefault();
     const code = universalJoinCode.trim();
-    if (!/^(?:\d{4}|\d{8})$/.test(code)) return;
+    if (!/^(?:\d{4}|\d{5}|\d{8})$/.test(code)) return;
 
     setIsUploading(true);
-    try {
-      // Prefer groups for legacy codes that were previously reused by group bills.
-      const grpRes = await fetch(apiUrl(`/api/groups/${code}`));
-      const grpData = await grpRes.json();
-      if (grpData.group) {
-        saveGroupToLocalList({
-          id: grpData.group.id,
-          code: grpData.group.code,
-          name: grpData.group.name
+    if (code.length === 8 || code.length === 4) {
+      try {
+        // Code length routes new invites without doubling NAT rate-limit usage;
+        // four digits remain a legacy-only group-first fallback.
+        const grpRes = await fetch(apiUrl(`/api/groups/${code}`), {
+          headers: { 'X-EasySplit-Client-Id': getOrCreateRoomClientId() },
         });
-        triggerHaptic('success');
-        router.push(`/group/${grpData.group.id}`);
-        return;
+        const grpData = await grpRes.json();
+        if (grpData.group) {
+          saveGroupToLocalList({
+            id: grpData.group.id,
+            code: grpData.group.code,
+            name: grpData.group.name
+          });
+          triggerHaptic('success');
+          router.push(`/group/${grpData.group.id}`);
+          return;
+        }
+      } catch (err) {
+        // legacy fallback and continue
       }
-    } catch (err) {
-      // fallback and continue
     }
 
-    try {
-      const sessRes = await fetch(apiUrl(`/api/session/${code}`));
-      const sessData = await sessRes.json();
-      if (sessData.session) {
-        localStorage.setItem(
-          'billsplit_active_session',
-          JSON.stringify({
-            id: sessData.session.id,
-            code: sessData.session.code,
-            storeName: sessData.session.storeName,
-            isHost: false
-          })
-        );
-        triggerHaptic('success');
-        router.push(`/session/${sessData.session.id}`);
-        return;
+    if (code.length === 5 || code.length === 4 || code.length === 8) {
+      try {
+        // Eight digits are a session fallback only for legacy rooms created
+        // before five-digit session codes shipped.
+        const sessRes = await fetch(apiUrl(`/api/session/${code}`), {
+          headers: { 'X-EasySplit-Client-Id': getOrCreateRoomClientId() },
+        });
+        const sessData = await sessRes.json();
+        if (sessData.session) {
+          localStorage.setItem(
+            'billsplit_active_session',
+            JSON.stringify({
+              id: sessData.session.id,
+              code: sessData.session.code,
+              storeName: sessData.session.storeName,
+              isHost: false
+            })
+          );
+          triggerHaptic('success');
+          router.push(`/session/${sessData.session.id}?code=${encodeURIComponent(code)}`);
+          return;
+        }
+      } catch (err) {
+        // ignore
+      } finally {
+        setIsUploading(false);
       }
-    } catch (err) {
-      // ignore
-    } finally {
+    } else {
       setIsUploading(false);
     }
 
@@ -617,27 +742,24 @@ export default function HomePage() {
     }
   };
 
-  const creatorIntentInFlightRef = useRef(false);
-
   const launchManualSession = async (
-    billData: { storeName: string; date?: string; currency: string; items: any[] },
-    intent?: Extract<CreatorIntent, { type: 'receipt-session' }>,
+    billData: { storeName: string; restaurant?: Record<string, unknown>; date?: string; currency: string; items: any[] },
   ): Promise<boolean> => {
     try {
-      const receiptDraft = intent?.receiptDraft ?? pendingReceiptDraft;
-      const scanId = intent?.scanId ?? pendingScanId;
-      const recoveryToken = intent?.recoveryToken ?? pendingRecoveryToken;
-      const creatorProfile = intent?.creatorProfile;
+      const receiptDraft = pendingReceiptDraft;
+      const scanId = pendingScanId;
+      const recoveryToken = pendingRecoveryToken;
       const res = await fetch(apiUrl('/api/receipt/scan'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           parsedBill: {
-            ...billData,
             ...receiptConfirmationPayload(receiptDraft),
+            ...billData,
           },
-          hostName: creatorProfile?.displayName || profile.displayName || 'Host',
-          hostPhone: creatorProfile?.phoneNumber || profile.phoneNumber || '',
+          hostName: profile.displayName || 'Host',
+          hostPhone: profile.phoneNumber || '',
+          clientId: getOrCreateRoomClientId(),
           scanId: scanId || undefined,
           recoveryToken: recoveryToken || undefined,
           confirmedByUser: true,
@@ -648,6 +770,7 @@ export default function HomePage() {
       const data = await res.json();
       if (data.success && data.sessionId) {
         saveRoomCredentials('session', data.sessionId, data.memberId || data.hostId, data.accessToken);
+        if (data.inviteToken) saveSessionInviteToken(data.sessionId, data.inviteToken);
         localStorage.setItem(
           'billsplit_active_session',
           JSON.stringify({
@@ -655,7 +778,8 @@ export default function HomePage() {
             code: data.code,
             storeName: data.session?.storeName || billData.storeName,
             isHost: true,
-            hostId: data.hostId
+            hostId: data.hostId,
+            inviteToken: data.inviteToken || undefined,
           })
         );
         setShowManualModal(false);
@@ -675,37 +799,7 @@ export default function HomePage() {
     }
   };
 
-  const handleLaunchManualSession = async (billData: { storeName: string; date?: string; currency: string; items: any[] }) => {
-    if (!firebaseUser) {
-      const { _previewImages, ...receiptDraft } = pendingReceiptDraft || {};
-      const intent: Extract<CreatorIntent, { type: 'receipt-session' }> = {
-        type: 'receipt-session',
-        createdAt: Date.now(),
-        billData,
-        receiptDraft,
-        scanId: pendingScanId,
-        recoveryToken: pendingRecoveryToken,
-        creatorProfile: {
-          displayName: profile.displayName.trim(),
-          phoneNumber: profile.phoneNumber || '',
-        },
-      };
-      savePendingCreatorIntent(intent);
-      creatorIntentInFlightRef.current = true;
-      triggerHaptic('medium');
-      try {
-        const loginResult = await loginWithGoogle();
-        if (loginResult === 'authenticated') {
-          const success = await launchManualSession(billData, intent);
-          if (success) clearPendingCreatorIntent();
-        } else if (loginResult === 'cancelled' || loginResult === 'failed') {
-          clearPendingCreatorIntent();
-        }
-      } finally {
-        creatorIntentInFlightRef.current = false;
-      }
-      return;
-    }
+  const handleLaunchManualSession = async (billData: { storeName: string; restaurant?: Record<string, unknown>; date?: string; currency: string; items: any[] }) => {
     await launchManualSession(billData);
   };
 
@@ -731,7 +825,6 @@ export default function HomePage() {
 
   const createGroup = async (
     groupData: { name: string; currency: string },
-    intent?: Extract<CreatorIntent, { type: 'group' }>,
   ): Promise<boolean> => {
     try {
       setIsUploading(true);
@@ -741,8 +834,9 @@ export default function HomePage() {
         body: JSON.stringify({
           name: groupData.name,
           currency: groupData.currency,
-          hostName: intent?.creatorProfile?.displayName || profile.displayName || 'Host',
-          hostPhone: intent?.creatorProfile?.phoneNumber || profile.phoneNumber || '',
+          hostName: profile.displayName || 'Host',
+          hostPhone: profile.phoneNumber || '',
+          clientId: getOrCreateRoomClientId(),
         })
       });
 
@@ -771,61 +865,18 @@ export default function HomePage() {
   };
 
   const handleCreateGroup = async (groupData: { name: string; currency: string }) => {
-    if (!firebaseUser) {
-      const intent: Extract<CreatorIntent, { type: 'group' }> = {
-        type: 'group',
-        createdAt: Date.now(),
-        groupData,
-        creatorProfile: {
-          displayName: profile.displayName.trim(),
-          phoneNumber: profile.phoneNumber || '',
-        },
-      };
-      savePendingCreatorIntent(intent);
-      creatorIntentInFlightRef.current = true;
-      triggerHaptic('medium');
-      try {
-        const loginResult = await loginWithGoogle();
-        if (loginResult === 'authenticated') {
-          const success = await createGroup(groupData, intent);
-          if (success) clearPendingCreatorIntent();
-        } else if (loginResult === 'cancelled' || loginResult === 'failed') {
-          clearPendingCreatorIntent();
-        }
-      } finally {
-        creatorIntentInFlightRef.current = false;
-      }
-      return;
-    }
     await createGroup(groupData);
   };
-
-  useEffect(() => {
-    if (!firebaseUser || creatorIntentInFlightRef.current) return;
-
-    const intent = readPendingCreatorIntent();
-    if (!intent) return;
-    const creatorName = intent.creatorProfile?.displayName || profile.displayName.trim();
-    const creatorPhone = intent.creatorProfile?.phoneNumber || profile.phoneNumber || '';
-    if (!creatorName || !isValidIsraeliPhone(creatorPhone)) return;
-    creatorIntentInFlightRef.current = true;
-
-    const resume = intent.type === 'receipt-session'
-      ? launchManualSession(intent.billData, intent)
-      : createGroup(intent.groupData, intent);
-    void resume
-      .then((success) => {
-        if (success) clearPendingCreatorIntent();
-      })
-      .finally(() => {
-        creatorIntentInFlightRef.current = false;
-      });
-  }, [firebaseUser, profile.displayName, profile.phoneNumber]);
 
 
 
   const handleDeleteHistory = async (id: string) => {
     try {
+      const response = await fetch(apiUrl(`/api/history/${id}`), { method: 'DELETE' });
+      if (!response.ok && response.status !== 401) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'Could not remove history item');
+      }
       const localDeleted = localStorage.getItem('billsplit_deleted_history_ids');
       const deletedIds = localDeleted ? JSON.parse(localDeleted) : [];
       if (!deletedIds.includes(id)) {
@@ -833,20 +884,38 @@ export default function HomePage() {
         localStorage.setItem('billsplit_deleted_history_ids', JSON.stringify(deletedIds));
       }
       setHistoryList((prev) => prev.filter((item) => item.id !== id));
-
-      // Attempt backend deletion
-      await fetch(apiUrl(`/api/history/${id}`), { method: 'DELETE' });
       return true;
     } catch (err) {
       console.error(err);
-      return true; // Return true as it was successfully hidden on the client side
+      alert(err instanceof Error ? err.message : 'Could not remove history item');
+      return false;
+    }
+  };
+
+  const handleDeleteClosedGroup = async (groupId: string) => {
+    try {
+      const res = await fetch(apiUrl(`/api/user/groups/${groupId}/history`), {
+        method: 'DELETE',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok && res.status !== 401) throw new Error(data.error || 'Could not remove group history');
+      setClosedGroups((groups) => groups.filter((candidate) => candidate.id !== groupId));
+      purgeDeletedGroupFromStorage(localStorage, groupId);
+      return true;
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Could not remove group history');
+      return false;
     }
   };
 
   const handleSaveSettings = (e: React.FormEvent) => {
     e.preventDefault();
     const finalName = nameInput.trim() || 'User';
-    const finalPhone = phoneInput.trim();
+    const finalPhone = cleanIsraeliPhone(phoneInput.trim());
+    if (!isValidIsraeliPhone(finalPhone)) {
+      alert(isRtl ? 'יש להזין מספר נייד ישראלי תקין.' : 'Please enter a valid Israeli mobile number.');
+      return;
+    }
 
     setProfile((prev) => ({
       ...prev,
@@ -908,6 +977,7 @@ export default function HomePage() {
           onClose={() => setShowQrModal(false)}
           sessionCode={activeSession.code}
           sessionId={activeSession.id}
+          inviteToken={activeSession.inviteToken || ''}
         />
       )}
 
@@ -957,7 +1027,13 @@ export default function HomePage() {
 
             {/* Compact Swipe-To-Delete Active Session Card */}
             {activeSession && (
-              <SwipeableCard onDelete={handleClearActiveSession}>
+              <SwipeableCard
+                onDelete={handleClearActiveSession}
+                confirmationTitle={isRtl ? 'למחוק את הסשן החי?' : 'Delete the live session?'}
+                confirmationDescription={activeSession.isHost
+                  ? (isRtl ? 'הסשן יימחק מיד לכל המשתתפים.' : 'The session will be deleted immediately for everyone.')
+                  : (isRtl ? 'הסשן יוסר רק מהמכשיר שלך.' : 'The session will only be removed from this device.')}
+              >
                 <div className="brand-card p-3.5 rounded-[20px] space-y-2">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5">
@@ -971,7 +1047,7 @@ export default function HomePage() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        setShowQrModal(true);
+                        void handleOpenActiveSessionQr();
                       }}
                       className="brand-tap p-1.5 rounded-full bg-brand-50 dark:bg-brand-900 text-brand-700 dark:text-brand-200 hover:bg-brand-100"
                       title="Share QR Code"
@@ -980,7 +1056,7 @@ export default function HomePage() {
                     </button>
                   </div>
 
-                  <div className="flex items-center justify-between">
+                  <div className="space-y-3">
                     <div>
                       <h3 className="text-base font-bold text-brand-950 dark:text-white leading-tight">{activeSession.storeName}</h3>
                       <p className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">#{activeSession.code}</p>
@@ -988,9 +1064,9 @@ export default function HomePage() {
 
                     <button
                       onClick={handleReenterActiveSession}
-                      className="py-1.5 px-3 photo-btn-dark text-[11px] flex items-center gap-1 shadow-sm"
+                      className="w-full py-3.5 px-5 photo-btn-dark text-sm flex items-center justify-center gap-2 shadow-md"
                     >
-                      <Play className="w-3 h-3 fill-current" />
+                      <Play className="w-4 h-4 fill-current" />
                       <span>{t('reenterActiveSession', undefined, 'Re-Enter Active Session')}</span>
                     </button>
                   </div>
@@ -1351,25 +1427,31 @@ export default function HomePage() {
                     {closedGroups.map((closedGroup: any) => {
                       const total = formatDual ? formatDual(Number(closedGroup.totalSpent || 0), closedGroup.currency || currency) : { primary: `${Number(closedGroup.totalSpent || 0).toFixed(2)} ${closedGroup.currency || currency}` };
                       return (
-                        <button
+                        <SwipeableCard
                           key={closedGroup.id}
-                          type="button"
-                          onClick={() => router.push(`/group/${closedGroup.id}`)}
-                          className="brand-tap w-full p-3.5 rounded-2xl brand-card flex items-center justify-between text-left rtl:text-right hover:bg-brand-50 dark:hover:bg-brand-900 transition-all shadow-xs"
+                          onDelete={() => handleDeleteClosedGroup(closedGroup.id)}
+                          confirmationTitle={isRtl ? 'להסיר מההיסטוריה?' : 'Remove from history?'}
+                          confirmationDescription={isRtl ? 'הקבוצה תוסתר רק מההיסטוריה שלך.' : 'This group will be hidden only from your history.'}
                         >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-10 h-10 rounded-full bg-mint-500/10 text-mint-600 dark:text-mint-400 border border-mint-500/20 flex items-center justify-center shrink-0">
-                              <Check className="w-4 h-4" />
+                          <button
+                            type="button"
+                            onClick={() => router.push(`/group/${closedGroup.id}`)}
+                            className="brand-tap w-full p-3.5 rounded-2xl brand-card flex items-center justify-between text-left rtl:text-right hover:bg-brand-50 dark:hover:bg-brand-900 transition-all shadow-xs"
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-10 h-10 rounded-full bg-mint-500/10 text-mint-600 dark:text-mint-400 border border-mint-500/20 flex items-center justify-center shrink-0">
+                                <Check className="w-4 h-4" />
+                              </div>
+                              <div className="min-w-0">
+                                <h4 className="font-extrabold text-sm text-slate-900 dark:text-white truncate">{closedGroup.name}</h4>
+                                <p className="text-[10px] text-slate-500 dark:text-slate-400 font-semibold mt-0.5">
+                                  {closedGroup.billsCount || 0} {isRtl ? 'חלוקות' : 'splits'} · {total.primary}
+                                </p>
+                              </div>
                             </div>
-                            <div className="min-w-0">
-                              <h4 className="font-extrabold text-sm text-slate-900 dark:text-white truncate">{closedGroup.name}</h4>
-                              <p className="text-[10px] text-slate-500 dark:text-slate-400 font-semibold mt-0.5">
-                                {closedGroup.billsCount || 0} {isRtl ? 'חלוקות' : 'splits'} · {total.primary}
-                              </p>
-                            </div>
-                          </div>
-                          <span className="text-[9px] font-black text-mint-600 dark:text-mint-400">{isRtl ? 'נסגרה' : 'Closed'}</span>
-                        </button>
+                            <span className="text-[9px] font-black text-mint-600 dark:text-mint-400">{isRtl ? 'נסגרה' : 'Closed'}</span>
+                          </button>
+                        </SwipeableCard>
                       );
                     })}
                   </div>
@@ -1424,7 +1506,12 @@ export default function HomePage() {
                       }
 
                       return (
-                        <SwipeableCard key={item.id} onDelete={() => handleDeleteHistory(item.id)}>
+                        <SwipeableCard
+                          key={item.id}
+                          onDelete={() => handleDeleteHistory(item.id)}
+                          confirmationTitle={isRtl ? 'להסיר מההיסטוריה?' : 'Remove from history?'}
+                          confirmationDescription={isRtl ? 'הרשומה תוסר רק מההיסטוריה שלך.' : 'This record will only be removed from your history.'}
+                        >
                           <div
                             onClick={() => {
                               if (item.isGroupBill && item.groupId) {
@@ -2055,7 +2142,7 @@ export default function HomePage() {
 
               <button
                 type="submit"
-                disabled={!/^(?:\d{4}|\d{8})$/.test(universalJoinCode)}
+                disabled={!/^(?:\d{4}|\d{5}|\d{8})$/.test(universalJoinCode)}
                 className="w-full py-3 px-4 photo-btn-indigo text-xs flex items-center justify-center gap-1.5 disabled:opacity-40"
               >
                 <span>{t('joinSessionBtn', undefined, 'Join')}</span>

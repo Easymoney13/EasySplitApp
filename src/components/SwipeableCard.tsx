@@ -1,18 +1,29 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Trash2 } from 'lucide-react';
 
 interface SwipeableCardProps {
   children: React.ReactNode;
   onDelete: () => boolean | void | Promise<boolean | void>;
   className?: string;
+  confirmationTitle?: string;
+  confirmationDescription?: string;
 }
 
-export function SwipeableCard({ children, onDelete, className = '' }: SwipeableCardProps) {
+export function SwipeableCard({
+  children,
+  onDelete,
+  className = '',
+  confirmationTitle = 'Are you sure?',
+  confirmationDescription = 'This item will be removed from your list.',
+}: SwipeableCardProps) {
   const [translateX, setTranslateX] = useState(0);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isSwiping, setIsSwiping] = useState(false);
+  const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
+  const [isConfirming, setIsConfirming] = useState(false);
   const startXRef = useRef<number | null>(null);
   const blockClickRef = useRef(false);
 
@@ -46,17 +57,51 @@ export function SwipeableCard({ children, onDelete, className = '' }: SwipeableC
     startXRef.current = null;
 
     if (translateX < -70) {
-      const shouldRemove = await onDelete();
-      if (shouldRemove === false) {
-        setTranslateX(0);
-      } else {
-        setTranslateX(-400);
-        setIsDeleting(true);
-      }
+      setTranslateX(-92);
+      setShowDeleteConfirmation(true);
     } else {
       setTranslateX(0);
     }
   };
+
+  const cancelDelete = () => {
+    if (isConfirming) return;
+    resetDeleteUi();
+  };
+
+  const resetDeleteUi = () => {
+    setIsConfirming(false);
+    setShowDeleteConfirmation(false);
+    setTranslateX(0);
+    blockClickRef.current = false;
+  };
+
+  const confirmDelete = async () => {
+    if (isConfirming) return;
+    setIsConfirming(true);
+    try {
+      const shouldRemove = await onDelete();
+      if (shouldRemove === false) {
+        resetDeleteUi();
+        return;
+      }
+      setShowDeleteConfirmation(false);
+      setTranslateX(-400);
+      setIsDeleting(true);
+    } catch (error) {
+      console.error('Delete failed:', error);
+      resetDeleteUi();
+    }
+  };
+
+  useEffect(() => {
+    if (!showDeleteConfirmation) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') cancelDelete();
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [showDeleteConfirmation]);
 
   const handleClickCapture = (e: React.MouseEvent) => {
     if (blockClickRef.current) {
@@ -67,6 +112,7 @@ export function SwipeableCard({ children, onDelete, className = '' }: SwipeableC
   };
 
   return (
+    <>
     <div
       onClickCapture={handleClickCapture}
       className={`relative overflow-hidden rounded-2xl transition-all duration-300 ease-out ${
@@ -101,5 +147,28 @@ export function SwipeableCard({ children, onDelete, className = '' }: SwipeableC
         {children}
       </div>
     </div>
+    {showDeleteConfirmation && typeof document !== 'undefined' && createPortal(
+      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm" onClick={cancelDelete}>
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="delete-confirmation-title"
+          className="w-full max-w-xs rounded-3xl border border-slate-200 bg-white p-5 text-center shadow-2xl dark:border-slate-700 dark:bg-brand-950"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-400">
+            <Trash2 className="h-5 w-5" />
+          </div>
+          <h3 id="delete-confirmation-title" className="text-base font-black text-slate-950 dark:text-white">{confirmationTitle}</h3>
+          <p className="mt-1 text-xs font-medium text-slate-500 dark:text-slate-400">{confirmationDescription}</p>
+          <div className="mt-5 grid grid-cols-2 gap-2">
+            <button type="button" disabled={isConfirming} onClick={cancelDelete} className="rounded-xl border border-slate-200 px-4 py-3 text-xs font-extrabold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200">Cancel</button>
+            <button type="button" disabled={isConfirming} onClick={() => void confirmDelete()} className="rounded-xl bg-red-600 px-4 py-3 text-xs font-extrabold text-white hover:bg-red-700 disabled:opacity-50">{isConfirming ? 'Deleting…' : 'Delete'}</button>
+          </div>
+        </div>
+      </div>,
+      document.body,
+    )}
+    </>
   );
 }

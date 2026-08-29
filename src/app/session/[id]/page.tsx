@@ -37,12 +37,13 @@ import { AnimatedRollingNumber } from '../../../components/AnimatedRollingNumber
 import { getCookie, setCookie } from '../../../../lib/cookies';
 import { cleanIsraeliPhone, isValidIsraeliPhone, triggerBitPayment } from '../../../../lib/bitDeepLink';
 import { triggerHaptic } from '../../../../lib/haptics';
-import { getRoomMemberId, getRoomToken, roomHeaders, saveRoomCredentials } from '../../../../lib/roomTokens';
+import { clearRoomCredentials, clearSessionInviteToken, getOrCreateRoomClientId, getRoomMemberId, getRoomToken, getSessionInviteToken, roomHeaders, saveRoomCredentials, saveSessionInviteToken } from '../../../../lib/roomTokens';
 import { getReceiptPayableTotal } from '../../../../lib/receiptMath';
 import { allocateCentsProportionally, allocateTipAdjustedCents, splitCents, toCents } from '../../../../lib/debtMinimizer';
 import { fetchPaginatedAccountData } from '../../../../lib/accountClient';
 import { apiUrl, realtimeUrl } from '../../../../lib/platformTransport';
 import { MOBILE_RECOVERY_EVENT } from '../../../../lib/mobileEvents';
+import { purgeDeletedSessionFromStorage } from '../../../../lib/localLifecycle';
 
 function createClientActionId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -106,6 +107,7 @@ function SessionWorkspaceInner() {
   const formatPrice = langCtx?.formatPrice || ((a: number) => `${a || 0}`);
   const formatDual = langCtx?.formatDual || ((a: number) => ({ primary: `${a || 0}` }));
   const profile = langCtx?.profile || { displayName: 'User', avatarColor: '#4DE1A1' };
+  const authLoading = langCtx?.authLoading ?? true;
   const isRtl = langCtx?.isRtl || false;
   const theme = langCtx?.theme || 'light';
   const setTheme = langCtx?.setTheme || (() => {});
@@ -184,13 +186,16 @@ function SessionWorkspaceInner() {
   const lastMobileRecoveryAtRef = useRef(0);
   const paymentLaunchRef = useRef(false);
   const finishTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const joinInFlightRef = useRef<{ roomId: string; promise: Promise<any> } | null>(null);
 
   useEffect(() => () => {
     if (finishTimerRef.current) clearTimeout(finishTimerRef.current);
   }, []);
 
   useEffect(() => {
-    if (!sessionId) return;
+    const displayName = profile.displayName?.trim() || '';
+    const phoneNumber = profile.phoneNumber || '';
+    if (!sessionId || authLoading || !displayName || !isValidIsraeliPhone(phoneNumber)) return;
     let disposed = false;
     let pollInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -198,7 +203,7 @@ function SessionWorkspaceInner() {
       try {
         const initialRes = await fetch(apiUrl(`/api/session/${sessionId}`), { headers: roomHeaders('session', sessionId, false) });
         if (initialRes.status === 404) {
-          if (!disposed) setSessionNotFound(true);
+          if (!disposed) handleSessionDeleted(sessionId);
           return;
         }
         const initialData = await initialRes.json();
@@ -206,6 +211,10 @@ function SessionWorkspaceInner() {
 
         const resolvedId = initialData.session.id;
         const urlParams = new URLSearchParams(window.location.search);
+        const fragmentParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+        const urlInviteToken = fragmentParams.get('invite') || urlParams.get('invite') || '';
+        const manualCode = urlParams.get('code') || (/^\d{5}$/.test(sessionId) ? sessionId : '');
+        if (urlInviteToken) saveSessionInviteToken(resolvedId, urlInviteToken);
         const linkedGroupId = urlParams.get('groupId') || initialData.session.groupId;
         const existingToken = getRoomToken('session', resolvedId)
           || (linkedGroupId ? getRoomToken('group', linkedGroupId) : '');
@@ -218,21 +227,38 @@ function SessionWorkspaceInner() {
           return;
         }
 
-        const joinRes = await fetch(apiUrl(`/api/session/${resolvedId}/join`), {
-          method: 'POST',
-          headers: roomHeaders('session', resolvedId),
-          body: JSON.stringify({
-            name: profile?.displayName || 'Guest',
-            phone: profile?.phoneNumber || '',
-          }),
-        });
-        const joined = await joinRes.json();
-        if (!joinRes.ok || !joined.session || !joined.accessToken) {
-          throw new Error(joined.error || 'Could not join session');
+        let joinEntry = joinInFlightRef.current;
+        if (!joinEntry || joinEntry.roomId !== resolvedId) {
+          const promise = (async () => {
+            const joinRes = await fetch(apiUrl(`/api/session/${resolvedId}/join`), {
+              method: 'POST',
+              headers: roomHeaders('session', resolvedId),
+              body: JSON.stringify({
+                name: displayName,
+                phone: phoneNumber,
+                clientId: getOrCreateRoomClientId(),
+                inviteToken: urlInviteToken || getSessionInviteToken(resolvedId),
+                manualCode,
+              }),
+            });
+            const joined = await joinRes.json();
+            if (!joinRes.ok || !joined.session || !joined.accessToken) {
+              throw new Error(joined.error || 'Could not join session');
+            }
+            saveRoomCredentials('session', resolvedId, joined.memberId, joined.accessToken);
+            if (resolvedId !== sessionId) saveRoomCredentials('session', sessionId, joined.memberId, joined.accessToken);
+            if (linkedGroupId) saveRoomCredentials('group', linkedGroupId, joined.memberId, joined.accessToken);
+            return joined;
+          })();
+          joinEntry = { roomId: resolvedId, promise };
+          joinInFlightRef.current = joinEntry;
         }
-        saveRoomCredentials('session', resolvedId, joined.memberId, joined.accessToken);
-        if (resolvedId !== sessionId) saveRoomCredentials('session', sessionId, joined.memberId, joined.accessToken);
-        if (linkedGroupId) saveRoomCredentials('group', linkedGroupId, joined.memberId, joined.accessToken);
+        let joined;
+        try {
+          joined = await joinEntry.promise;
+        } finally {
+          if (joinInFlightRef.current === joinEntry) joinInFlightRef.current = null;
+        }
 
         if (!disposed) {
           setCurrentMemberId(joined.memberId);
@@ -264,7 +290,7 @@ function SessionWorkspaceInner() {
       socketRef.current = null;
       if (socket) socket.close();
     };
-  }, [sessionId, profile.displayName, profile.phoneNumber]);
+  }, [sessionId, profile.displayName, profile.phoneNumber, authLoading]);
 
 
   useEffect(() => {
@@ -334,6 +360,7 @@ function SessionWorkspaceInner() {
             groupId: resolvedGroupId,
             name: profile.displayName || 'Member',
             phone: profile.phoneNumber || '',
+            clientId: getOrCreateRoomClientId(),
           }),
         });
         const joined = await joinRes.json();
@@ -388,7 +415,8 @@ function SessionWorkspaceInner() {
             code: session.code,
             storeName: session.storeName,
             isHost: !!isHost,
-            memberId: currentMemberId
+            memberId: currentMemberId,
+            inviteToken: getSessionInviteToken(session.id) || undefined,
           })
         );
       }
@@ -426,10 +454,23 @@ function SessionWorkspaceInner() {
   useEffect(() => {
     if (session?.status === 'settled') {
       localStorage.removeItem('billsplit_active_session');
+      setShowQrModal(false);
     }
   }, [session?.status]);
 
   const [sessionNotFound, setSessionNotFound] = useState(false);
+
+  const handleSessionDeleted = (id: string) => {
+    activeSessionIdRef.current = '';
+    activeSessionTokenRef.current = '';
+    const socket = socketRef.current;
+    socketRef.current = null;
+    if (socket) socket.close();
+    clearRoomCredentials('session', id);
+    purgeDeletedSessionFromStorage(localStorage, id);
+    setSession(null);
+    setSessionNotFound(true);
+  };
 
   const fetchSessionData = async (id: string) => {
     try {
@@ -441,7 +482,7 @@ function SessionWorkspaceInner() {
           setSessionNotFound(false);
         }
       } else if (res.status === 404) {
-        setSessionNotFound(true);
+        handleSessionDeleted(id);
       }
     } catch (err) {
       console.error('Error fetching session:', err);
@@ -474,6 +515,8 @@ function SessionWorkspaceInner() {
           const data = JSON.parse(event.data);
           if (data.type === 'SESSION_UPDATE' && data.session) {
             setSession(data.session);
+          } else if (data.type === 'SESSION_DELETED') {
+            handleSessionDeleted(id);
           }
         } catch (e) {
           console.error(e);
@@ -541,6 +584,21 @@ function SessionWorkspaceInner() {
       fetchSessionData(session?.id || sessionId);
       alert(err instanceof Error ? err.message : 'Could not update the session.');
       return false;
+    }
+  };
+
+  const reopenMyShare = async () => {
+    const success = await sendAction('TOGGLE_SETTLED', { memberId: currentMemberId, settled: false });
+    if (!success || !session?.id) return;
+    for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+      const key = localStorage.key(index);
+      if (!key || (key !== 'billsplit_history' && !key.startsWith('billsplit_history_'))) continue;
+      try {
+        const entries = JSON.parse(localStorage.getItem(key) || '[]');
+        if (Array.isArray(entries)) {
+          localStorage.setItem(key, JSON.stringify(entries.filter((entry: any) => entry?.id !== session.id)));
+        }
+      } catch (_) {}
     }
   };
 
@@ -668,12 +726,76 @@ function SessionWorkspaceInner() {
   const hasSettledMembers = validMembers.some((member: any) => member?.settled === true);
   const isCurrentMemberSettled = Boolean(currentMember?.settled);
   const isAccountingLocked = isSessionClosed || hasSettledMembers;
+  const openShareModal = async () => {
+    if (!session?.id || session.status === 'settled') return;
+    if (session.groupId) {
+      setShowQrModal(true);
+      return;
+    }
+    try {
+      const response = await fetch(apiUrl(`/api/session/${session.id}/refresh-invite`), {
+        method: 'POST',
+        headers: roomHeaders('session', session.id),
+        body: JSON.stringify({ inviteToken: getSessionInviteToken(session.id) }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.code) throw new Error(data.error || 'Could not refresh the session invitation');
+      if (data.inviteToken) saveSessionInviteToken(session.id, data.inviteToken);
+      else clearSessionInviteToken(session.id);
+      setSession((current: any) => current ? { ...current, code: data.code } : current);
+      setShowQrModal(true);
+    } catch (error) {
+      console.error('Could not refresh the session invitation:', error);
+      alert(error instanceof Error ? error.message : 'Could not refresh the session invitation');
+    }
+  };
+  const settledMemberIds = new Set(
+    validMembers.filter((member: any) => member?.active !== false && member?.settled === true).map((member: any) => member.id),
+  );
 
   const activePayerId = session?.payerId || 'each';
   const isEachPaid = activePayerId === 'each';
   const payerMember = !isEachPaid ? activeMembers.find((m: any) => m?.id === activePayerId) : null;
   const activePayerName = payerMember?.name || (isEachPaid ? t('eachPaidShare', undefined, 'Each paid their own share') : (session?.hostName || hostMember?.name || 'Host'));
   const isMePayer = !isEachPaid && activePayerId === currentMemberId;
+
+  const persistSessionHistoryLocally = (userShare = memberCalculations.myShare) => {
+    if (!session?.id) return;
+    try {
+      const rawName = (profile?.displayName || '').trim();
+      const userKey = rawName.toLowerCase();
+      const histRecord = {
+        id: session.id,
+        storeName: session.storeName || 'Bill Session',
+        date: session.date || new Date().toISOString().split('T')[0],
+        totalAmount: memberCalculations.grandTotal || 0,
+        userShare: userShare || memberCalculations.myShare || 0,
+        currency: session.currency || 'NIS',
+        membersCount: validMembers.length || 1,
+        groupId: session.groupId,
+        isGroupBill: Boolean(session.groupId),
+        payerName: activePayerName,
+        createdAt: Date.now(),
+        settledAt: Date.now(),
+        status: 'settled',
+      };
+      [
+        `billsplit_history_${userKey}`,
+        rawName ? `billsplit_history_${rawName}` : null,
+        'billsplit_history',
+      ].filter(Boolean).forEach((key) => {
+        try {
+          const existing = localStorage.getItem(key!);
+          const list = existing ? JSON.parse(existing) : [];
+          const filtered = Array.isArray(list) ? list.filter((entry: any) => entry.id !== session.id) : [];
+          filtered.unshift(histRecord);
+          localStorage.setItem(key!, JSON.stringify(filtered));
+        } catch (_) {}
+      });
+    } catch (error) {
+      console.error('Error saving local history:', error);
+    }
+  };
 
   const launchSessionPayment = async (method: 'bit' | 'paybox') => {
     if (paymentLaunchRef.current || !session?.id || isEachPaid || isMePayer || !activePayerId) return;
@@ -727,30 +849,16 @@ function SessionWorkspaceInner() {
   };
 
 
-  const finishGroupSplit = async () => {
-    if (!session?.groupId || !session?.billId || !isCurrentUserHost || isSettling !== 'idle') return;
-    const groupId = String(session.groupId);
-    const groupToken = getRoomToken('group', groupId) || getRoomToken('session', session.id);
-    if (groupToken && !getRoomToken('group', groupId)) {
-      saveRoomCredentials('group', groupId, currentMemberId, groupToken);
-    }
+  const finishMyGroupShare = async () => {
+    if (!session?.groupId || !session?.billId || !currentMemberId || isSettling !== 'idle') return;
     setIsSettling('loading');
     try {
-      const response = await fetch(apiUrl('/api/groups/bill/action'), {
-        method: 'POST',
-        headers: roomHeaders('group', groupId),
-        body: JSON.stringify({
-          groupId,
-          action: 'FINALIZE_BILL',
-          actionId: createClientActionId(),
-          payload: { billId: session.billId },
-        }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || 'Could not finish this split');
+      const success = await sendAction('TOGGLE_SETTLED', { memberId: currentMemberId, settled: true });
+      if (!success) throw new Error('Could not finish your share');
+      persistSessionHistoryLocally(memberCalculations.myShare);
       setIsSettling('success');
       triggerHaptic('success');
-      router.push(`/group/${groupId}`);
+      setTimeout(() => router.push(`/group/${session.groupId}`), 450);
     } catch (error) {
       setIsSettling('idle');
       alert(error instanceof Error ? error.message : 'Could not finish this split');
@@ -818,13 +926,15 @@ function SessionWorkspaceInner() {
             {theme === 'dark' ? <Sun className="w-5 h-5 text-amber-400" /> : <Moon className="w-5 h-5 text-slate-700" />}
           </button>
 
-          <button
-            onClick={() => setShowQrModal(true)}
-            className="brand-tap w-10 h-10 rounded-full bg-brand-600 dark:bg-brand-300 text-white dark:text-brand-950 flex items-center justify-center hover:bg-brand-700 dark:hover:bg-brand-200 transition-colors shadow-brand font-bold"
-            title="Share & Invite"
-          >
-            <Share2 className="w-5 h-5" />
-          </button>
+          {!isSessionClosed && (
+            <button
+              onClick={openShareModal}
+              className="brand-tap w-10 h-10 rounded-full bg-brand-600 dark:bg-brand-300 text-white dark:text-brand-950 flex items-center justify-center hover:bg-brand-700 dark:hover:bg-brand-200 transition-colors shadow-brand font-bold"
+              title="Share & Invite"
+            >
+              <Share2 className="w-5 h-5" />
+            </button>
+          )}
         </div>
       </header>
 
@@ -836,6 +946,7 @@ function SessionWorkspaceInner() {
         sessionId={session.groupId || session.id || ''}
         isGroup={Boolean(session.groupId)}
         hideCode={Boolean(session.groupId)}
+        inviteToken={session.groupId ? '' : getSessionInviteToken(session.id)}
       />
 
       {/* Real-Time Members List - Vibrant Modern Design */}
@@ -851,13 +962,15 @@ function SessionWorkspaceInner() {
             </span>
           </div>
 
-          <button
-            onClick={() => setShowQrModal(true)}
-            className="py-1.5 px-3.5 rounded-full bg-brand-600 hover:bg-brand-700 text-white text-xs font-black flex items-center gap-1.5 transition-all shadow-md shadow-brand-600/20 active:scale-95"
-          >
-            <UserPlus className="w-3.5 h-3.5" />
-            <span>{t('inviteBtn', undefined, 'Invite')}</span>
-          </button>
+          {!isSessionClosed && (
+            <button
+              onClick={openShareModal}
+              className="py-1.5 px-3.5 rounded-full bg-brand-600 hover:bg-brand-700 text-white text-xs font-black flex items-center gap-1.5 transition-all shadow-md shadow-brand-600/20 active:scale-95"
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              <span>{t('inviteBtn', undefined, 'Invite')}</span>
+            </button>
+          )}
         </div>
 
         {/* Member Avatars Horizontal Scroll */}
@@ -959,7 +1072,9 @@ function SessionWorkspaceInner() {
         )}
         {!isSessionClosed && hasSettledMembers && (
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-center text-xs font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-200">
-            {t('paymentAllocationLocked', undefined, 'Items, payer and tip are locked while a member is marked paid. That member can reopen their share before further edits.')}
+            {isRtl
+              ? 'המשלם והטיפ נעולים. מי שטרם סיים עדיין יכול לבחור פריטים שאינם שייכים למשתתף שסיים.'
+              : 'Payer and tip are locked. Unfinished members can still claim items that do not affect a finished member.'}
           </div>
         )}
         
@@ -995,6 +1110,9 @@ function SessionWorkspaceInner() {
           {validItems.map((item: any) => {
             const claimants = Array.isArray(item?.claimedBy) ? item.claimedBy : [];
             const isClaimedByMe = claimants.includes(currentMemberId);
+            const isItemClaimLocked = isSessionClosed
+              || isCurrentMemberSettled
+              || claimants.some((memberId: string) => settledMemberIds.has(memberId));
             const splitCount = claimants.length;
             const itemPrice = typeof item?.price === 'number' ? item.price : parseFloat(item?.price) || 0;
             const splitPrice = splitCount > 0 ? itemPrice / splitCount : itemPrice;
@@ -1042,18 +1160,18 @@ function SessionWorkspaceInner() {
             return (
               <div
                 key={item?.id}
-                onClick={isAccountingLocked ? undefined : () => sendAction('TOGGLE_CLAIM', { itemId: item?.id, memberId: currentMemberId, claimed: !isClaimedByMe })}
-                onKeyDown={isAccountingLocked ? undefined : (event) => {
+                onClick={isItemClaimLocked ? undefined : () => sendAction('TOGGLE_CLAIM', { itemId: item?.id, memberId: currentMemberId, claimed: !isClaimedByMe })}
+                onKeyDown={isItemClaimLocked ? undefined : (event) => {
                   if (event.target !== event.currentTarget) return;
                   if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault();
                     sendAction('TOGGLE_CLAIM', { itemId: item?.id, memberId: currentMemberId, claimed: !isClaimedByMe });
                   }
                 }}
-                role={isAccountingLocked ? undefined : 'button'}
-                tabIndex={isAccountingLocked ? undefined : 0}
-                aria-pressed={isAccountingLocked ? undefined : isClaimedByMe}
-                className={`relative p-4 sm:p-5 rounded-2xl transition-all flex flex-col border ${isAccountingLocked ? '' : 'cursor-pointer active:scale-[0.99]'} ${
+                role={isItemClaimLocked ? undefined : 'button'}
+                tabIndex={isItemClaimLocked ? undefined : 0}
+                aria-pressed={isItemClaimLocked ? undefined : isClaimedByMe}
+                className={`relative p-4 sm:p-5 rounded-2xl transition-all flex flex-col border ${isItemClaimLocked ? 'opacity-85' : 'cursor-pointer active:scale-[0.99]'} ${
                   isClaimedByMe
                     ? 'bg-brand-500/[0.08] dark:bg-brand-500/[0.15] border-brand-400 dark:border-brand-500/60 shadow-md shadow-brand-500/10'
                     : 'bg-white dark:bg-[#141B28] border-slate-200/80 dark:border-white/10 shadow-xs hover:border-slate-300 dark:hover:border-white/20'
@@ -1173,33 +1291,32 @@ function SessionWorkspaceInner() {
           <button
             onClick={() => {
               if (isCurrentMemberSettled) {
-                void sendAction('TOGGLE_SETTLED', { memberId: currentMemberId, settled: false });
+                void reopenMyShare();
                 return;
               }
-              if (isCurrentUserHost) finishGroupSplit();
-              else handleBackNavigation();
+              void finishMyGroupShare();
             }}
-            disabled={!isCurrentMemberSettled && isCurrentUserHost && isSettling !== 'idle'}
+            disabled={!isCurrentMemberSettled && isSettling !== 'idle'}
             className="brand-tap py-3.5 px-6 rounded-xl bg-brand-600 hover:bg-brand-700 dark:bg-brand-300 dark:hover:bg-brand-200 text-white dark:text-brand-950 font-bold shadow-brand text-sm transition-all disabled:opacity-60"
           >
             {isCurrentMemberSettled
               ? t('reopenMyShareBtn', undefined, 'Reopen My Share')
-              : isCurrentUserHost
-                ? (isSettling === 'loading' ? (isRtl ? 'מסיים...' : 'Finishing...') : (isRtl ? 'סיים חלוקה' : 'Finish Split'))
-                : (isRtl ? 'חזרה לקבוצה' : 'Back to Group')}
+              : (isSettling === 'loading'
+                  ? (isRtl ? 'מסיים...' : 'Finishing...')
+                  : (isRtl ? 'סיים את החלק שלי' : 'Finish My Share'))}
           </button>
         ) : (
           <button
             onClick={() => {
-              if (isCurrentMemberSettled && !isCurrentUserHost) {
-                void sendAction('TOGGLE_SETTLED', { memberId: currentMemberId, settled: false });
+              if (isCurrentMemberSettled) {
+                void reopenMyShare();
                 return;
               }
               setShowSettleModal(true);
             }}
             className="brand-tap py-3.5 px-6 rounded-xl bg-brand-600 hover:bg-brand-700 dark:bg-brand-300 dark:hover:bg-brand-200 text-white dark:text-brand-950 font-bold shadow-brand text-sm transition-all"
           >
-            {isCurrentMemberSettled && !isCurrentUserHost
+            {isCurrentMemberSettled
               ? t('reopenMyShareBtn', undefined, 'Reopen My Share')
               : t('settleAndPayBtn', undefined, 'Settle & Pay')}
           </button>
@@ -1610,51 +1727,14 @@ function SessionWorkspaceInner() {
                     setIsSettling('loading');
                     triggerHaptic('medium');
 
-                    const success = isCurrentUserHost
-                      ? await sendAction('SETTLE_ALL', {})
-                      : await sendAction('TOGGLE_SETTLED', { memberId: currentMemberId, settled: true });
+                    const success = await sendAction('TOGGLE_SETTLED', { memberId: currentMemberId, settled: true });
 
                     if (!success) {
                       setIsSettling('idle');
                       return;
                     }
 
-                    // Save to user history upon settlement
-                    try {
-                      const rawName = (profile?.displayName || '').trim();
-                      const userKey = rawName.toLowerCase();
-                      const histRecord = {
-                        id: session.id,
-                        storeName: session.storeName || 'Bill Session',
-                        date: session.date || new Date().toISOString().split('T')[0],
-                        totalAmount: memberCalculations.grandTotal || 0,
-                        userShare: finalDueVal || memberCalculations.myShare || 0,
-                        currency: session.currency || 'NIS',
-                        membersCount: validMembers.length || 1,
-                        groupId: session.groupId,
-                        payerName: activePayerName,
-                        createdAt: Date.now(),
-                        settledAt: Date.now(),
-                        status: 'settled',
-                      };
-
-                      // Update user-specific and global history stores
-                      [
-                        `billsplit_history_${userKey}`,
-                        rawName ? `billsplit_history_${rawName}` : null,
-                        'billsplit_history'
-                      ].filter(Boolean).forEach((key) => {
-                        try {
-                          const existing = localStorage.getItem(key!);
-                          const list = existing ? JSON.parse(existing) : [];
-                          const filtered = Array.isArray(list) ? list.filter((h: any) => h.id !== session.id) : [];
-                          filtered.unshift(histRecord);
-                          localStorage.setItem(key!, JSON.stringify(filtered));
-                        } catch (_) {}
-                      });
-                    } catch (e) {
-                      console.error('Error saving local history:', e);
-                    }
+                    persistSessionHistoryLocally(finalDueVal);
 
                     // Smooth success transition on button
                     setIsSettling('success');
@@ -1663,9 +1743,6 @@ function SessionWorkspaceInner() {
 
                     setTimeout(() => {
                       setShowSettleModal(false);
-                      if (isCurrentUserHost) {
-                        localStorage.removeItem('billsplit_active_session');
-                      }
                       setIsSettling('idle');
                     }, 700);
                   }}
@@ -1676,7 +1753,7 @@ function SessionWorkspaceInner() {
                   {isSettling === 'loading' ? (
                     <>
                       <Loader2 className="w-5 h-5 animate-spin text-white" />
-                      <span className="text-white">{isCurrentUserHost ? t('settlingSession', undefined, 'Settling Session...') : t('markingPaid', undefined, 'Marking Paid...')}</span>
+                      <span className="text-white">{t('markingPaid', undefined, 'Finishing your payment...')}</span>
                     </>
                   ) : isSettling === 'success' ? (
                     <>
@@ -1687,9 +1764,7 @@ function SessionWorkspaceInner() {
                     <>
                       <CheckCircle2 className="w-5 h-5 text-white group-hover:scale-110 transition-transform" />
                       <span className="text-white">
-                        {isCurrentUserHost
-                          ? t('settleAndCloseSessionBtn', undefined, 'Settle Payment & Close Session')
-                          : t('markPaidBtn', undefined, 'Mark My Share as Paid')}
+                        {t('finishAndPayBtn', undefined, 'Finish and Pay')}
                       </span>
                     </>
                   )}

@@ -4,7 +4,13 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { Sparkles, Phone, User, Globe, LogOut, Loader2, AlertCircle, CheckCircle, X } from 'lucide-react';
 import defaultTranslations, { translations as namedTranslations, formatCurrency, convertCurrency, formatDualPrice, updateLiveExchangeRates } from '../../lib/i18n';
 import { getCookie, setCookie, removeCookie } from '../../lib/cookies';
-import { clearAccountScopedStorage, transitionAccountScope } from '../../lib/accountIsolation';
+import {
+  clearAccountScopedStorage,
+  clearGuestAccountMigration,
+  consumeGuestAccountMigration,
+  prepareGuestAccountMigration,
+  transitionAccountScope,
+} from '../../lib/accountIsolation';
 import { clearCreatorIntent, readCreatorIntent } from '../../lib/creatorIntent';
 import { isProtectedApi } from '../../lib/authFetch';
 import { cleanIsraeliPhone, isValidIsraeliPhone } from '../../lib/bitDeepLink';
@@ -217,6 +223,16 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           const pendingCreatorIntent = readCreatorIntent(localStorage);
           const accountTransition = transitionAccountScope(localStorage, user?.uid || '');
           if (accountTransition.changed) {
+            if (user?.uid) {
+              consumeGuestAccountMigration(
+                localStorage,
+                sessionStorage,
+                accountTransition.previousScope,
+                user.uid,
+              );
+            } else {
+              clearGuestAccountMigration(sessionStorage);
+            }
             removeCookie('billsplit_user_groups');
             const pendingCreatorProfile = pendingCreatorIntent?.creatorProfile;
             if (pendingCreatorProfile?.displayName && pendingCreatorProfile?.phoneNumber) {
@@ -374,6 +390,8 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setIsAuthenticating(true);
     clearAuthNotification();
 
+    let guestMigrationPrepared = false;
+    let signInCompleted = false;
     try {
       let firebaseModule: any = null;
       let activeAuth = authModules?.auth;
@@ -397,6 +415,10 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         return 'authenticated';
       }
 
+      if (!activeAuth.currentUser && typeof window !== 'undefined') {
+        guestMigrationPrepared = prepareGuestAccountMigration(localStorage, sessionStorage);
+      }
+
       if (isNativeGoogleAuthPlatform()) {
         const { GoogleAuthProvider, signInWithCredential } = await import('firebase/auth');
         const { idToken } = await signInNativeGoogle({
@@ -404,6 +426,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         });
         const credential = GoogleAuthProvider.credential(idToken);
         await signInWithCredential(activeAuth, credential);
+        signInCompleted = true;
         return 'authenticated';
       }
 
@@ -421,6 +444,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       // on third-party storage when authDomain is on firebaseapp.com, which is
       // blocked by modern Safari/Firefox/Chrome privacy protections.
       await activeSignInWithPopup(activeAuth, provider);
+      signInCompleted = true;
       return 'authenticated';
     } catch (e: any) {
       console.error('Google Sign-In failed:', e);
@@ -443,6 +467,9 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       showAuthMessage(message, 'error');
       return 'failed';
     } finally {
+      if (guestMigrationPrepared && !signInCompleted && typeof window !== 'undefined') {
+        clearGuestAccountMigration(sessionStorage);
+      }
       setIsAuthenticating(false);
     }
   };
@@ -524,7 +551,12 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
 
 
-  const showOnboarding = isInitialized && !authLoading && !firebaseUser && !profile.displayName;
+  const showOnboarding = Boolean(
+    isInitialized
+    && !authLoading
+    && !firebaseUser
+    && (!profile.displayName.trim() || !profile.phoneNumber || !isValidIsraeliPhone(profile.phoneNumber))
+  );
   const showAuthenticatedProfileCompletion = Boolean(
     isInitialized
     && !authLoading
@@ -598,7 +630,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       {/* Global Onboarding / Profile Modal */}
       {showProfileModal && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-md animate-fadeIn" dir={isRtl ? 'rtl' : 'ltr'}>
-          <div role="dialog" aria-modal="true" aria-label={language === 'he' ? 'ברוכים הבאים ל-EasySplit' : 'Welcome to EasySplit'} className="w-full max-w-sm rounded-[28px] p-6 bg-white dark:bg-brand-900 border border-slate-200 dark:border-[#222C3D] text-slate-900 dark:text-white space-y-4 shadow-2xl transition-all">
+          <div role="dialog" aria-modal="true" aria-label={language === 'he' ? 'ברוכים הבאים ל-EasySplit' : 'Welcome to EasySplit'} className="w-full max-w-sm max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-[28px] p-6 bg-white dark:bg-brand-900 border border-slate-200 dark:border-[#222C3D] text-slate-900 dark:text-white space-y-4 shadow-2xl transition-all">
             
             {/* Language Switcher */}
             <div className={`flex ${isRtl ? 'justify-start' : 'justify-end'} items-center`}>

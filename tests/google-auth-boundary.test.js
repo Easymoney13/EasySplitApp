@@ -11,15 +11,16 @@ const sessionSource = read('src/app/session/[id]/page.tsx');
 const groupSource = read('src/app/group/[id]/page.tsx');
 const serverSource = read('server.js');
 
-test('only standalone split creation and group creation are Google-gated actions', () => {
+test('split and group creation require a valid profile but never require Google', () => {
   const protectedCreatorRoutes = serverSource
     .split('\n')
-    .filter((line) => line.includes('server.post(') && line.includes('security.requireAuthenticatedCreator'));
+    .filter((line) => line.includes('server.post(') && line.includes('requireValidCreatorProfile'));
 
   assert.equal(protectedCreatorRoutes.length, 2);
   assert.match(protectedCreatorRoutes[0], /\/api\/receipt\/scan/);
   assert.match(protectedCreatorRoutes[1], /\/api\/groups/);
-  assert.equal((homeSource.match(/if \(!firebaseUser\) \{/g) || []).length, 2);
+  assert.equal((homeSource.match(/if \(!firebaseUser\) \{/g) || []).length, 0);
+  assert.doesNotMatch(serverSource, /security\.requireAuthenticatedCreator/);
 });
 
 test('invited session and group screens contain no Google login gate', () => {

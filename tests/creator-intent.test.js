@@ -15,39 +15,36 @@ test('camera and gallery receipt selection have no Google authentication gate', 
   assert.match(pageSource, /const handlePhotoUpload = async[\s\S]*?setIsUploading\(true\)/);
 });
 
-test('anonymous OCR stays open while new-room creation requires an account', () => {
+test('anonymous OCR and profile-backed room creation stay open without Google', () => {
   const sessionJoinRoute = serverSource.split('\n').find((line) => line.includes("/api/session/:idOrCode/join'")) || '';
   const groupJoinRoute = serverSource.split('\n').find((line) => line.includes("/api/groups/join'")) || '';
   assert.match(serverSource, /requireAuth: false/);
-  assert.match(serverSource, /\/api\/receipt\/scan'[\s\S]*?security\.requireAuthenticatedCreator/);
-  assert.match(serverSource, /\/api\/groups'[\s\S]*?security\.requireAuthenticatedCreator/);
+  assert.match(serverSource, /\/api\/receipt\/scan', authenticateUser, requireValidCreatorProfile/);
+  assert.match(serverSource, /\/api\/groups', authenticateUser, requireValidCreatorProfile/);
+  assert.doesNotMatch(serverSource, /security\.requireAuthenticatedCreator/);
   assert.match(sessionJoinRoute, /authenticateUser, roomJoinRateLimit/);
   assert.doesNotMatch(sessionJoinRoute, /requireAuthenticatedCreator/);
   assert.match(groupJoinRoute, /authenticateUser, roomJoinRateLimit/);
   assert.doesNotMatch(groupJoinRoute, /requireAuthenticatedCreator/);
 });
 
-test('one-time Google login uses explicit local persistence and resumes creator intent', () => {
+test('Google remains optional and creator actions use the completed local profile', () => {
   assert.match(firebaseSource, /browserLocalPersistence/);
   assert.match(firebaseSource, /setPersistence\(auth, browserLocalPersistence\)/);
   assert.match(languageContextSource, /activeAuth\.authStateReady\(\)/);
   assert.match(languageContextSource, /activeAuth\.currentUser && !options\.forceAccountSelection/);
-  assert.match(pageSource, /saveCreatorIntent\(localStorage, intent\)/);
-  assert.match(pageSource, /readCreatorIntent\(localStorage\)/);
-  assert.match(pageSource, /creatorProfile:\s*\{\s*displayName:/);
-  assert.match(pageSource, /loginResult === 'authenticated'[\s\S]*?launchManualSession\(billData, intent\)/);
-  assert.match(pageSource, /loginResult === 'authenticated'[\s\S]*?createGroup\(groupData, intent\)/);
+  assert.match(pageSource, /hostName: profile\.displayName \|\| 'Host'/);
+  assert.match(pageSource, /hostPhone: profile\.phoneNumber \|\| ''/);
+  assert.match(pageSource, /clientId: getOrCreateRoomClientId\(\)/);
+  assert.doesNotMatch(pageSource, /loginResult === 'authenticated'[\s\S]*?launchManualSession/);
+  assert.doesNotMatch(pageSource, /loginResult === 'authenticated'[\s\S]*?createGroup/);
 });
 
-test('cancelled or failed Google login cannot leave a stale creator intent', () => {
+test('cancelled Google login affects only the optional account connection', () => {
   assert.match(languageContextSource, /GoogleLoginResult = 'authenticated' \| 'cancelled' \| 'failed' \| 'busy'/);
   assert.match(languageContextSource, /isNativeGoogleSignInCancellation\(e\)[\s\S]*?return 'cancelled'/);
   assert.match(languageContextSource, /auth\/popup-closed-by-user'[\s\S]*?return 'cancelled'/);
-  assert.equal(
-    (pageSource.match(/loginResult === 'cancelled' \|\| loginResult === 'failed'/g) || []).length,
-    2
-  );
-  assert.equal((pageSource.match(/clearPendingCreatorIntent\(\)/g) || []).length, 6);
+  assert.doesNotMatch(pageSource, /clearPendingCreatorIntent|savePendingCreatorIntent/);
 });
 
 test('hosted web auth never falls back to redirect-based Google auth', () => {

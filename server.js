@@ -28,6 +28,14 @@ function loadEnvFiles() {
 }
 loadEnvFiles();
 
+if (process.env.NODE_ENV === 'production') {
+  for (const key of ['EASYSPLIT_IDENTITY_HMAC_SECRET', 'EASYSPLIT_RESTAURANT_ATTESTATION_SECRET']) {
+    if (!process.env[key] || String(process.env[key]).length < 24) {
+      throw new Error(`${key} must be configured with a dedicated production secret`);
+    }
+  }
+}
+
 const express = require('express');
 const crypto = require('crypto');
 const http = require('http');
@@ -50,7 +58,7 @@ const allocateTipAdjustedCents = debtMinimizer.allocateTipAdjustedCents;
 const splitCents = debtMinimizer.splitCents;
 const toCents = debtMinimizer.toCents;
 const { createEntityId, hashAccessToken } = require('./lib/ids');
-const { ValidationError, validateItems, validateReceiptBody, validateUserSyncBody } = require('./lib/validation');
+const { ValidationError, normalizeIsraeliPhone, validateItems, validateReceiptBody, validateUserSyncBody } = require('./lib/validation');
 const { processSessionAction } = require('./lib/sessionActions');
 const {
   createRoomMember,
@@ -87,6 +95,32 @@ const {
   groupMatchesScope,
 } = require('./lib/groupLifecycle');
 const { trackAnalyticsEvent } = require('./lib/analytics');
+const { createRestaurantIdentity } = require('./lib/restaurantIdentity');
+const {
+  attestRestaurantIdentity,
+  restaurantProofId,
+  verifyRestaurantIdentityAttestation,
+  verifyStoredRestaurantIdentityAttestation,
+} = require('./lib/restaurantAttestation');
+const SESSION_ADMISSION_TTL_MS = Math.max(
+  60 * 60 * 1000,
+  Math.min(7 * 24 * 60 * 60 * 1000, Number(process.env.EASYSPLIT_SESSION_ADMISSION_TTL_MS) || 24 * 60 * 60 * 1000),
+);
+
+function createSessionInviteToken(seed = '') {
+  const secret = process.env.EASYSPLIT_INVITE_HMAC_SECRET
+    || process.env.EASYSPLIT_IDENTITY_HMAC_SECRET
+    || process.env.EASYSPLIT_ANALYTICS_HASH_SALT;
+  if (seed && secret) return crypto.createHmac('sha256', secret).update(`session-invite:${seed}`).digest('base64url');
+  return crypto.randomBytes(32).toString('base64url');
+}
+
+function inviteTokenMatches(rawToken, expectedHash) {
+  if (!rawToken || !expectedHash) return false;
+  const actual = Buffer.from(hashAccessToken(rawToken), 'utf8');
+  const expected = Buffer.from(String(expectedHash), 'utf8');
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
 
 const admin = require('firebase-admin');
 
@@ -156,6 +190,19 @@ async function authenticateUser(req, res, nextMiddleware) {
     req.user = null;
     return res.status(401).json({ error: 'Unauthorized: Invalid or expired token' });
   }
+}
+
+function requireValidCreatorProfile(req, res, nextMiddleware) {
+  const displayName = security.sanitizeName(req.body?.hostName, '');
+  const phone = normalizeIsraeliPhone(req.body?.hostPhone || '');
+  if (!displayName || !phone) {
+    return res.status(400).json({
+      error: 'A display name and valid Israeli mobile number are required.',
+      errorCode: 'CREATOR_PROFILE_REQUIRED',
+    });
+  }
+  req.creatorProfile = { displayName, phone };
+  return nextMiddleware();
 }
 
 const dev = process.env.NODE_ENV !== 'production';
@@ -459,15 +506,18 @@ app.prepare().then(() => {
     });
   }
 
-  function createSessionHistoryRecord(session, groupName = '') {
+  function createSessionHistoryRecord(session, groupName = '', memberIdsOverride = null) {
     const publicSession = publicRoom(session);
     const subtotal = getReceiptPayableTotal(session);
     const totalAmount = Math.round(subtotal * (1 + Number(session.tipPercentage || 0) / 100) * 100) / 100;
-    const memberIds = [...new Set((session.members || []).map((member) => (
+    const allMemberIds = [...new Set((session.members || []).map((member) => (
       member?.userId
       || member?.uid
       || (member?.id && !String(member.id).startsWith('member_') ? member.id : '')
     )).filter(Boolean))];
+    const memberIds = Array.isArray(memberIdsOverride)
+      ? [...new Set(memberIdsOverride.filter(Boolean))]
+      : allMemberIds;
     return {
       id: session.id,
       storeName: session.storeName || 'Bill Session',
@@ -480,11 +530,16 @@ app.prepare().then(() => {
       memberIds,
       items: publicSession.items || [],
       tipPercentage: session.tipPercentage || 0,
+      status: session.status === 'settled' ? 'settled' : 'active',
+      settledMemberIds: (session.members || [])
+        .filter((member) => member.active !== false && member.settled === true)
+        .map((member) => member.id),
       settledAt: session.settledAt || Date.now(),
       createdAt: session.createdAt || Date.now(),
-      ...(session.groupId ? { groupId: session.groupId } : {}),
+      ...(session.groupId ? { groupId: session.groupId, isGroupBill: true } : {}),
       ...(session.groupId && groupName ? { groupName } : {}),
       ...(session.payerId ? { payerId: session.payerId } : {}),
+      ...(session.restaurant?.id ? { restaurant: session.restaurant } : {}),
     };
   }
 
@@ -651,17 +706,78 @@ app.prepare().then(() => {
       bucket.count += 1;
       buckets.set(key, bucket);
       if (buckets.size > 1_000) pruneRateBuckets(buckets, now);
-      if (bucket.count > limit) return res.status(429).json({ error: message });
+      const effectiveLimit = typeof limit === 'function' ? limit(req) : limit;
+      if (bucket.count > effectiveLimit) return res.status(429).json({ error: message });
       return nextMiddleware();
     };
   }
 
-  // New invites use eight digits; retain tighter limits for code discovery and
-  // legacy four-digit rooms until those records expire.
-  const roomLookupRateLimit = roomWindowRateLimit(roomLookupRateBuckets, 60, 'Too many room lookups. Please wait and try again.');
-  const roomJoinRateLimit = roomWindowRateLimit(roomJoinRateBuckets, 30, 'Too many room join attempts. Please wait and try again.');
+  // Session invites use five digits and groups retain eight digits. Rate-limit
+  // discovery aggressively because human-entered codes are intentionally short.
+  // A restaurant table can place many guests behind one NAT IP. Keep a lower
+  // per-account budget while allowing one full 100-person room through a
+  // shared Wi-Fi address without treating legitimate joins as an attack.
+  const roomLookupRateLimit = roomWindowRateLimit(roomLookupRateBuckets, (req) => req.user?.uid ? 60 : 180, 'Too many room lookups. Please wait and try again.');
+  const roomJoinRateLimit = roomWindowRateLimit(roomJoinRateBuckets, (req) => req.user?.uid ? 30 : 150, 'Too many room join attempts. Please wait and try again.');
   const mutationRateLimit = roomWindowRateLimit(mutationRateBuckets, 240, 'Too many room updates. Please wait and try again.');
   const accountReadRateLimit = roomWindowRateLimit(accountReadRateBuckets, 240, 'Too many account reads. Please wait and try again.');
+  function distributedShortCodeAdmission(namespace, codeResolver, limit, { allowOpaqueRoomId = false } = {}) {
+    return async (req, res, nextMiddleware) => {
+      const code = security.sanitizeString(codeResolver(req) || '', 100);
+      const isShortCode = /^\d{4,8}$/.test(code);
+      const isOpaqueRoomId = allowOpaqueRoomId && /^grp[_-][a-z0-9_-]{4,95}$/i.test(code);
+      if ((!isShortCode && !isOpaqueRoomId) || typeof db.consumeDistributedRateLimit !== 'function') return nextMiddleware();
+      try {
+        const ip = req.ip || req.socket.remoteAddress || 'unknown';
+        const clientId = security.sanitizeString(
+          req.body?.clientId || req.header('X-EasySplit-Client-Id') || '',
+          100,
+        );
+        const actorKey = req.user?.uid
+          ? `user:${req.user.uid}`
+          : (clientId ? `device:${clientId}:ip:${ip}` : `ip:${ip}`);
+        const actorLimit = req.user?.uid ? limit : Math.max(12, limit);
+        // A stable client bucket avoids a single Firestore hot document when a
+        // whole restaurant shares one NAT. A second, 32-way sharded IP guard
+        // still bounds clients that rotate their device identifier.
+        const shardSeed = clientId || `${ip}:${req.get('user-agent') || ''}:${code}`;
+        const coarseShard = crypto.createHash('sha256').update(shardSeed).digest()[0] % 32;
+        const checks = [db.consumeDistributedRateLimit(
+          namespace, actorKey, actorLimit, 10 * 60 * 1000,
+        )];
+        if (!req.user?.uid) {
+          checks.push(db.consumeDistributedRateLimit(
+            `${namespace}_ip_${String(coarseShard).padStart(2, '0')}`,
+            ip,
+            8,
+            10 * 60 * 1000,
+          ));
+        }
+        const results = await Promise.all(checks);
+        const denied = results.find((result) => !result.allowed);
+        if (denied) {
+          const retrySeconds = Math.max(1, Math.ceil((Number(denied.retryAt || Date.now()) - Date.now()) / 1000));
+          res.setHeader('Retry-After', String(retrySeconds));
+          return res.status(429).json({ error: 'Too many room-code attempts. Please wait and try again.' });
+        }
+        return nextMiddleware();
+      } catch (error) {
+        console.error('Distributed room-code admission failed:', error);
+        return res.status(503).json({ error: 'Room-code verification is temporarily unavailable. Please retry.' });
+      }
+    };
+  }
+  const sessionCodeLookupAdmission = distributedShortCodeAdmission('session_lookup', (req) => req.params.idOrCode, 10);
+  const sessionCodeJoinAdmission = distributedShortCodeAdmission('session_join', (req) => req.body?.manualCode || req.params.idOrCode, 8);
+  const groupCodeLookupAdmission = distributedShortCodeAdmission('group_lookup', (req) => req.params.idOrCode, 10);
+  // The browser resolves a group code to its durable ID before POST /join.
+  // Cover both forms so load-balanced instances cannot bypass the shared gate.
+  const groupCodeJoinAdmission = distributedShortCodeAdmission(
+    'group_join',
+    (req) => req.body?.groupId,
+    8,
+    { allowOpaqueRoomId: true },
+  );
   async function accountReadAdmission(req, res, nextMiddleware) {
     try {
       const releaseGate = await accountReadGate.acquire();
@@ -711,6 +827,7 @@ app.prepare().then(() => {
     } = validateReceiptBody(req.body);
 
     let parsedReceipt = null;
+    let parsedByProvider = false;
     if (rawText) {
       if (!customGeminiKey && !process.env.GEMINI_API_KEY) {
         const error = new Error('Gemini OCR is not configured');
@@ -721,6 +838,7 @@ app.prepare().then(() => {
         throw error;
       }
       parsedReceipt = await parseReceiptTextWithGemini(rawText, customGeminiKey);
+      parsedByProvider = Boolean(parsedReceipt?.items?.length);
     } else if (imageBase64Parts.length || imageBase64) {
       if (!customGeminiKey && !process.env.GEMINI_API_KEY) {
         const error = new Error('Gemini OCR is not configured');
@@ -735,6 +853,7 @@ app.prepare().then(() => {
         mimeType,
         customGeminiKey,
       );
+      parsedByProvider = Boolean(parsedReceipt?.items?.length);
     }
 
     if ((!parsedReceipt?.items?.length) && clientParsed?.items?.length) parsedReceipt = clientParsed;
@@ -790,8 +909,20 @@ app.prepare().then(() => {
       id: createEntityId('item'),
       claimedBy: [],
     }));
+    const recoveryToken = normalizeRecoveryToken(req.body?.recoveryToken);
+    const restaurantAttested = verifyRestaurantIdentityAttestation(parsedReceipt.restaurant, normalizedScanId, recoveryToken);
+    const normalizedRestaurant = createRestaurantIdentity(parsedReceipt.restaurant, parsedReceipt.storeName, normalizedScanId || '', {
+      providerVerified: parsedByProvider,
+      attested: restaurantAttested,
+      allowSuppliedTrust: restaurantAttested,
+      attestedEvidence: restaurantAttested ? parsedReceipt.restaurant.identityEvidence : null,
+      userConfirmed: Boolean(confirmedByUser),
+    });
     const receipt = {
       storeName: security.sanitizeString(parsedReceipt.storeName || 'Scanned Receipt', 80),
+      restaurant: parsedByProvider
+        ? attestRestaurantIdentity(normalizedRestaurant, normalizedScanId, recoveryToken)
+        : normalizedRestaurant,
       date: security.sanitizeString(parsedReceipt.date || new Date().toISOString().split('T')[0], 20),
       currency: security.sanitizeString(parsedReceipt.currency || 'NIS', 5).toUpperCase(),
       ...normalizedAmounts,
@@ -920,7 +1051,7 @@ app.prepare().then(() => {
     }
   });
 
-  server.post('/api/receipt/scan', authenticateUser, security.requireAuthenticatedCreator, appCheckProtection, sessionCreateRateLimit, ocrRateLimit, async (req, res) => {
+  server.post('/api/receipt/scan', authenticateUser, requireValidCreatorProfile, appCheckProtection, sessionCreateRateLimit, ocrRateLimit, async (req, res) => {
     const startedAt = Date.now();
     const ocrSource = getOcrSource(req.body);
     void trackAnalyticsEvent('ocr_scan_started', {
@@ -979,7 +1110,7 @@ app.prepare().then(() => {
       }
       const confirmedContentDigest = groupBillContentDigest(parsedReceipt);
 
-      const rawHostName = req.body?.hostName || (req.user ? req.user.name : 'Host');
+      const rawHostName = req.creatorProfile.displayName;
       const scanId = normalizeScanId(req.body?.scanId);
       const recoveryToken = scanId ? normalizeRecoveryToken(req.body?.recoveryToken) : '';
       if (scanId && !recoveryToken) {
@@ -992,6 +1123,7 @@ app.prepare().then(() => {
       const sessionResponse = await (async () => {
           const existingSession = stableSessionId ? await db.getSession(stableSessionId) : null;
           if (existingSession) {
+            const replayInviteToken = createSessionInviteToken(recoveryToken || '');
             if (parsedReceipt.inputDigest && existingSession.inputDigest && parsedReceipt.inputDigest !== existingSession.inputDigest) {
               const error = new Error('This scan identifier belongs to a different receipt.');
               error.statusCode = 409;
@@ -1028,14 +1160,22 @@ app.prepare().then(() => {
               hostId: existingHost.id,
               memberId: existingHost.id,
               accessToken: existingToken,
+              ...(inviteTokenMatches(replayInviteToken, existingSession.inviteTokenHash) ? { inviteToken: replayInviteToken } : {}),
               session: publicRoom(existingSession),
+              _visitSession: {
+                ...existingSession,
+                restaurant: existingSession.restaurant
+                  || createRestaurantIdentity({}, existingSession.storeName, existingSession.id),
+              },
+              _visitMember: existingHost,
             };
           }
 
           const host = createRoomMember({
             uid: req.user?.uid,
+            clientId: security.sanitizeString(req.body?.clientId || '', 100),
             name: rawHostName,
-            phone: req.body?.hostPhone,
+            phone: req.creatorProfile.phone,
             isHost: true,
             avatarColor: '#A3E635',
           });
@@ -1044,10 +1184,18 @@ app.prepare().then(() => {
             host.accessToken = recoveryToken;
           }
           const newSessionId = stableSessionId || createEntityId('sess');
+          const inviteToken = createSessionInviteToken(recoveryToken || '');
+          const sessionRestaurantAttested = verifyRestaurantIdentityAttestation(parsedReceipt.restaurant, scanId, recoveryToken);
           const newSession = {
             id: newSessionId,
             code: await db.generateUniqueRoomCode('session', newSessionId),
             storeName: security.sanitizeString(parsedReceipt.storeName || 'Scanned Receipt', 40),
+            restaurant: createRestaurantIdentity(parsedReceipt.restaurant, parsedReceipt.storeName, newSessionId, {
+              allowSuppliedTrust: sessionRestaurantAttested,
+              attested: sessionRestaurantAttested,
+              attestedEvidence: sessionRestaurantAttested ? parsedReceipt.restaurant?.identityEvidence : null,
+              userConfirmed: true,
+            }),
             date: parsedReceipt.date || new Date().toISOString().split('T')[0],
             currency: security.sanitizeString(parsedReceipt.currency || 'NIS', 5),
             receiptTotal: parsedReceipt.receiptTotal,
@@ -1065,12 +1213,20 @@ app.prepare().then(() => {
             confirmedByUserAt: parsedReceipt.confirmedByUserAt || undefined,
             hostPhone: host.member.phone || '',
             status: 'active',
+            inviteTokenHash: hashAccessToken(inviteToken),
+            // The unguessable fragment invite lives exactly as long as the
+            // active room and is revoked when the room settles or is deleted.
+            inviteExpiresAt: Date.now() + SESSION_ADMISSION_TTL_MS,
+            admissionExpiresAt: Date.now() + SESSION_ADMISSION_TTL_MS,
             createdAt: Date.now(),
             members: [host.member],
             items: parsedReceipt.items,
           };
-          if (stableSessionId && typeof db.createSessionIfAbsent === 'function') {
-            const creation = await db.createSessionIfAbsent(newSession);
+          if (typeof db.createSessionIfAbsent === 'function') {
+            const creation = await db.createSessionIfAbsent(newSession, {
+              restaurantVisitMembers: [host.member],
+              restaurantProofId: sessionRestaurantAttested ? restaurantProofId(parsedReceipt.restaurant) : '',
+            });
             if (!creation.created) {
               const persistedHost = findRoomMember(creation.session, {
                 uid: req.user?.uid,
@@ -1092,7 +1248,14 @@ app.prepare().then(() => {
                   hostId: persistedHost.id,
                   memberId: persistedHost.id,
                   accessToken: recoveryToken,
+                  ...(inviteTokenMatches(inviteToken, creation.session.inviteTokenHash) ? { inviteToken } : {}),
                   session: publicRoom(creation.session),
+                  _visitSession: {
+                    ...creation.session,
+                    restaurant: creation.session.restaurant
+                      || createRestaurantIdentity(parsedReceipt.restaurant, creation.session.storeName, creation.session.id),
+                  },
+                  _visitMember: persistedHost,
                 };
               }
               const error = new Error('This receipt was already confirmed by another request.');
@@ -1124,10 +1287,14 @@ app.prepare().then(() => {
             hostId: host.member.id,
             memberId: host.member.id,
             accessToken: host.accessToken,
+            inviteToken,
             session: publicRoom(newSession),
+            _visitSession: newSession,
+            _visitMember: host.member,
           };
       })();
-      return res.json(sessionResponse);
+      const { _visitSession, _visitMember, ...publicSessionResponse } = sessionResponse;
+      return res.json(publicSessionResponse);
     } catch (err) {
       void trackAnalyticsEvent('ocr_scan_failed', {
         userId: req.user?.uid,
@@ -1141,7 +1308,7 @@ app.prepare().then(() => {
     }
   });
 
-  server.get('/api/session/:idOrCode', authenticateUser, roomLookupRateLimit, async (req, res) => {
+  server.get('/api/session/:idOrCode', authenticateUser, roomLookupRateLimit, sessionCodeLookupAdmission, async (req, res) => {
     const sanitizedId = security.sanitizeString(req.params.idOrCode, 100);
     const session = await db.getSession(sanitizedId);
     if (!session) {
@@ -1195,12 +1362,13 @@ app.prepare().then(() => {
     });
   });
 
-  server.post('/api/session/:idOrCode/join', authenticateUser, roomJoinRateLimit, async (req, res) => {
+  server.post('/api/session/:idOrCode/join', authenticateUser, roomJoinRateLimit, sessionCodeJoinAdmission, async (req, res) => {
     try {
       const session = await db.getSession(security.sanitizeString(req.params.idOrCode, 100));
       if (!session) return res.status(404).json({ error: 'Session not found' });
+      const submittedManualCode = security.sanitizeString(req.body?.manualCode || '', 8);
       let joined = null;
-      const mutation = await db.transactSessionAndLinkedGroup(session.id, (currentSession, currentGroup) => {
+      const mutation = await db.transactSessionAndLinkedGroup(session.id, (currentSession, currentGroup, admission) => {
         if (currentSession.status === 'settled') {
           const error = new Error('This session is already closed');
           error.statusCode = 409;
@@ -1208,13 +1376,41 @@ app.prepare().then(() => {
         }
         const joinInput = {
           uid: req.user?.uid,
+          clientId: security.sanitizeString(req.body?.clientId || '', 100),
           accessToken: getRequestRoomToken(req),
-          name: req.body?.name || req.user?.name || 'Guest',
-          phone: req.body?.phone,
+          name: security.sanitizeName(req.body?.name || req.user?.name, ''),
+          phone: normalizeIsraeliPhone(req.body?.phone || ''),
           avatarColor: getRandomAvatarColor(),
         };
+        if (!joinInput.name || !joinInput.phone) {
+          const error = new Error('A display name and valid Israeli mobile number are required to join');
+          error.statusCode = 400;
+          throw error;
+        }
+        const existingSessionIdentity = findRoomMember(currentSession, joinInput);
+        const existingGroupIdentity = currentGroup ? findRoomMember(currentGroup, joinInput) : null;
+        const existingIdentity = currentGroup ? existingGroupIdentity : existingSessionIdentity;
+        if (!existingIdentity && currentSession.inviteTokenHash) {
+          const inviteToken = security.sanitizeString(req.body?.inviteToken || '', 200);
+          const validSignedInvite = Number(currentSession.inviteExpiresAt || 0) > Date.now()
+            && inviteTokenMatches(inviteToken, currentSession.inviteTokenHash);
+          const validManualCode = /^\d{5}$/.test(submittedManualCode)
+            && admission?.manualCodeAuthorized === true;
+          if (!validSignedInvite && !validManualCode) {
+            const error = new Error('This invitation is invalid or has expired. Ask the host for a fresh link or room code.');
+            error.statusCode = 403;
+            throw error;
+          }
+        }
+        const settlementStarted = (currentSession.members || [])
+          .some((member) => member.active !== false && member.settled === true);
+        if (settlementStarted && !existingSessionIdentity) {
+          const error = new Error('New participants cannot join after payments have started');
+          error.statusCode = 409;
+          throw error;
+        }
         if (currentGroup) {
-          const existingGroupMember = findRoomMember(currentGroup, joinInput);
+          const existingGroupMember = existingIdentity;
           if (!existingGroupMember) {
             const error = new Error('Join the linked group before opening this bill session');
             error.statusCode = 403;
@@ -1230,11 +1426,11 @@ app.prepare().then(() => {
             syncRoomMember(sessionMember, groupJoin.member);
           }
           joined = { member: sessionMember, accessToken: groupJoin.accessToken, changed: true };
-          return { session: currentSession, group: currentGroup };
+          return { session: currentSession, group: currentGroup, restaurantVisitMembers: [sessionMember] };
         }
         joined = joinRoom(currentSession, joinInput);
-        return { session: currentSession, group: null };
-      });
+        return { session: currentSession, group: null, restaurantVisitMembers: [joined.member] };
+      }, { manualAdmissionCode: submittedManualCode });
       if (!mutation || !joined) return res.status(404).json({ error: 'Session not found' });
       if (joined.changed) {
         void trackAnalyticsEvent('participant_joined', {
@@ -1252,6 +1448,82 @@ app.prepare().then(() => {
       });
     } catch (err) {
       return sendRouteError(res, err, 'Failed to join session');
+    }
+  });
+
+  // Keep long-running standalone rooms shareable without weakening the short
+  // code lifetime. A current admission is reused; only an expiring one rotates.
+  server.post('/api/session/:sessionId/refresh-invite', authenticateUser, mutationRateLimit, async (req, res) => {
+    try {
+      const sessionId = security.sanitizeString(req.params.sessionId, 100);
+      const currentInviteToken = security.sanitizeString(req.body?.inviteToken || '', 200);
+      const currentSession = await db.getSession(sessionId);
+      if (!currentSession) return res.status(404).json({ error: 'Session not found' });
+      const actor = authorizedRoomMember(req, currentSession);
+      if (!actor) return res.status(401).json({ error: 'A valid room membership is required' });
+      if (currentSession.groupId) {
+        return res.status(409).json({ error: 'Share the linked group invitation instead' });
+      }
+      if (currentSession.status === 'settled') {
+        return res.status(409).json({ error: 'Closed sessions cannot issue invitations' });
+      }
+      const freshUntil = Number(currentSession.admissionExpiresAt || 0);
+      const hasFreshAdmission = freshUntil > Date.now() + 60 * 60 * 1000;
+      if (hasFreshAdmission) {
+        return res.json({
+          success: true,
+          code: currentSession.code,
+          ...(inviteTokenMatches(currentInviteToken, currentSession.inviteTokenHash)
+            ? { inviteToken: currentInviteToken }
+            : {}),
+          session: publicRoom(currentSession),
+        });
+      }
+
+      const nextCode = await db.generateUniqueRoomCode('session', currentSession.id);
+      const nextInviteToken = createSessionInviteToken();
+      let rotatedInvite = false;
+      const mutation = await db.transactSessionAndLinkedGroup(currentSession.id, (session, linkedGroup) => {
+        // Firestore may rerun this callback after a concurrent refresh commits.
+        // Reset the closure flag on every attempt and reuse the winner instead
+        // of invalidating a code/token that was just returned to another client.
+        rotatedInvite = false;
+        const currentActor = authorizedRoomMember(req, session);
+        if (!currentActor) {
+          const error = new Error('A valid room membership is required');
+          error.statusCode = 401;
+          throw error;
+        }
+        if (session.groupId || linkedGroup) {
+          const error = new Error('Share the linked group invitation instead');
+          error.statusCode = 409;
+          throw error;
+        }
+        if (session.status === 'settled') {
+          const error = new Error('Closed sessions cannot issue invitations');
+          error.statusCode = 409;
+          throw error;
+        }
+        if (Number(session.admissionExpiresAt || 0) > Date.now() + 60 * 60 * 1000) {
+          return { session, group: null };
+        }
+        session.code = nextCode;
+        session.inviteTokenHash = hashAccessToken(nextInviteToken);
+        session.inviteExpiresAt = Date.now() + SESSION_ADMISSION_TTL_MS;
+        session.admissionExpiresAt = Date.now() + SESSION_ADMISSION_TTL_MS;
+        rotatedInvite = true;
+        return { session, group: null, activateRoomCode: true };
+      });
+      if (!mutation) return res.status(404).json({ error: 'Session not found' });
+      global.broadcastSessionState(mutation.session.id);
+      return res.json({
+        success: true,
+        code: mutation.session.code,
+        ...(rotatedInvite && mutation.session.code === nextCode ? { inviteToken: nextInviteToken } : {}),
+        session: publicRoom(mutation.session),
+      });
+    } catch (err) {
+      return sendRouteError(res, err, 'Failed to refresh the session invitation');
     }
   });
 
@@ -1273,7 +1545,7 @@ app.prepare().then(() => {
             error.statusCode = 403;
             throw error;
           }
-          if (action === 'SETTLE_ALL' || (action === 'TOGGLE_SETTLED' && payload?.settled !== false)) {
+          if (action === 'SETTLE_ALL') {
             assertSessionSettlementNotDeferredToGroup(session);
           }
         }
@@ -1281,7 +1553,10 @@ app.prepare().then(() => {
         if (actionId && Array.isArray(session.processedActionIds) && session.processedActionIds.includes(actionId)) {
           return { session, group: linkedGroup, history: null, idempotentReplay: true };
         }
-        const updatedSession = processSessionAction(session, action, payload, {
+        const actorPayload = ['TOGGLE_CLAIM', 'TOGGLE_SETTLED'].includes(action)
+          ? { ...(payload || {}), memberId: actor.id }
+          : payload;
+        const updatedSession = processSessionAction(session, action, actorPayload, {
           uid: req.user?.uid,
           memberId: actor.id,
         });
@@ -1299,9 +1574,16 @@ app.prepare().then(() => {
         const linkedBill = linkedGroup?.bills?.find((bill) => bill.id === updatedSession.billId || bill.sessionId === updatedSession.id);
         if (linkedBill) {
           linkedBill.items = updatedSession.items;
-          linkedBill.settledMemberIds = (updatedSession.members || [])
+          linkedBill.participantMemberIds = (updatedSession.members || [])
+            .filter((member) => member.active !== false)
+            .map((member) => member.id);
+          linkedBill.finishedMemberIds = (updatedSession.members || [])
             .filter((member) => member.active !== false && member.settled === true)
             .map((member) => member.id);
+          // In a linked split this flag means "allocation confirmed", not
+          // "financially paid". Debt minimization excludes settledMemberIds,
+          // so carrying these confirmations there would erase the bill.
+          linkedBill.settledMemberIds = [];
           linkedBill.tipPercentage = Math.max(0, Number(updatedSession.tipPercentage) || 0);
           linkedBill.amount = amountWithTip(getReceiptPayableTotal(updatedSession), linkedBill.tipPercentage);
           linkedBill.revision = Number(linkedBill.revision || 0) + 1;
@@ -1310,16 +1592,44 @@ app.prepare().then(() => {
             linkedBill.assessment = updatedSession.assessment;
           }
           if (action === 'SET_PAYER' || updatedSession.payerId) linkedBill.payerId = updatedSession.payerId;
-          if (action === 'SETTLE_ALL') {
-            linkedBill.status = 'settled';
-            linkedBill.settledAt = updatedSession.settledAt;
+          if (updatedSession.status === 'settled') {
+            linkedBill.status = BILL_STATUS.FINALIZED;
+            linkedBill.finalizedAt = updatedSession.settledAt;
+            linkedBill.finalizedByMemberId = 'all_participants';
+            updatedSession.groupSettlementDeferred = true;
           }
         }
-        const shouldPersistHistory = action === 'SETTLE_ALL';
+        const isSettlementToggle = action === 'TOGGLE_SETTLED';
+        const shouldPersistHistory = action === 'SETTLE_ALL' || isSettlementToggle;
+        const actorHistoryId = actor.userId
+          || actor.uid
+          || (actor.id && !String(actor.id).startsWith('member_') ? actor.id : '');
+        const settledHistoryIds = (updatedSession.members || [])
+          .filter((member) => member.active !== false && member.settled === true)
+          .map((member) => member.userId
+            || member.uid
+            || (member.id && !String(member.id).startsWith('member_') ? member.id : ''))
+          .filter(Boolean);
+        const historyMemberIds = updatedSession.status === 'settled'
+          ? null
+          : settledHistoryIds;
+        const removeHistoryForMemberIds = isSettlementToggle && actorPayload?.settled === false
+          ? [actorHistoryId].filter(Boolean)
+          : [];
         return {
           session: updatedSession,
           group: linkedGroup,
-          history: shouldPersistHistory ? createSessionHistoryRecord(updatedSession, linkedGroup?.name || '') : null,
+          history: shouldPersistHistory
+            && (updatedSession.status === 'settled' || settledHistoryIds.length > 0)
+            ? createSessionHistoryRecord(updatedSession, linkedGroup?.name || '', historyMemberIds)
+            : null,
+          removeHistoryForMemberIds,
+          deleteHistory: isSettlementToggle
+            && actorPayload?.settled === false
+            && settledHistoryIds.length === 0,
+          restaurantVisitMembers: ['TOGGLE_CLAIM', 'TOGGLE_SETTLED'].includes(action)
+            ? [updatedSession.members.find((member) => member.id === actor.id)].filter(Boolean)
+            : [],
         };
       });
       if (!mutation) return res.status(404).json({ error: 'Session not found' });
@@ -1376,20 +1686,38 @@ app.prepare().then(() => {
     }
   });
 
+  server.delete('/api/session/:sessionId', authenticateUser, async (req, res) => {
+    try {
+      const sessionId = security.sanitizeString(req.params.sessionId, 100);
+      const session = await db.getSession(sessionId);
+      if (!session) return res.status(404).json({ error: 'Session not found' });
+      const actor = authorizedRoomMember(req, session);
+      if (!actor) return res.status(401).json({ error: 'A valid room membership is required' });
+      if (!actor.isHost) return res.status(403).json({ error: 'Only the session creator can delete this session' });
+      if (session.groupId) return res.status(409).json({ error: 'Delete this bill from its group instead' });
+      await db.deleteSession(session.id, { requireStandalone: true, actorId: actor.id });
+      sendToRoom('session', session.id, { type: 'SESSION_DELETED', sessionId: session.id }, session);
+      return res.json({ success: true });
+    } catch (err) {
+      return sendRouteError(res, err, 'Failed to delete session');
+    }
+  });
+
 
 
   // GROUPS API ENDPOINTS
 
   // 1. Create Group
-  server.post('/api/groups', authenticateUser, security.requireAuthenticatedCreator, sessionCreateRateLimit, async (req, res) => {
+  server.post('/api/groups', authenticateUser, requireValidCreatorProfile, sessionCreateRateLimit, async (req, res) => {
     try {
       const { name, currency, hostName, hostPhone } = req.body;
       const cleanName = security.sanitizeString(name || 'Trip Group', 40);
-      const rawHostName = hostName || (req.user ? req.user.name : 'Host');
+      const rawHostName = req.creatorProfile.displayName;
       const host = createRoomMember({
         uid: req.user?.uid,
+        clientId: security.sanitizeString(req.body?.clientId || '', 100),
         name: rawHostName,
-        phone: hostPhone,
+        phone: req.creatorProfile.phone,
         isHost: true,
         avatarColor: '#A3E635',
       });
@@ -1429,10 +1757,10 @@ app.prepare().then(() => {
   });
 
   // 2. Fetch Group by durable ID or human invite code
-  server.get('/api/groups/:idOrCode', authenticateUser, roomLookupRateLimit, async (req, res) => {
+  server.get('/api/groups/:idOrCode', authenticateUser, roomLookupRateLimit, groupCodeLookupAdmission, async (req, res) => {
     const sanitizedId = security.sanitizeString(req.params.idOrCode, 50);
     const group = await db.getGroup(sanitizedId);
-    if (!group) {
+    if (!group || String(group.status || '').toLowerCase() === 'deleting') {
       return res.status(404).json({ error: 'Group not found' });
     }
 
@@ -1473,7 +1801,7 @@ app.prepare().then(() => {
   });
 
   // 3. Join Group by Code
-  server.post('/api/groups/join', authenticateUser, roomJoinRateLimit, async (req, res) => {
+  server.post('/api/groups/join', authenticateUser, roomJoinRateLimit, groupCodeJoinAdmission, async (req, res) => {
     try {
       const { groupId, name, phone } = req.body;
       const group = await db.getGroup(groupId);
@@ -1485,11 +1813,17 @@ app.prepare().then(() => {
       const mutation = await db.transactGroupMembership(group.id, (currentGroup) => {
         const joinInput = {
           uid: req.user?.uid,
+          clientId: security.sanitizeString(req.body?.clientId || '', 100),
           accessToken: getRequestRoomToken(req),
-          name: name || req.user?.name || 'Member',
-          phone,
+          name: security.sanitizeName(name || req.user?.name, ''),
+          phone: normalizeIsraeliPhone(phone || ''),
           avatarColor: getRandomAvatarColor(),
         };
+        if (!joinInput.name || !joinInput.phone) {
+          const error = new Error('A display name and valid Israeli mobile number are required to join');
+          error.statusCode = 400;
+          throw error;
+        }
         const existingMember = findRoomMember(currentGroup, joinInput);
         if (!existingMember) assertGroupActive(currentGroup);
         joined = joinRoom(currentGroup, joinInput);
@@ -1534,15 +1868,29 @@ app.prepare().then(() => {
 
   server.delete('/api/groups/:groupId', authenticateUser, async (req, res) => {
     try {
-      const group = await db.getGroup(security.sanitizeString(req.params.groupId, 100));
-      if (!group) return res.status(404).json({ error: 'Group not found' });
+      const groupId = security.sanitizeString(req.params.groupId, 100);
+      const group = await db.getGroup(groupId);
+      if (!group) {
+        const resumed = typeof db.resumeGroupDeletion === 'function'
+          ? await db.resumeGroupDeletion(groupId)
+          : false;
+        return resumed
+          ? res.json({ success: true, resumedCleanup: true })
+          : res.status(404).json({ error: 'Group not found' });
+      }
       const actor = authorizedRoomMember(req, group);
       if (!actor) return res.status(401).json({ error: 'A valid group membership is required' });
       if (!actor.isHost) return res.status(403).json({ error: 'Only the group host can delete this group' });
       if (getGroupStatus(group) === GROUP_STATUS.SETTLING) {
         return res.status(409).json({ error: 'Finish or reopen the group settlement before deleting this group' });
       }
+      const linkedSessions = (await Promise.all((group.bills || [])
+        .map((bill) => bill.sessionId ? db.getSession(bill.sessionId) : null)))
+        .filter(Boolean);
       await db.deleteGroup(group.id, actor.id);
+      linkedSessions.forEach((linkedSession) => {
+        sendToRoom('session', linkedSession.id, { type: 'SESSION_DELETED', sessionId: linkedSession.id }, linkedSession);
+      });
       sendToRoom('group', group.id, { type: 'GROUP_DELETED', groupId: group.id }, group);
       return res.json({ success: true });
     } catch (err) {
@@ -1595,6 +1943,7 @@ app.prepare().then(() => {
         ? bill.receipt
         : {};
       const requestedScanId = normalizeScanId(receiptEvidence.scanId || bill.scanId);
+      const requestedRecoveryToken = normalizeRecoveryToken(receiptEvidence.recoveryToken);
       const sourceSessionId = security.sanitizeString(bill.sourceSessionId || '', 100);
       const stableBillId = requestedScanId
         ? createStableScanEntityId('bill_scan', group.id, requestedScanId)
@@ -1696,6 +2045,38 @@ app.prepare().then(() => {
         return res.status(409).json({ error: 'Please review and confirm the scanned receipt before adding it to the group.' });
       }
       const sessionId = sourceSession?.id || existingBill?.sessionId || ('sess_g_' + billId);
+      const submittedRestaurant = receiptEvidence.restaurant && typeof receiptEvidence.restaurant === 'object'
+        ? receiptEvidence.restaurant
+        : null;
+      const hasSubmittedRestaurant = submittedRestaurant && Object.values(submittedRestaurant)
+        .some((value) => typeof value === 'string' && value.trim());
+      const storedRestaurant = sourceSession?.restaurant || existingBill?.restaurant || null;
+      const restaurantAttested = hasSubmittedRestaurant
+        && verifyRestaurantIdentityAttestation(submittedRestaurant, scanId, requestedRecoveryToken);
+      const storedRestaurantAttested = storedRestaurant
+        && verifyStoredRestaurantIdentityAttestation(storedRestaurant, scanId);
+      const rawRestaurant = restaurantAttested
+        ? submittedRestaurant
+        : (storedRestaurantAttested
+          ? {
+              ...storedRestaurant,
+              ...(hasSubmittedRestaurant && submittedRestaurant.printedName
+                ? { printedName: submittedRestaurant.printedName }
+                : {}),
+              ...(hasSubmittedRestaurant && submittedRestaurant.address
+                ? { address: submittedRestaurant.address }
+                : {}),
+              ...(hasSubmittedRestaurant && submittedRestaurant.phone
+                ? { phone: submittedRestaurant.phone }
+                : {}),
+            }
+          : (hasSubmittedRestaurant ? submittedRestaurant : (storedRestaurant || {})));
+      const restaurant = createRestaurantIdentity(rawRestaurant, sourceSession?.storeName || cleanTitle, sessionId, {
+        attested: restaurantAttested || storedRestaurantAttested,
+        allowSuppliedTrust: restaurantAttested || storedRestaurantAttested,
+        attestedEvidence: restaurantAttested || storedRestaurantAttested ? rawRestaurant.identityEvidence : null,
+        userConfirmed: confirmedByUser,
+      });
       const itemsTotal = cleanItems.reduce((sum, item) => sum + item.price, 0);
       const requestedAmount = security.sanitizePrice(bill.amount);
       const cleanAmount = hasReceiptEvidence
@@ -1740,6 +2121,7 @@ app.prepare().then(() => {
         payerId: cleanPayerId,
         items: cleanItems,
         currency: groupCurrency,
+        ...(restaurant.id ? { restaurant } : {}),
         ...receiptFields,
         reconciliation: receiptReconciliation,
         assessment: receiptAssessment,
@@ -1768,6 +2150,7 @@ app.prepare().then(() => {
         storeName: cleanTitle,
         date: billDate,
         currency: group.currency || 'NIS',
+        ...(restaurant.id ? { restaurant } : {}),
         hostPhone: groupHost?.phone || '',
         status: existingSession?.status || 'active',
         tipPercentage: billTipPercentage,
@@ -1779,6 +2162,11 @@ app.prepare().then(() => {
           settled: Boolean(existingSession?.members?.find((member) => member.id === m.id)?.settled),
           avatarColor: m.avatarColor || '#A3E635',
           accessTokenHash: m.accessTokenHash,
+          accessTokenHashes: m.accessTokenHashes,
+          userId: m.userId || m.uid,
+          uid: m.uid,
+          clientIdentityHash: m.clientIdentityHash,
+          clientTokenSalt: m.clientTokenSalt,
           active: m.active !== false,
         })),
         items: cleanItems,
@@ -1788,11 +2176,15 @@ app.prepare().then(() => {
         ocr: ocrEvidence,
         imageQuality: receiptImageQuality,
         scanId: scanId || undefined,
+        admissionExpiresAt: existingSession?.admissionExpiresAt || (Date.now() + SESSION_ADMISSION_TTL_MS),
         confirmedByUserAt: confirmedByUser ? (existingSession?.confirmedByUserAt || Date.now()) : undefined,
         createdAt: existingSession?.createdAt || Date.now(),
       };
       const persisted = typeof db.saveGroupBillAndSession === 'function'
-        ? await db.saveGroupBillAndSession(group.id, newBillRecord, liveSession, actor.id, expectedRevision)
+          ? await db.saveGroupBillAndSession(group.id, newBillRecord, liveSession, actor.id, expectedRevision, {
+            restaurantVisitMembers: [liveSession.members.find((member) => member.id === actor.id)].filter(Boolean),
+            restaurantProofId: restaurantAttested ? restaurantProofId(submittedRestaurant) : '',
+          })
         : await db.saveGroupAndSession(group, liveSession);
       if (!persisted) return res.status(404).json({ error: 'Group not found' });
       const persistedGroup = persisted.group || group;
@@ -1818,6 +2210,20 @@ app.prepare().then(() => {
       const groupId = security.sanitizeString(req.body?.groupId, 100);
       const requestedAction = security.sanitizeString(req.body?.action || req.body?.type || '', 50);
       const billId = security.sanitizeString(req.body?.payload?.billId, 100);
+      let reopenCode = '';
+      let reopenInviteToken = '';
+      if (requestedAction === 'REOPEN_BILL') {
+        const currentGroup = await db.getGroup(groupId);
+        if (!currentGroup) return res.status(404).json({ error: 'Group not found' });
+        const currentActor = authorizedRoomMember(req, currentGroup);
+        if (!currentActor) return res.status(401).json({ error: 'A valid group membership is required' });
+        const currentBill = currentGroup.bills?.find((candidate) => candidate.id === billId);
+        const currentSession = currentBill?.sessionId ? await db.getSession(currentBill.sessionId) : null;
+        if (currentSession?.status === 'settled' && getBillStatus(currentBill) !== BILL_STATUS.ACTIVE) {
+          reopenCode = await db.generateUniqueRoomCode('session', currentSession.id);
+          reopenInviteToken = createSessionInviteToken();
+        }
+      }
       const mutation = await db.transactGroupAndLinkedSession(
         groupId,
         (group) => group.bills?.find((candidate) => candidate.id === billId)?.sessionId || '',
@@ -1832,19 +2238,36 @@ app.prepare().then(() => {
           if (actionId && Array.isArray(group.processedActionIds) && group.processedActionIds.includes(actionId)) {
             return { group, session: liveSession, idempotentReplay: true };
           }
-          if (liveSession?.members?.some((member) => member.active !== false && member.settled === true)) {
+          const activeLiveMembers = (liveSession?.members || []).filter((member) => member.active !== false);
+          const hasFinishedLiveMember = activeLiveMembers.some((member) => member.settled === true);
+          const allLiveMembersFinished = activeLiveMembers.length > 0
+            && activeLiveMembers.every((member) => member.settled === true);
+          if (hasFinishedLiveMember && !['FINALIZE_BILL', 'REOPEN_BILL'].includes(requestedAction)) {
             const error = new Error('Payment allocations are locked while a member is marked paid');
             error.statusCode = 409;
             throw error;
           }
+          if (requestedAction === 'FINALIZE_BILL' && liveSession && !allLiveMembersFinished) {
+            const error = new Error('Every participant must finish this split before it can be finalized');
+            error.statusCode = 409;
+            throw error;
+          }
           const previousBill = group.bills?.find((candidate) => candidate.id === billId);
-          if (requestedAction === 'FINALIZE_BILL' && Array.isArray(previousBill?.settledMemberIds) && previousBill.settledMemberIds.length > 0) {
+          if (requestedAction === 'FINALIZE_BILL'
+            && !liveSession
+            && Array.isArray(previousBill?.settledMemberIds)
+            && previousBill.settledMemberIds.length > 0) {
             const error = new Error('Reopen legacy paid shares before finishing this split');
             error.statusCode = 409;
             throw error;
           }
           const previousRevision = Number(previousBill?.revision || 0);
           const previousStatus = previousBill ? getBillStatus(previousBill) : null;
+          const historyMemberIds = (liveSession?.members || []).map((member) => (
+            member?.userId
+            || member?.uid
+            || (member?.id && !String(member.id).startsWith('member_') ? member.id : '')
+          )).filter(Boolean);
           const updatedGroup = processGroupBillAction(group, requestedAction, req.body?.payload, actor);
           if (actionId) {
             updatedGroup.processedActionIds = [...new Set([...(updatedGroup.processedActionIds || []), actionId])].slice(-50);
@@ -1874,16 +2297,31 @@ app.prepare().then(() => {
               liveSession.status = 'settled';
               liveSession.settledAt = bill.finalizedAt || Date.now();
               liveSession.groupSettlementDeferred = true;
-              (liveSession.members || []).forEach((member) => { member.settled = false; });
             }
             if (requestedAction === 'REOPEN_BILL' && getBillStatus(bill) === BILL_STATUS.ACTIVE) {
               liveSession.status = 'active';
               delete liveSession.settledAt;
               delete liveSession.groupSettlementDeferred;
               (liveSession.members || []).forEach((member) => { member.settled = false; });
+              bill.finishedMemberIds = [];
+              if (previousStatus !== BILL_STATUS.ACTIVE && reopenCode) {
+                liveSession.code = reopenCode;
+                liveSession.inviteTokenHash = hashAccessToken(reopenInviteToken);
+                liveSession.inviteExpiresAt = Date.now() + SESSION_ADMISSION_TTL_MS;
+                liveSession.admissionExpiresAt = Date.now() + SESSION_ADMISSION_TTL_MS;
+              }
             }
           }
-          return { group: updatedGroup, session: liveSession };
+          const reopened = requestedAction === 'REOPEN_BILL'
+            && previousStatus !== BILL_STATUS.ACTIVE
+            && liveSession?.status === 'active';
+          return {
+            group: updatedGroup,
+            session: liveSession,
+            deleteHistory: reopened,
+            removeHistoryForMemberIds: reopened ? historyMemberIds : [],
+            activateRoomCode: reopened && Boolean(reopenCode),
+          };
         },
       );
       if (!mutation) return res.status(404).json({ error: 'Group not found' });
@@ -1891,7 +2329,11 @@ app.prepare().then(() => {
       const liveSession = mutation.session;
       if (liveSession) global.broadcastSessionState(liveSession.id);
       global.broadcastGroupState(updated.id);
-      return res.json({ success: true, group: publicGroupWithDebt(updated) });
+      return res.json({
+        success: true,
+        group: publicGroupWithDebt(updated),
+        ...(reopenCode && liveSession?.code === reopenCode ? { sessionCode: reopenCode } : {}),
+      });
     } catch (err) {
       return sendRouteError(res, err, 'Failed to update group bill');
     }
@@ -2057,6 +2499,7 @@ app.prepare().then(() => {
       const user = await db.getUserByUid(uid);
       const userName = user ? user.username : '';
       const phone = user ? user.phone : '';
+      const hiddenGroupIds = new Set(Array.isArray(user?.hiddenGroupIds) ? user.hiddenGroupIds : []);
       const requestedScope = security.sanitizeString(String(req.query?.scope || 'active'), 10).toLowerCase();
       const scope = ['active', 'closed', 'all'].includes(requestedScope) ? requestedScope : 'active';
 
@@ -2066,6 +2509,7 @@ app.prepare().then(() => {
       const userGroups = (await Promise.all(groupIds.map((groupId) => db.getGroup(groupId))))
         .filter((group) => (
           group
+          && !hiddenGroupIds.has(group.id)
           && isUserMember(group.members, userName, phone, uid)
           && groupMatchesScope(group, scope)
         ));
@@ -2082,6 +2526,71 @@ app.prepare().then(() => {
     } catch (err) {
       console.error('Error fetching user groups:', err);
       return res.status(500).json({ error: 'Failed to fetch user groups' });
+    }
+  });
+
+  // Guest caches cannot use account history, but they still need deletion
+  // convergence. Only opaque internal IDs are accepted; numeric room codes are
+  // deliberately rejected so this endpoint cannot be used for discovery.
+  server.post('/api/rooms/status', authenticateUser, accountReadRateLimit, async (req, res) => {
+    try {
+      const sanitizeOpaqueIds = (values, prefix, maxItems) => [...new Set(
+        (Array.isArray(values) ? values : [])
+          .slice(0, maxItems)
+          .map((value) => security.sanitizeString(value, 100))
+          .filter((value) => new RegExp(`^${prefix}[_-][a-z0-9_-]{4,95}$`, 'i').test(value)),
+      )];
+      const sessionIds = sanitizeOpaqueIds(req.body?.sessionIds, 'sess', 50);
+      const groupIds = sanitizeOpaqueIds(req.body?.groupIds, 'grp', Math.max(0, 50 - sessionIds.length));
+      const [sessions, groups] = await Promise.all([
+        Promise.all(sessionIds.map((id) => db.getSession(id))),
+        Promise.all(groupIds.map((id) => db.getGroup(id))),
+      ]);
+      const groupSummaries = Object.fromEntries(groupIds
+        .map((id, index) => [id, groups[index]])
+        .filter(([, group]) => group && String(group.status || 'active').toLowerCase() === 'closed')
+        .map(([id, group]) => [id, summarizeGroup(group)]));
+      if (typeof db.resumeGroupDeletion === 'function') {
+        groupIds.forEach((id, index) => {
+          if (!groups[index]) {
+            void Promise.resolve(db.resumeGroupDeletion(id)).catch((error) => {
+              console.error('Failed to resume deferred group cleanup:', error);
+            });
+          }
+        });
+      }
+      return res.json({
+        success: true,
+        sessions: Object.fromEntries(sessionIds.map((id, index) => [
+          id,
+          sessions[index]
+            ? (String(sessions[index].status || 'active').toLowerCase() === 'deleting'
+              ? 'deleted'
+              : String(sessions[index].status || 'active').toLowerCase())
+            : 'deleted',
+        ])),
+        groups: Object.fromEntries(groupIds.map((id, index) => [
+          id,
+          groups[index]
+            ? (String(groups[index].status || 'active').toLowerCase() === 'deleting'
+              ? 'deleted'
+              : String(groups[index].status || 'active').toLowerCase())
+            : 'deleted',
+        ])),
+        sessionHistoryStates: Object.fromEntries(sessionIds
+          .map((id, index) => [id, sessions[index]])
+          .filter(([, session]) => Boolean(session))
+          .map(([id, session]) => [
+            id,
+            session.status === 'settled'
+              || (session.members || []).some((member) => member.active !== false && member.settled === true)
+              ? 'present'
+              : 'absent',
+          ])),
+        ...(Object.keys(groupSummaries).length ? { groupSummaries } : {}),
+      });
+    } catch (err) {
+      return sendRouteError(res, err, 'Failed to validate cached rooms');
     }
   });
 
@@ -2134,7 +2643,7 @@ app.prepare().then(() => {
           membersCount: effectiveMembers.length || histItem.membersCount || 1,
           createdAt: histItem.createdAt || 0,
           settledAt: histItem.settledAt || histItem.createdAt || 0,
-          status: 'settled',
+          status: histItem.status === 'active' ? 'active' : 'settled',
           ...(histItem.groupId ? {
             isGroupBill: true,
             groupId: histItem.groupId,
@@ -2169,7 +2678,12 @@ app.prepare().then(() => {
           const slots = Array.isArray(canonicalPage?.slots) ? canonicalPage.slots : [];
           const rawCount = Number.isInteger(canonicalPage?.rawCount) ? canonicalPage.rawCount : slots.length;
           const consumed = Math.min(remaining, rawCount);
+          const deletedCanonicalIds = typeof db.getDeletedSessionSourceIds === 'function'
+            ? await db.getDeletedSessionSourceIds(slots.slice(0, consumed).map((entry) => entry?.id))
+            : [];
+          const deletedCanonicalIdSet = new Set(deletedCanonicalIds);
           for (const entry of slots.slice(0, consumed)) {
+            if (deletedCanonicalIdSet.has(entry?.id)) continue;
             const summary = summarizeHistory(entry);
             if (summary) page.push(summary);
           }
@@ -2191,9 +2705,13 @@ app.prepare().then(() => {
             ? await db.getResolvableHistoryPointerIds(uid, candidates.map((entry) => entry.id))
             : [];
           const indexedIdSet = new Set(indexedIds);
+          const deletedIds = typeof db.getDeletedSessionSourceIds === 'function'
+            ? await db.getDeletedSessionSourceIds(candidates.map((entry) => entry.id))
+            : [];
+          const deletedIdSet = new Set(deletedIds);
           for (const entry of candidates) {
             offset += 1;
-            if (indexedIdSet.has(entry.id)) continue;
+            if (indexedIdSet.has(entry.id) || deletedIdSet.has(entry.id)) continue;
             const summary = summarizeHistory(entry);
             if (summary) page.push(summary);
             if (page.length >= pageLimit) break;
@@ -2225,6 +2743,18 @@ app.prepare().then(() => {
     }
   });
 
+  server.delete('/api/user/groups/:id/history', authenticateUser, async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+      const groupId = security.sanitizeString(req.params.id, 100);
+      const user = await db.hideGroupForUser(req.user.uid, groupId);
+      if (!user) return res.status(404).json({ error: 'User not found' });
+      return res.json({ success: true });
+    } catch (err) {
+      return sendRouteError(res, err, 'Failed to hide group history');
+    }
+  });
+
   // 5. Delete Bill from Group
   server.delete('/api/groups/bill/:groupId/:billId', authenticateUser, async (req, res) => {
     try {
@@ -2248,6 +2778,7 @@ app.prepare().then(() => {
       if (!actor.isHost && bill.createdByMemberId !== actor.id) {
         return res.status(403).json({ error: 'Only the bill creator or group host can delete this bill' });
       }
+      const linkedSessionBeforeDelete = bill.sessionId ? await db.getSession(bill.sessionId) : null;
 
       const group = await db.deleteGroupBill(groupId, billId, actor.id);
       if (!group) {
@@ -2255,6 +2786,12 @@ app.prepare().then(() => {
       }
       if (global.broadcastGroupState) {
         global.broadcastGroupState(group.id);
+      }
+      if (linkedSessionBeforeDelete) {
+        sendToRoom('session', linkedSessionBeforeDelete.id, {
+          type: 'SESSION_DELETED',
+          sessionId: linkedSessionBeforeDelete.id,
+        }, linkedSessionBeforeDelete);
       }
 
       return res.json({
@@ -2413,6 +2950,16 @@ app.prepare().then(() => {
     console.log(`  - Local PC: http://localhost:${PORT}`);
     console.log(`  - Phone/Wi-Fi: http://${localIp}:${PORT}`);
     console.log(`> ⚡ WebSockets running on ws://${localIp}:${PORT}`);
+    if (typeof db.resumePendingGroupDeletions === 'function') {
+      const resumePendingCleanup = () => {
+        void Promise.resolve(db.resumePendingGroupDeletions(5)).catch((error) => {
+          console.error('Deferred group cleanup retry failed:', error);
+        });
+      };
+      resumePendingCleanup();
+      const cleanupInterval = setInterval(resumePendingCleanup, 5 * 60 * 1000);
+      cleanupInterval.unref?.();
+    }
   });
 }).catch((err) => {
   console.error('❌ Failed to prepare Next.js app:', err);

@@ -15,7 +15,7 @@ import { useLanguage } from './LanguageContext';
 interface ManualBillModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onLaunchSession: (billData: { storeName: string; date?: string; currency: string; items: any[]; category?: string }) => Promise<void> | void;
+  onLaunchSession: (billData: { storeName: string; restaurant?: Record<string, unknown>; date?: string; currency: string; items: any[]; category?: string }) => Promise<void> | void;
   initialData?: { title?: string; storeName?: string; currency?: string; items?: any[]; date?: string; [key: string]: any } | null;
   isLoading?: boolean;
 }
@@ -71,9 +71,10 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
     const isDifferentBill = initialData?.id && initialData.id !== currentBillIdRef.current;
 
     if (isNewOpen || isDifferentBill) {
-      const initialStore = initialData?.storeName || initialData?.title || '';
+      const initialStore = initialData?.restaurant?.printedName || initialData?.storeName || initialData?.title || '';
+      const initialNickname = initialData?.title || initialData?.storeName || initialStore;
       setStoreName(initialStore);
-      setBillNickName(initialStore);
+      setBillNickName(initialNickname);
       setSelectedCurrency(initialData?.currency || currency || 'NIS');
       
       const initialItems: DraftItem[] = Array.isArray(initialData?.items) && initialData.items.length > 0
@@ -169,6 +170,12 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
       setIsSubmitting(true);
       await onLaunchSession({
         storeName: finalTitle,
+        restaurant: {
+          ...(initialData?.restaurant && typeof initialData.restaurant === 'object' ? initialData.restaurant : {}),
+          printedName: storeName.trim(),
+          source: initialData?.restaurant?.source || 'manual-entry',
+          consensusStatus: initialData?.restaurant?.consensusStatus || 'user-confirmed',
+        },
         date: typeof initialData?.date === 'string' ? initialData.date : undefined,
         currency: selectedCurrency,
         items: validItems,

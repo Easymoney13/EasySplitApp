@@ -4,6 +4,13 @@ import { reconstructReceiptRows } from './ocrRows';
 
 export interface ParsedBill {
   storeName: string;
+  restaurant?: {
+    printedName: string;
+    businessId: string;
+    address: string;
+    phone: string;
+    source: 'client-tesseract';
+  };
   date: string;
   currency: string;
   receiptTotal?: number | null;
@@ -281,18 +288,40 @@ export function parseReceiptText(rawText: string): ParsedBill | null {
   // 1. Store Name Detection
   let storeName = 'Scanned Receipt';
   for (let i = 0; i < Math.min(6, lines.length); i++) {
-    const candidate = lines[i]
+    const originalCandidate = lines[i];
+    const candidate = originalCandidate
       .replace(/[^\w\s\u0590-\u05FF]/g, '')
       .trim();
     if (
       candidate.length >= 2 &&
-      !/^(tel|vat|reg|check|date|cashier|#|mc\b|vat\b|receipt|tax|table|טלפון|ח.פ|מספר)/i.test(candidate) &&
+      !/^(tel|vat|reg|check|date|cashier|#|mc\b|vat\b|receipt|tax|table|טלפון|ח\s*פ(?:\s|$)|ע\s*מ(?:\s|$)|עוסק\s+מורשה|מספר)/i.test(candidate) &&
+      !/\d+(?:[.,]\d{2})\s*$/.test(originalCandidate) &&
       !/\d{2}[-/.]\d{2}[-/.]\d{2,4}/.test(candidate)
     ) {
       storeName = candidate;
       break;
     }
   }
+
+  // Preserve only explicitly printed business identity fields. These are kept
+  // separate from purchased rows so restaurant analytics never depends on a
+  // display title or on guessing from a menu item.
+  const businessIdMatch = rawText.match(
+    /(?:ח\s*[.׳'״"]?\s*פ\s*[.׳'״"]?|ע\s*[.׳'״"]?\s*מ\s*[.׳'״"]?|עוסק\s+מורשה|מספר\s+(?:חברה|עוסק)|company\s*(?:id|no)|business\s*(?:id|no)|vat\s*(?:id|no))\s*[:#-]?\s*(\d[\d\s-]{3,18}\d)/i,
+  );
+  const businessPhoneMatch = rawText.match(
+    /(?:טלפון|טל[.׳']?|phone|tel[.]?)\s*[:#-]?\s*((?:\+?972|0)[\d\s()\-]{7,18}\d)/i,
+  );
+  const addressMatch = rawText.match(
+    /(?:כתובת|address)\s*[:#-]?\s*([^\n]{4,160})/i,
+  );
+  const restaurant = {
+    printedName: storeName === 'Scanned Receipt' ? '' : storeName,
+    businessId: businessIdMatch?.[1]?.replace(/\D/g, '') || '',
+    address: addressMatch?.[1]?.trim() || '',
+    phone: businessPhoneMatch?.[1]?.trim() || '',
+    source: 'client-tesseract' as const,
+  };
 
   // 2. Currency Detection (Automatic NIS force for Hebrew receipts)
   const hasHebrewText = /[\u0590-\u05FF]/.test(rawText);
@@ -322,12 +351,16 @@ export function parseReceiptText(rawText: string): ParsedBill | null {
   }> = [];
 
   const noiseRegex = /^(reg\b|check\b|mc\b|vat\b|tel\b|date\b|time\b|table\b|cashier\b|eat\s*out|thank|welcome|subtotal|total\b|cash|change|visa|mastercard|balance|receipt|srvc\s*tl|סה"כ|סהכ|מזומן|אשראי|עודף|תאריך|שעה|שולחן|חשבון)/i;
+  // Identity and service metadata often end in a number (street number,
+  // phone, business ID, table number). Never reinterpret that number as a
+  // purchased item's price.
+  const identityOrHeaderRegex = /^(?:כתובת|מען|address|טלפון|טל[.׳']?|phone|tel[.]?|ח\s*[.׳'״"]?\s*פ|ע\s*[.׳'״"]?\s*מ|עוסק\s+מורשה|מספר\s+(?:חברה|עוסק|שולחן|הזמנה|עסקה)|company\s*(?:id|no)|business\s*(?:id|no)|vat\s*(?:id|no)|table\s*(?:no|number|#)?)(?:\s|[:#-]|$)/i;
   const timestampRegex = /\d{2}[-/.]\d{2}[-/.]\d{2,4}|\d{1,2}:\d{2}/;
 
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i];
 
-    if (noiseRegex.test(line) || timestampRegex.test(line)) {
+    if (noiseRegex.test(line) || identityOrHeaderRegex.test(line) || timestampRegex.test(line)) {
       continue;
     }
 
@@ -403,7 +436,7 @@ export function parseReceiptText(rawText: string): ParsedBill | null {
     }
 
     if (foundMatch && !isNaN(priceVal) && priceVal > 0 && priceVal < 10000) {
-      if (isTotalOrTaxLine(rawName)) continue;
+      if (isTotalOrTaxLine(rawName) || identityOrHeaderRegex.test(rawName)) continue;
       const qtyMatch = rawName.match(/^(\d+)\s+(.+)$/);
       let qtyStr = '';
       if (qtyMatch) {
@@ -438,6 +471,7 @@ export function parseReceiptText(rawText: string): ParsedBill | null {
 
   return {
     storeName,
+    restaurant,
     date: dateStr,
     currency,
     receiptTotal,

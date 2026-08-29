@@ -145,6 +145,7 @@ export const translations: Record<string, Record<string, string>> = {
     splitBetweenLabel: "Split between {count}",
     yourShareLabel: "Your Share",
     settleAndPayBtn: "Settle & Pay",
+    finishAndPayBtn: "Finish and Pay",
     youSuffix: "(You)",
     hostBadge: "HOST",
 
@@ -449,6 +450,7 @@ export const translations: Record<string, Record<string, string>> = {
     splitBetweenLabel: "מתחלק בין {count}",
     yourShareLabel: "החלק שלך",
     settleAndPayBtn: "סיכום ותשלום",
+    finishAndPayBtn: "סיום ותשלום",
     youSuffix: "(אתה)",
     hostBadge: "מארח",
 

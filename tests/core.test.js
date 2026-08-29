@@ -16,7 +16,14 @@ const { createStableScanEntityId, normalizeScanId, normalizeRecoveryToken, creat
 const { processGroupBillAction } = require('../lib/groupActions');
 const security = require('../lib/security');
 const { reconstructReceiptRows } = require('../lib/ocrRows');
-const { reserveUniqueFirestoreRoomCode } = require('../lib/db');
+const { createBoundedFirestoreBatchWriter, prepareOwnedRoomCodeDeletion, reserveUniqueFirestoreRoomCode } = require('../lib/db');
+const { cleanBusinessId, createRestaurantIdentity } = require('../lib/restaurantIdentity');
+const {
+  attestRestaurantIdentity,
+  restaurantProofId,
+  verifyRestaurantIdentityAttestation,
+  verifyStoredRestaurantIdentityAttestation,
+} = require('../lib/restaurantAttestation');
 const {
   assessOcrReadability,
   evaluateReceiptAccuracy,
@@ -79,28 +86,128 @@ test('room code allocation finds a deterministic free code after random retries 
 
 test('Firestore room codes are reserved atomically before room persistence', async () => {
   const created = [];
-  const values = [12345678, 87654321];
+  const values = [12345, 87654];
   const firestore = {
+    async runTransaction(callback) {
+      return callback({
+        async get(ref) {
+          return { exists: ref.code === '12345', data: () => ({ expiresAt: Date.now() + 60_000 }) };
+        },
+        set(ref, value) { created.push({ code: ref.code, value }); },
+      });
+    },
     collection(name) {
       assert.equal(name, '_room_codes');
       return {
         doc(code) {
-          return {
-            async create(value) {
-              created.push({ code, value });
-              if (code === '12345678') throw Object.assign(new Error('occupied'), { code: 'already-exists' });
-            },
-          };
+          return { code };
         },
       };
     },
   };
 
   const code = await reserveUniqueFirestoreRoomCode(firestore, 'session', 'sess_secure', () => values.shift());
-  assert.equal(code, '87654321');
-  assert.equal(created.length, 2);
-  assert.equal(created[1].value.roomType, 'session');
-  assert.equal(created[1].value.roomId, 'sess_secure');
+  assert.equal(code, '87654');
+  assert.equal(created.length, 1);
+  assert.equal(created[0].value.roomType, 'session');
+  assert.equal(created[0].value.roomId, 'sess_secure');
+  assert.ok(created[0].value.expiresAt > created[0].value.createdAt);
+});
+
+test('an expired code is not reassigned while its original room is still active', async () => {
+  const writes = [];
+  const values = [12345, 23456];
+  const firestore = {
+    collection(collection) {
+      return { doc(id) { return { collection, id }; } };
+    },
+    async runTransaction(callback) {
+      return callback({
+        async get(ref) {
+          if (ref.collection === '_room_codes' && ref.id === '12345') {
+            return {
+              exists: true,
+              data: () => ({ roomType: 'session', roomId: 'old-room', state: 'active', expiresAt: Date.now() - 1 }),
+            };
+          }
+          if (ref.collection === 'sessions' && ref.id === 'old-room') {
+            return { exists: true, data: () => ({ id: 'old-room', code: '12345', status: 'active' }) };
+          }
+          return { exists: false, data: () => null };
+        },
+        set(ref, value) { writes.push({ ref, value }); },
+      });
+    },
+  };
+  const code = await reserveUniqueFirestoreRoomCode(firestore, 'session', 'new-room', () => values.shift());
+  assert.equal(code, '23456');
+  assert.equal(writes.length, 1);
+});
+
+test('an expired losing reservation is recyclable when the room uses a different code', async () => {
+  const writes = [];
+  const firestore = {
+    collection(collection) {
+      return { doc(id) { return { collection, id }; } };
+    },
+    async runTransaction(callback) {
+      return callback({
+        async get(ref) {
+          if (ref.collection === '_room_codes' && ref.id === '12345') {
+            return {
+              exists: true,
+              data: () => ({ roomType: 'session', roomId: 'old-room', state: 'reserved', expiresAt: Date.now() - 1 }),
+            };
+          }
+          if (ref.collection === 'sessions' && ref.id === 'old-room') {
+            return { exists: true, data: () => ({ id: 'old-room', code: '54321', status: 'active' }) };
+          }
+          return { exists: false, data: () => null };
+        },
+        set(ref, value) { writes.push({ ref, value }); },
+      });
+    },
+  };
+  const code = await reserveUniqueFirestoreRoomCode(firestore, 'session', 'new-room', () => 12345);
+  assert.equal(code, '12345');
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].value.roomId, 'new-room');
+});
+
+test('room deletion removes only the registry entry still owned by that room', async () => {
+  const firestore = { collection: (collection) => ({ doc: (id) => ({ collection, id }) }) };
+  const wrongOwner = await prepareOwnedRoomCodeDeletion(firestore, {
+    get: async () => ({ exists: true, data: () => ({ roomType: 'session', roomId: 'new-owner' }) }),
+  }, 'session', 'old-owner', '12345');
+  assert.equal(wrongOwner, null);
+  const owned = await prepareOwnedRoomCodeDeletion(firestore, {
+    get: async () => ({ exists: true, data: () => ({ roomType: 'session', roomId: 'old-owner' }) }),
+  }, 'session', 'old-owner', '12345');
+  assert.deepEqual(owned, { collection: '_room_codes', id: '12345' });
+});
+
+test('large deletion cleanup never exceeds the bounded Firestore batch size', async () => {
+  const committedBatchSizes = [];
+  const fakeFirestore = {
+    batch() {
+      let writes = 0;
+      return {
+        delete() { writes += 1; },
+        set() { writes += 1; },
+        async commit() { committedBatchSizes.push(writes); },
+      };
+    },
+  };
+  const writer = createBoundedFirestoreBatchWriter(fakeFirestore, 400);
+  // 50 legal bills × 100 distinct authenticated participants, plus room/user
+  // cleanup overhead: well beyond Firestore's 500-write commit ceiling.
+  for (let index = 0; index < 5_150; index += 1) {
+    await writer.enqueue((batch) => batch.delete(`doc-${index}`));
+  }
+  await writer.flush();
+  assert.equal(committedBatchSizes.reduce((sum, size) => sum + size, 0), 5_150);
+  assert.ok(committedBatchSizes.length > 1);
+  assert.ok(committedBatchSizes.every((size) => size > 0 && size <= 400));
 });
 
 test('access token hashes compare without exposing the token', () => {
@@ -193,8 +300,10 @@ test('closed sessions are immutable', () => {
 });
 
 test('a member can mark only their own share as paid without closing the session', () => {
+  const assigned = sampleSession();
+  assigned.items[0].claimedBy = ['member-1'];
   const updated = processSessionAction(
-    sampleSession(),
+    assigned,
     'TOGGLE_SETTLED',
     { memberId: 'member-1', settled: true },
     { memberId: 'member-1' },
@@ -209,15 +318,17 @@ test('a member can mark only their own share as paid without closing the session
 });
 
 test('a paid member locks every accounting mutation until their share is reopened', () => {
+  const assigned = sampleSession();
+  assigned.items[0].claimedBy = ['member-1'];
   const paid = processSessionAction(
-    sampleSession(),
+    assigned,
     'TOGGLE_SETTLED',
     { memberId: 'member-1', settled: true },
     { memberId: 'member-1' },
   );
   assert.throws(
     () => processSessionAction(paid, 'TOGGLE_CLAIM', { itemId: 'item-1', memberId: 'member-1', claimed: true }, { memberId: 'member-1' }),
-    /allocations are locked/,
+    /Reopen your payment/,
   );
   assert.throws(
     () => processSessionAction(paid, 'SET_TIP', { tipPercentage: 12 }, { memberId: 'host-1' }),
@@ -249,6 +360,12 @@ test('room tokens authenticate exactly one member and are never exposed publicly
   const publicReceiptRoom = JSON.stringify(publicRoom({ ...room, scanId: 'secret-scan-id', inputDigest: 'private-digest' }));
   assert.equal(publicReceiptRoom.includes('secret-scan-id'), false);
   assert.equal(publicReceiptRoom.includes('private-digest'), false);
+  const publicRestaurantRoom = JSON.stringify(publicRoom({
+    ...room,
+    restaurant: { id: 'rest-safe', identityAttestation: 'bearer-proof', identityEvidence: { businessId: '515123456' } },
+  }));
+  assert.equal(publicRestaurantRoom.includes('bearer-proof'), false);
+  assert.equal(publicRestaurantRoom.includes('515123456'), false);
 });
 
 test('joining with the same name creates a distinct member without a valid token', () => {
@@ -269,6 +386,325 @@ test('concurrent authenticated rejoins keep both recently issued room tokens val
   assert.equal(findRoomMember(room, { accessToken: second.accessToken })?.id, 'uid-1');
   assert.equal(findRoomMember(room, { accessToken: third.accessToken })?.id, 'uid-1');
   assert.equal(publicRoom(room).members[0].accessTokenHashes, undefined);
+});
+
+test('concurrent guest rejoins with one stable client identity create exactly one member', () => {
+  const host = createRoomMember({ clientId: 'host-device', name: 'Host', phone: '0501111111', isHost: true });
+  const room = { members: [host.member] };
+  const first = joinRoom(room, { clientId: 'guest-device', name: 'Kuti', phone: '0502222222' });
+  const second = joinRoom(room, { clientId: 'guest-device', name: 'Kuti', phone: '0502222222' });
+  assert.equal(first.member.id, second.member.id);
+  assert.equal(room.members.length, 2);
+  assert.equal(findRoomMember(room, { accessToken: first.accessToken })?.id, first.member.id);
+  assert.equal(findRoomMember(room, { accessToken: second.accessToken })?.id, first.member.id);
+  assert.equal(JSON.stringify(publicRoom(room)).includes('clientIdentityHash'), false);
+});
+
+test('a shared browser identity cannot transfer host access between Google accounts', () => {
+  const first = createRoomMember({ uid: 'google-a', clientId: 'shared-browser', name: 'Account A', phone: '0501111111', isHost: true });
+  const room = { id: 'sess-account-isolation', members: [first.member] };
+  const second = joinRoom(room, { uid: 'google-b', clientId: 'shared-browser', name: 'Account B', phone: '0502222222' });
+  assert.equal(room.members.length, 2);
+  assert.equal(second.member.id, 'google-b');
+  assert.equal(second.member.isHost, false);
+  assert.equal(findRoomMember(room, { uid: 'google-a' })?.isHost, true);
+  assert.equal(findRoomMember(room, { uid: 'google-b' })?.isHost, false);
+});
+
+test('a shared browser identity cannot transfer an anonymous host to a newly signed-in account', () => {
+  const guest = createRoomMember({ clientId: 'shared-browser', name: 'Guest A', phone: '0501111111', isHost: true });
+  const room = { id: 'sess-guest-account-isolation', members: [guest.member] };
+  const signedIn = joinRoom(room, {
+    uid: 'google-b',
+    clientId: 'shared-browser',
+    name: 'Account B',
+    phone: '0502222222',
+  });
+  assert.equal(room.members.length, 2);
+  assert.equal(signedIn.member.id, 'google-b');
+  assert.equal(signedIn.member.isHost, false);
+  assert.equal(room.members.find((member) => member.id === guest.member.id)?.isHost, true);
+});
+
+test('a valid guest room token can explicitly bind that member to an account', () => {
+  const guest = createRoomMember({ clientId: 'private-browser', name: 'Guest A', phone: '0501111111', isHost: true });
+  const room = { id: 'sess-explicit-guest-migration', members: [guest.member] };
+  const signedIn = joinRoom(room, {
+    uid: 'google-a',
+    accessToken: guest.accessToken,
+    clientId: 'private-browser',
+    name: 'Guest A',
+    phone: '0501111111',
+  });
+  assert.equal(room.members.length, 1);
+  assert.equal(signedIn.member.id, guest.member.id);
+  assert.equal(signedIn.member.userId, 'google-a');
+  assert.equal(signedIn.member.isHost, true);
+});
+
+test('a token from any deduplicated legacy guest preserves claims during Google handoff', () => {
+  const first = createRoomMember({ clientId: 'legacy-device', name: 'Guest', phone: '0501111111' });
+  const duplicate = createRoomMember({ clientId: 'legacy-device', name: 'Guest', phone: '0501111111' });
+  const room = {
+    id: 'sess-legacy-guest-handoff',
+    members: [first.member, duplicate.member],
+    items: [{ id: 'item-1', name: 'Coffee', price: 12, claimedBy: [duplicate.member.id] }],
+  };
+  const signedIn = joinRoom(room, {
+    uid: 'google-legacy-guest',
+    clientId: 'legacy-device',
+    accessToken: duplicate.accessToken,
+    name: 'Guest',
+    phone: '0501111111',
+  });
+  assert.equal(room.members.length, 1);
+  assert.equal(signedIn.member.id, first.member.id);
+  assert.equal(signedIn.member.userId, 'google-legacy-guest');
+  assert.deepEqual(room.items[0].claimedBy, [first.member.id]);
+  assert.equal(findRoomMember(room, { uid: 'google-legacy-guest', accessToken: duplicate.accessToken })?.id, first.member.id);
+});
+
+test('legacy duplicate current tokens outrank bounded token history during handoff', () => {
+  const duplicates = Array.from({ length: 8 }, (_, duplicateIndex) => {
+    const created = createRoomMember({ clientId: 'crowded-legacy-device', name: 'Guest', phone: '0501111111' });
+    created.member.accessTokenHashes = Array.from(
+      { length: 20 },
+      (_, historyIndex) => hashAccessToken(`history-${duplicateIndex}-${historyIndex}`),
+    );
+    return created;
+  });
+  const claimedDuplicate = duplicates[1];
+  const room = {
+    id: 'sess-crowded-legacy-handoff',
+    members: duplicates.map(({ member }) => member),
+    items: [{ id: 'item-1', name: 'Coffee', price: 12, claimedBy: [claimedDuplicate.member.id] }],
+  };
+  const signedIn = joinRoom(room, {
+    uid: 'google-crowded-guest',
+    clientId: 'crowded-legacy-device',
+    accessToken: claimedDuplicate.accessToken,
+    name: 'Guest',
+    phone: '0501111111',
+  });
+  assert.equal(room.members.length, 1);
+  assert.equal(signedIn.member.id, duplicates[0].member.id);
+  assert.equal(signedIn.member.userId, 'google-crowded-guest');
+  assert.deepEqual(room.items[0].claimedBy, [duplicates[0].member.id]);
+});
+
+test('a stale room token cannot transfer host access to a different Google account', () => {
+  const first = createRoomMember({ uid: 'google-a', clientId: 'shared-browser', name: 'Account A', phone: '0501111111', isHost: true });
+  const room = { id: 'sess-stale-account-token', members: [first.member] };
+  assert.equal(findRoomMember(room, { uid: 'google-b', accessToken: first.accessToken }), null);
+  const second = joinRoom(room, {
+    uid: 'google-b',
+    accessToken: first.accessToken,
+    clientId: 'shared-browser',
+    name: 'Account B',
+    phone: '0502222222',
+  });
+  assert.equal(second.member.id, 'google-b');
+  assert.equal(second.member.isHost, false);
+  assert.equal(room.members.length, 2);
+});
+
+test('a session closes only after every active participant finishes', () => {
+  const assigned = sampleSession();
+  assigned.items[0].claimedBy = ['host-1', 'member-1'];
+  const first = processSessionAction(
+    assigned,
+    'TOGGLE_SETTLED',
+    { memberId: 'host-1', settled: true },
+    { memberId: 'host-1' },
+    () => 1000,
+  );
+  assert.equal(first.status, 'active');
+  assert.equal(first.members.find((member) => member.id === 'host-1').settledAt, 1000);
+  const final = processSessionAction(
+    first,
+    'TOGGLE_SETTLED',
+    { memberId: 'member-1', settled: true },
+    { memberId: 'member-1' },
+    () => 2000,
+  );
+  assert.equal(final.status, 'settled');
+  assert.equal(final.settledAt, 2000);
+});
+
+test('restaurant identity prefers stable business identifiers and marks name-only OCR as lower confidence', () => {
+  const exact = createRestaurantIdentity({
+    printedName: 'Test Cafe',
+    businessId: '515-123-453',
+    address: 'תל אביב',
+    consensusStatus: 'verified',
+  }, '', '', { providerVerified: true });
+  const sameBusiness = createRestaurantIdentity(
+    { printedName: 'Test Cafe', businessId: '515123453', address: 'תל אביב', consensusStatus: 'verified' },
+    '', '', { providerVerified: true },
+  );
+  const otherBranch = createRestaurantIdentity(
+    { printedName: 'Test Cafe', businessId: '515123453', address: 'ירושלים', consensusStatus: 'verified' },
+    '', '', { providerVerified: true },
+  );
+  const nameOnly = createRestaurantIdentity({ printedName: 'קפה בדיקה' }, '', 'session-a');
+  assert.equal(exact.id, sameBusiness.id);
+  assert.equal(exact.identityBasis, 'business_id_address');
+  assert.notEqual(exact.id, otherBranch.id);
+  assert.equal(exact.merchantId, otherBranch.merchantId);
+  assert.ok(exact.confidence > nameOnly.confidence);
+  assert.equal(nameOnly.identityBasis, 'name_only_session');
+});
+
+test('restaurant venue identity separates brands and unresolved names under one legal merchant', () => {
+  const common = {
+    businessId: '515123453',
+    address: '1 Shared Street',
+    consensusStatus: 'verified',
+    fieldVerification: { printedName: 'verified', businessId: 'verified', address: 'verified' },
+  };
+  const firstBrand = createRestaurantIdentity({ ...common, printedName: 'Brand A' }, '', 'scan-a', { providerVerified: true });
+  const secondBrand = createRestaurantIdentity({ ...common, printedName: 'Brand B' }, '', 'scan-b', { providerVerified: true });
+  assert.notEqual(firstBrand.id, secondBrand.id);
+  assert.equal(firstBrand.merchantId, secondBrand.merchantId);
+
+  const unresolved = {
+    ...common,
+    printedName: 'Scanned Receipt',
+    fieldVerification: { printedName: 'unresolved', businessId: 'verified', address: 'verified' },
+  };
+  const unresolvedFirst = createRestaurantIdentity(unresolved, '', 'scan-unresolved-a', { providerVerified: true });
+  const unresolvedSecond = createRestaurantIdentity(unresolved, '', 'scan-unresolved-b', { providerVerified: true });
+  assert.equal(unresolvedFirst.identityBasis, 'business_id_unresolved_venue');
+  assert.notEqual(unresolvedFirst.id, unresolvedSecond.id);
+  assert.equal(unresolvedFirst.merchantId, unresolvedSecond.merchantId);
+});
+
+test('only checksum-valid Israeli business IDs can become stable merchant evidence', () => {
+  assert.equal(cleanBusinessId('515-123-453'), '515123453');
+  assert.equal(cleanBusinessId('515-123-456'), '');
+  assert.equal(cleanBusinessId('123456789'), '');
+});
+
+test('unverified client restaurant metadata cannot create a cross-session business identity', () => {
+  const first = createRestaurantIdentity({
+    printedName: 'Forged Cafe',
+    businessId: '515123453',
+    trustScore: 0.99,
+    consensusStatus: 'verified',
+  }, '', 'session-one');
+  const second = createRestaurantIdentity({ printedName: 'Forged Cafe', businessId: '515123453' }, '', 'session-two');
+  assert.equal(first.identityBasis, 'name_only_session');
+  assert.equal(first.businessId, '');
+  assert.equal(first.businessIdCandidate, '515123453');
+  assert.notEqual(first.id, second.id);
+});
+
+test('restaurant attestations bind immutable OCR evidence and ignore unsigned aliases or trust', () => {
+  const previousSecret = process.env.EASYSPLIT_RESTAURANT_ATTESTATION_SECRET;
+  process.env.EASYSPLIT_RESTAURANT_ATTESTATION_SECRET = 'test-restaurant-attestation-secret';
+  try {
+    const scanId = 'scan_attestation_12345';
+    const recoveryToken = 'recovery_token_1234567890_abcdefghijklmnopqrstuvwxyz';
+    const trusted = createRestaurantIdentity({
+      printedName: 'Trusted Cafe',
+      businessId: '515123453',
+      address: '1 Main Street',
+      consensusStatus: 'verified',
+      fieldVerification: { printedName: 'verified', businessId: 'verified', address: 'verified', phone: 'unresolved' },
+    }, '', scanId, { providerVerified: true });
+    const attested = attestRestaurantIdentity(trusted, scanId, recoveryToken);
+    assert.equal(verifyRestaurantIdentityAttestation(attested, scanId, recoveryToken), true);
+    assert.equal(verifyStoredRestaurantIdentityAttestation(attested, scanId), true);
+    assert.ok(restaurantProofId(attested));
+    assert.equal(verifyRestaurantIdentityAttestation(attested, scanId), false);
+
+    const correctedDisplay = { ...attested, printedName: 'User Corrected Cafe', trustScore: 1, taxId: '599999999' };
+    assert.equal(verifyRestaurantIdentityAttestation(correctedDisplay, scanId, recoveryToken), true);
+    const normalized = createRestaurantIdentity(correctedDisplay, '', scanId, {
+      attested: true,
+      allowSuppliedTrust: true,
+      attestedEvidence: correctedDisplay.identityEvidence,
+      userConfirmed: true,
+    });
+    assert.equal(normalized.printedName, 'User Corrected Cafe');
+    assert.equal(normalized.businessId, '515123453');
+    assert.equal(normalized.trustScore, trusted.trustScore);
+
+    for (const field of ['businessId', 'printedName', 'address', 'phone', 'trustScore']) {
+      const tampered = {
+        ...attested,
+        identityEvidence: { ...attested.identityEvidence, [field]: `${attested.identityEvidence[field] || ''}tampered` },
+      };
+      assert.equal(verifyRestaurantIdentityAttestation(tampered, scanId, recoveryToken), false, field);
+    }
+    assert.equal(verifyRestaurantIdentityAttestation(attested, 'different_scan_12345', recoveryToken), false);
+    assert.equal(verifyRestaurantIdentityAttestation(attested, scanId, `${recoveryToken}x`), false);
+
+    const unsignedBranchCorrection = { ...attested, address: 'Unsigned Branch 99' };
+    const normalizedCorrection = createRestaurantIdentity(unsignedBranchCorrection, '', scanId, {
+      attested: true,
+      allowSuppliedTrust: true,
+      attestedEvidence: unsignedBranchCorrection.identityEvidence,
+      userConfirmed: true,
+    });
+    assert.equal(normalizedCorrection.id, normalized.id);
+    assert.equal(normalizedCorrection.address, 'Unsigned Branch 99');
+    assert.ok(normalizedCorrection.fieldTrust.address < 0.8);
+
+    const noAddressTrusted = createRestaurantIdentity({
+      printedName: 'Trusted Cafe',
+      businessId: '515123453',
+      address: '',
+      consensusStatus: 'verified',
+      fieldVerification: { printedName: 'verified', businessId: 'verified', address: 'unresolved' },
+    }, '', scanId, { providerVerified: true });
+    const noAddressAttested = attestRestaurantIdentity(noAddressTrusted, scanId, recoveryToken);
+    const injectedAddress = { ...noAddressAttested, address: 'Unsigned Branch 99' };
+    assert.equal(verifyRestaurantIdentityAttestation(injectedAddress, scanId, recoveryToken), true);
+    const normalizedInjectedAddress = createRestaurantIdentity(injectedAddress, '', scanId, {
+      attested: true,
+      allowSuppliedTrust: true,
+      attestedEvidence: injectedAddress.identityEvidence,
+      userConfirmed: true,
+    });
+    assert.equal(normalizedInjectedAddress.identityBasis, 'business_id_unresolved_venue');
+    assert.ok(normalizedInjectedAddress.fieldTrust.address < 0.8);
+
+    const forgedClientRestaurant = {
+      printedName: 'Forged Cafe',
+      identityEvidence: {
+        printedName: 'Forged Cafe', businessId: '599999999', address: 'Fake Address',
+        trustScore: 1, consensusStatus: 'verified',
+        fieldVerification: { printedName: 'verified', businessId: 'verified', address: 'verified' },
+      },
+      identityAttestation: 'invalid-signature',
+    };
+    const firstPass = createRestaurantIdentity(forgedClientRestaurant, '', scanId, { userConfirmed: true });
+    assert.equal(firstPass.businessId, '');
+    assert.equal(firstPass.identityEvidence, undefined);
+    const secondPass = createRestaurantIdentity(firstPass, '', scanId, {
+      allowSuppliedTrust: true,
+      attested: true,
+      attestedEvidence: firstPass.identityEvidence || null,
+      userConfirmed: true,
+    });
+    assert.equal(secondPass.businessId, '');
+    assert.notEqual(secondPass.identityBasis, 'business_id_address');
+  } finally {
+    if (previousSecret === undefined) delete process.env.EASYSPLIT_RESTAURANT_ATTESTATION_SECRET;
+    else process.env.EASYSPLIT_RESTAURANT_ATTESTATION_SECRET = previousSecret;
+  }
+});
+
+test('a fallback name cannot inherit trust from a separately verified phone field', () => {
+  const identity = createRestaurantIdentity({
+    printedName: '',
+    phone: '03-5551234',
+    consensusStatus: 'partial',
+    fieldVerification: { printedName: 'unresolved', phone: 'verified', address: 'unresolved', businessId: 'unresolved' },
+  }, 'Fallback Restaurant', 'scan-fallback-name', { providerVerified: true });
+  assert.notEqual(identity.identityBasis, 'name_phone');
+  assert.ok(identity.fieldTrust.printedName < 0.8);
 });
 
 test('rooms enforce a bounded participant count', () => {
@@ -663,6 +1099,20 @@ test('OCR numeric consensus changes a price only when two independent reads agre
   assert.equal(unresolved.receipt.items[0].price, 9);
   assert.equal(unresolved.resolvedItemPrices, 0);
   assert.equal(unresolved.unresolvedItemPrices, 1);
+});
+
+test('restaurant consensus never blesses a primary-only business identifier', () => {
+  const makeReceipt = (businessId) => ({
+    storeName: 'Same Cafe',
+    restaurant: { printedName: 'Same Cafe', businessId },
+    items: [{ name: 'Coffee', price: 12 }],
+  });
+  const consensus = buildValueConsensus(
+    makeReceipt('515111111'), makeReceipt('515222222'), makeReceipt('515333333'),
+  );
+  assert.equal(consensus.receipt.restaurant.printedName, 'Same Cafe');
+  assert.equal(consensus.receipt.restaurant.businessId, undefined);
+  assert.equal(consensus.receipt.restaurant.fieldVerification.businessId, 'unresolved');
 });
 
 test('OCR starts three independent reads and resolves numeric disagreement by majority', async () => {
@@ -1218,6 +1668,186 @@ test('session settlement persists the closed session and history in one database
   assert.equal(secondCreate.created, false);
   assert.equal(secondCreate.session.code, '1111');
 
+  temporaryDb.saveSession({
+    id: 'sess-expired-admission',
+    code: '98765',
+    status: 'active',
+    admissionExpiresAt: Date.now() - 1,
+    members: [],
+  });
+  assert.equal(temporaryDb.getSession('98765'), null);
+  assert.equal(temporaryDb.getSession('sess-expired-admission').id, 'sess-expired-admission');
+  temporaryDb.saveSession({
+    id: 'sess-settled-legacy-code',
+    code: '82522119',
+    status: 'settled',
+    admissionExpiresAt: Date.now() + 60_000,
+    members: [],
+  });
+  assert.equal(temporaryDb.getSession('82522119'), null);
+  assert.equal(temporaryDb.getSession('sess-settled-legacy-code').status, 'settled');
+
+  temporaryDb.createSessionIfAbsent(
+    { id: 'sess-proof-owner', code: '33333', members: [] },
+    { restaurantProofId: 'proof-once' },
+  );
+  temporaryDb.createSessionIfAbsent(
+    { id: 'sess-proof-owner', code: '44444', members: [] },
+    { restaurantProofId: 'proof-once' },
+  );
+  assert.throws(
+    () => temporaryDb.createSessionIfAbsent(
+      { id: 'sess-proof-replay', code: '55555', members: [] },
+      { restaurantProofId: 'proof-once' },
+    ),
+    /already used in another bill/,
+  );
+
+  const visitHost = {
+    id: 'member_visit',
+    name: 'Visit Host',
+    phone: '0509999999',
+    clientIdentityHash: 'device-hash',
+    isHost: true,
+  };
+  const visitSession = {
+    id: 'sess-visit-atomic',
+    code: '12345',
+    members: [visitHost],
+    restaurant: createRestaurantIdentity(
+      { printedName: 'Trusted Cafe', businessId: '515123453', address: '1 Test Street', consensusStatus: 'verified' },
+      '', '', { providerVerified: true },
+    ),
+  };
+  temporaryDb.createSessionIfAbsent(visitSession, { restaurantVisitMembers: [visitHost] });
+  temporaryDb.createSessionIfAbsent(visitSession, {
+    restaurantVisitMembers: [{ ...visitHost, id: 'phantom-member-from-losing-create' }],
+  });
+  temporaryDb.transactSessionAndLinkedGroup(visitSession.id, (currentSession) => {
+    const upgraded = { ...currentSession.members[0], userId: 'google-visit-user' };
+    currentSession.members[0] = upgraded;
+    return { session: currentSession, restaurantVisitMembers: [upgraded] };
+  });
+  const visitData = JSON.parse(fs.readFileSync(temporaryDbPath, 'utf8'));
+  const visitRows = Object.values(visitData.restaurantVisits).filter((visit) => visit.sessionId === visitSession.id);
+  assert.equal(visitRows.length, 1);
+  assert.equal(visitRows[0].userId, 'google-visit-user');
+  assert.equal(visitRows[0].phoneHash, undefined);
+  assert.ok(visitRows[0].phoneHmac);
+  assert.equal(JSON.stringify(visitRows[0]).includes('0509999999'), false);
+  assert.ok(visitRows[0].identityAliases.includes('user:google-visit-user'));
+  assert.equal(visitRows[0].phoneAssurance, 'format_only');
+  assert.equal(visitRows[0].physicalPresenceVerified, false);
+  assert.equal(visitRows[0].visitEvidence, 'bill_participant');
+  const originalPhoneAlias = visitRows[0].identityAliases.find((alias) => alias.startsWith('phone:'));
+  temporaryDb.transactSessionAndLinkedGroup(visitSession.id, (currentSession) => {
+    currentSession.members[0].phone = '0508888888';
+    return { session: currentSession, restaurantVisitMembers: [currentSession.members[0]] };
+  });
+  const afterPhoneCorrection = JSON.parse(fs.readFileSync(temporaryDbPath, 'utf8'));
+  const correctedVisit = Object.values(afterPhoneCorrection.restaurantVisits)
+    .find((visit) => visit.sessionId === visitSession.id);
+  const phoneAliases = correctedVisit.identityAliases.filter((alias) => alias.startsWith('phone:'));
+  assert.equal(phoneAliases.length, 1);
+  assert.notEqual(phoneAliases[0], originalPhoneAlias);
+
+  const previousAttestationSecret = process.env.EASYSPLIT_RESTAURANT_ATTESTATION_SECRET;
+  process.env.EASYSPLIT_RESTAURANT_ATTESTATION_SECRET = 'canonical-restaurant-test-secret';
+  try {
+    const canonicalScanId = 'scan_canonical_12345';
+    const canonicalRecovery = 'recovery_canonical_1234567890_abcdefghijklmnopqrstuvwxyz';
+    const trustedRestaurant = createRestaurantIdentity({
+      printedName: 'Canonical Cafe',
+      businessId: '515123453',
+      address: '1 Canonical Street',
+      consensusStatus: 'verified',
+      fieldVerification: { printedName: 'verified', businessId: 'verified', address: 'verified' },
+    }, '', canonicalScanId, { providerVerified: true });
+    const attestedRestaurant = attestRestaurantIdentity(trustedRestaurant, canonicalScanId, canonicalRecovery);
+    const correctedRestaurant = createRestaurantIdentity({
+      ...attestedRestaurant,
+      printedName: 'User Cafe Nickname',
+    }, '', canonicalScanId, {
+      attested: true,
+      allowSuppliedTrust: true,
+      attestedEvidence: attestedRestaurant.identityEvidence,
+      userConfirmed: true,
+    });
+    temporaryDb.createSessionIfAbsent({
+      id: 'sess-canonical-restaurant-first-visit',
+      code: '44444',
+      members: [visitHost],
+      restaurant: attestedRestaurant,
+    }, { restaurantVisitMembers: [visitHost] });
+    temporaryDb.createSessionIfAbsent({
+      id: 'sess-canonical-restaurant',
+      code: '44445',
+      members: [visitHost],
+      restaurant: correctedRestaurant,
+    }, { restaurantVisitMembers: [visitHost] });
+    const canonicalData = JSON.parse(fs.readFileSync(temporaryDbPath, 'utf8'));
+    const canonicalRecord = canonicalData.restaurants[correctedRestaurant.id];
+    assert.equal(canonicalRecord.printedName, 'Canonical Cafe');
+    assert.equal(canonicalRecord.userCorrectionCandidates, undefined);
+    const observations = Object.values(canonicalData.restaurantObservations)
+      .filter((observation) => observation.sessionId === 'sess-canonical-restaurant');
+    assert.equal(observations.length, 1);
+    assert.equal(observations[0].restaurantId, correctedRestaurant.id);
+    assert.equal(observations[0].correctionCandidates.printedName, 'User Cafe Nickname');
+    assert.equal(observations[0].submittedByVisitId.startsWith('visit_'), true);
+    assert.equal(JSON.stringify(observations[0]).includes('0509999999'), false);
+    const originalSubmitterVisitId = observations[0].submittedByVisitId;
+    temporaryDb.transactSessionAndLinkedGroup('sess-canonical-restaurant', (currentSession) => {
+      const laterGuest = {
+        id: 'member-later-restaurant-guest',
+        userId: 'google-later-restaurant-guest',
+        name: 'Later Guest',
+        phone: '0507777777',
+      };
+      currentSession.members.push(laterGuest);
+      return { session: currentSession, restaurantVisitMembers: [laterGuest] };
+    });
+    let updatedObservation = Object.values(JSON.parse(fs.readFileSync(temporaryDbPath, 'utf8')).restaurantObservations)
+      .find((observation) => observation.sessionId === 'sess-canonical-restaurant');
+    assert.equal(updatedObservation.submittedByVisitId, originalSubmitterVisitId);
+    assert.equal(updatedObservation.submittedByUserId, undefined);
+    assert.equal(updatedObservation.observedByVisitIds.length, 2);
+    temporaryDb.transactSessionAndLinkedGroup('sess-canonical-restaurant', (currentSession) => {
+      currentSession.members[0].userId = 'google-original-restaurant-host';
+      return { session: currentSession, restaurantVisitMembers: [currentSession.members[0]] };
+    });
+    updatedObservation = Object.values(JSON.parse(fs.readFileSync(temporaryDbPath, 'utf8')).restaurantObservations)
+      .find((observation) => observation.sessionId === 'sess-canonical-restaurant');
+    assert.equal(updatedObservation.submittedByVisitId, originalSubmitterVisitId);
+    assert.equal(updatedObservation.submittedByUserId, 'google-original-restaurant-host');
+    temporaryDb.deleteSession('sess-canonical-restaurant');
+    const afterCorrectionSourceDeletion = JSON.parse(fs.readFileSync(temporaryDbPath, 'utf8'));
+    assert.equal(afterCorrectionSourceDeletion.restaurantObservations[observations[0].id].correctionCandidates.printedName, 'User Cafe Nickname');
+    assert.equal(afterCorrectionSourceDeletion.restaurantVisitSourceDeletions['sess-canonical-restaurant'].excludeFromPrimaryMetrics, true);
+  } finally {
+    if (previousAttestationSecret === undefined) delete process.env.EASYSPLIT_RESTAURANT_ATTESTATION_SECRET;
+    else process.env.EASYSPLIT_RESTAURANT_ATTESTATION_SECRET = previousAttestationSecret;
+  }
+
+  temporaryDb.deleteSession(visitSession.id);
+  const afterVisitSourceDeletion = JSON.parse(fs.readFileSync(temporaryDbPath, 'utf8'));
+  assert.equal(afterVisitSourceDeletion.restaurantVisitSourceDeletions[visitSession.id].excludeFromPrimaryMetrics, true);
+  assert.equal(afterVisitSourceDeletion.restaurantVisitSourceDeletions[visitSession.id].reason, 'host_deleted');
+  assert.deepEqual(temporaryDb.getDeletedSessionSourceIds([visitSession.id, 'sess-not-deleted']), [visitSession.id]);
+  assert.throws(
+    () => temporaryDb.createSessionIfAbsent(visitSession, { restaurantVisitMembers: [visitHost] }),
+    /cannot be recreated/,
+  );
+
+  temporaryDb.saveUser({ id: 'group-pointer-user', username: 'Pointer User', groups: [] }, 'group-pointer-user');
+  assert.equal(temporaryDb.addGroupToUser('group-pointer-user', 'grp-missing'), null);
+  temporaryDb.saveGroup({
+    id: 'grp-pointer-safe',
+    members: [{ id: 'member-pointer', userId: 'group-pointer-user', active: true }],
+    bills: [],
+  });
+  assert.ok(temporaryDb.addGroupToUser('group-pointer-user', 'grp-pointer-safe').groups.includes('grp-pointer-safe'));
+
   temporaryDb.saveGroup({ id: 'grp-atomic-bill', members: [{ id: 'host', isHost: true }], bills: [] });
   const atomicBill = temporaryDb.saveGroupBillAndSession(
     'grp-atomic-bill',
@@ -1364,6 +1994,16 @@ test('session settlement persists the closed session and history in one database
   assert.deepEqual(afterBillDelete.users.inactive.groups, []);
   assert.equal(afterBillDelete.groups['grp-test'].bills.length, 0);
   assert.equal(afterBillDelete.sessions['sess-bill-test'], undefined);
+  assert.equal(afterBillDelete.restaurantVisitSourceDeletions['sess-bill-test'].excludeFromPrimaryMetrics, true);
+  assert.throws(
+    () => temporaryDb.saveGroupBillAndSession(
+      'grp-test',
+      { id: 'bill-test', createdByMemberId: 'host', items: [] },
+      { id: 'sess-bill-test', groupId: 'grp-test', billId: 'bill-test' },
+      'host',
+    ),
+    /cannot be recreated/,
+  );
 
   assert.throws(
     () => temporaryDb.saveGroup({

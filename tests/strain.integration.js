@@ -89,7 +89,7 @@ test('critical HTTP and WebSocket paths shed load without crashing', { timeout: 
     groups: {
       grp_strain: {
         id: 'grp_strain',
-        code: '6789',
+        code: '12345678',
         status: 'active',
         currency: 'NIS',
         members: [groupHost.member],
@@ -127,14 +127,34 @@ test('critical HTTP and WebSocket paths shed load without crashing', { timeout: 
 
   const joins = await requestBatch(100, (index) => fetch(`${baseUrl}/api/groups/join`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ groupId: '6789', name: `Guest ${index}` }),
+    headers: { 'content-type': 'application/json', 'x-easysplit-client-id': `strain-device-${index}` },
+    body: JSON.stringify({
+      // Match the real browser flow: lookup resolves the code first, then the
+      // join POST carries the durable group ID.
+      groupId: 'grp_strain',
+      name: `Guest ${index}`,
+      phone: `050${String(index).padStart(7, '0')}`,
+      clientId: `strain-device-${index}`,
+    }),
   }));
   const joinStatuses = joins.results.map(({ status }) => status);
   assert.ok(joinStatuses.includes(200));
-  assert.ok(joinStatuses.includes(429));
-  assert.ok(joinStatuses.every((status) => status === 200 || status === 429));
-  assert.ok(joinStatuses.filter((status) => status === 200).length <= 30);
+  assert.ok(joinStatuses.every((status) => status === 200 || status === 409 || status === 429));
+  assert.equal(joinStatuses.includes(503), false);
+  assert.ok(joinStatuses.filter((status) => status === 200).length >= 95);
+
+  const durableJoinReplay = await requestBatch(13, (index) => fetch(`${baseUrl}/api/groups/join`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-easysplit-client-id': 'durable-replay-client' },
+    body: JSON.stringify({
+      groupId: 'grp_strain',
+      name: 'Durable Replay Guest',
+      phone: '0509999999',
+      clientId: 'durable-replay-client',
+      replay: index,
+    }),
+  }));
+  assert.ok(durableJoinReplay.results.some(({ status }) => status === 429));
 
   const mutations = await requestBatch(300, (index) => fetch(`${baseUrl}/api/session/action`, {
     method: 'POST',
