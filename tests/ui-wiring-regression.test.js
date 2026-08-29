@@ -67,3 +67,9 @@ test('invite races, QR layering, and destructive swipes are guarded in the UI co
   assert.match(sessionSource, /persistSessionHistoryLocally\(memberCalculations\.myShare\)/);
   assert.match(serverSource, /coarseShard/);
 });
+
+test('the session payment bar follows receipt items without an empty viewport-filling spacer', () => {
+  assert.match(sessionSource, /session-scroll-area p-5 pb-4 space-y-6/);
+  assert.doesNotMatch(sessionSource, /session-scroll-area flex-1 min-h-0 overflow-y-auto/);
+  assert.doesNotMatch(sessionSource, /app-surface flex flex-1 min-h-0 w-full flex-col/);
+});
