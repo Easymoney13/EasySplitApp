@@ -196,7 +196,7 @@ jobs:
     name: Android 16 install + launch + Back + deep links
     needs: compile-native-projects
     runs-on: macos-15-intel
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - name: Checkout source
         uses: actions/checkout@v5
@@ -233,18 +233,37 @@ jobs:
           arch: x86_64
           profile: pixel_6
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          emulator-boot-timeout: 900
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -no-metrics
           pre-emulator-launch-script: |
             adb kill-server || true
             adb start-server
             adb devices
           script: |
-            set -euo pipefail
             mkdir -p "$RUNNER_TEMP/easysplit-android-smoke"
             adb install -r android-runtime/app-debug.apk
-            node .github/validation/native-android-runtime.mjs | tee "$RUNNER_TEMP/easysplit-android-smoke/result.txt"
-            adb exec-out screencap -p > "$RUNNER_TEMP/easysplit-android-smoke/final.png"
-            adb logcat -d -v threadtime > "$RUNNER_TEMP/easysplit-android-smoke/logcat.txt"
+            node .github/validation/native-android-runtime.mjs > "$RUNNER_TEMP/easysplit-android-smoke/result.txt" 2>&1 || true
+            adb exec-out screencap -p > "$RUNNER_TEMP/easysplit-android-smoke/final.png" || true
+            adb logcat -d -v threadtime > "$RUNNER_TEMP/easysplit-android-smoke/logcat.txt" || true
+
+      - name: Require Android runtime PASS evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          RESULT="$RUNNER_TEMP/easysplit-android-smoke/result.txt"
+          test -s "$RESULT"
+          cat "$RESULT"
+          for marker in \
+            ANDROID_COLD_LAUNCH=PASS \
+            ANDROID_BACK_SHEET_DISMISS=PASS \
+            ANDROID_LIVE_DEEP_LINK=PASS \
+            ANDROID_COLD_DEEP_LINK=PASS \
+            ANDROID_BACK_ROOT=PASS \
+            ANDROID_BACKGROUND_RESUME=PASS \
+            ANDROID_CRASH_ANR_SCAN=PASS
+          do
+            grep -Fxq "$marker" "$RESULT"
+          done
 
       - name: Upload Android runtime diagnostics
         if: always()
