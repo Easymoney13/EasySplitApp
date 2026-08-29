@@ -19,169 +19,20 @@ env:
   NEXT_PUBLIC_EASYSPLIT_WEB_ORIGIN: https://billspltapp.onrender.com
   NEXT_PUBLIC_EASYSPLIT_WS_ORIGIN: wss://billspltapp.onrender.com
 
+# Run 12 already proved the unchanged candidate on the complete web regression,
+# live native CORS probe, iOS build, install, and cold launch. This final run is
+# intentionally Android-only so a hosted-emulator harness fix does not repeat
+# unrelated work.
 jobs:
-  web-and-ios-simulator:
-    name: Web regression + iOS Simulator
-    runs-on: macos-latest
-    timeout-minutes: 45
-    steps:
-      - name: Checkout validation branch
-        uses: actions/checkout@v5
-
-      - name: Apply isolated Gate 1+2 candidate
-        run: |
-          python3 .github/validation/apply-gate12-candidate.py
-          git diff --check
-          git diff --stat
-          mkdir -p "$RUNNER_TEMP/gate12-ios"
-          git diff > "$RUNNER_TEMP/gate12-ios/candidate.diff"
-
-      - name: Set up Node
-        uses: actions/setup-node@v5
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-
-      - name: Install exact dependency graph
-        run: npm ci
-
-      - name: Run complete web and mobile regression
-        run: |
-          npm run test
-          npm run test:ocr-hebrew
-          npm run typecheck
-          npm run build
-          npm run test:strain
-          npm run verify:mobile-shell
-
-      - name: Prove exact native CORS defaults against a production server build
-        shell: bash
-        run: |
-          set -euo pipefail
-          # verify:mobile-shell produces the Vite bundle after the Next.js build.
-          # Recreate the production Next.js output immediately before starting
-          # the custom production server so the CORS probe tests the product,
-          # not stale/missing CI build artifacts.
-          npm run build
-          SERVER_LOG="$RUNNER_TEMP/gate12-ios/server.log"
-          PORT=3100 npm start >"$SERVER_LOG" 2>&1 &
-          SERVER_PID=$!
-          cleanup() { kill "$SERVER_PID" 2>/dev/null || true; }
-          trap cleanup EXIT
-          READY=false
-          for attempt in $(seq 1 60); do
-            if curl -fsS "http://127.0.0.1:3100/api/exchange-rates" >/dev/null; then
-              READY=true
-              break
-            fi
-            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-              cat "$SERVER_LOG"
-              exit 1
-            fi
-            sleep 1
-          done
-          if [ "$READY" != 'true' ]; then
-            cat "$SERVER_LOG"
-            exit 1
-          fi
-
-          for origin in 'capacitor://localhost' 'https://localhost'; do
-            headers="$RUNNER_TEMP/gate12-ios/$(echo "$origin" | tr '/:' '_').headers"
-            status=$(curl -sS -D "$headers" -o /dev/null -w '%{http_code}' \
-              -X OPTIONS \
-              -H "Origin: $origin" \
-              -H 'Access-Control-Request-Method: POST' \
-              -H 'Access-Control-Request-Headers: Authorization, Content-Type, X-Firebase-AppCheck' \
-              'http://127.0.0.1:3100/api/receipt/parse')
-            test "$status" = '204'
-            grep -Fqi "Access-Control-Allow-Origin: $origin" "$headers"
-            grep -Fqi 'X-Firebase-AppCheck' "$headers"
-          done
-
-          attacker_status=$(curl -sS -o /dev/null -w '%{http_code}' \
-            -X OPTIONS \
-            -H 'Origin: https://localhost.attacker.example' \
-            -H 'Access-Control-Request-Method: POST' \
-            'http://127.0.0.1:3100/api/receipt/parse')
-          test "$attacker_status" = '403'
-          echo 'NATIVE_CORS_DEFAULTS=PASS' | tee "$RUNNER_TEMP/gate12-ios/cors-result.txt"
-
-      - name: Synchronize iOS native project
-        run: npx cap sync ios
-
-      - name: Compile iOS Simulator build without signing
-        shell: bash
-        run: |
-          set -euo pipefail
-          xcodebuild -version | tee "$RUNNER_TEMP/gate12-ios/xcode-version.txt"
-          XCODE_MAJOR=$(xcodebuild -version | awk 'NR==1 {split($2, v, "."); print v[1]}')
-          test "$XCODE_MAJOR" -ge 26
-          if [ -d ios/App/App.xcworkspace ]; then
-            XCODE_CONTAINER=(-workspace ios/App/App.xcworkspace)
-          else
-            XCODE_CONTAINER=(-project ios/App/App.xcodeproj)
-          fi
-          xcodebuild \
-            "${XCODE_CONTAINER[@]}" \
-            -scheme App \
-            -sdk iphonesimulator \
-            -configuration Debug \
-            -derivedDataPath "$RUNNER_TEMP/EasySplitDerivedData" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            build | tee "$RUNNER_TEMP/gate12-ios/xcodebuild.log"
-
-      - name: Install and cold-launch on an iPhone Simulator
-        shell: bash
-        run: |
-          set -euo pipefail
-          DEVICE_UDID=$(python3 - <<'PY'
-          import json, subprocess
-          data = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '-j'], text=True))
-          for runtime, devices in data.get('devices', {}).items():
-              for device in devices:
-                  if device.get('isAvailable') and device.get('name', '').startswith('iPhone'):
-                      print(device['udid'])
-                      raise SystemExit(0)
-          raise SystemExit('No available iPhone Simulator found')
-          PY
-          )
-          xcrun simctl boot "$DEVICE_UDID" 2>/dev/null || true
-          xcrun simctl bootstatus "$DEVICE_UDID" -b
-          APP_PATH="$RUNNER_TEMP/EasySplitDerivedData/Build/Products/Debug-iphonesimulator/App.app"
-          test -d "$APP_PATH"
-          xcrun simctl install "$DEVICE_UDID" "$APP_PATH"
-          launch_output=$(xcrun simctl launch "$DEVICE_UDID" com.easysplit.app)
-          echo "$launch_output" | tee "$RUNNER_TEMP/gate12-ios/launch.txt"
-          echo "$launch_output" | grep -Eq 'com\.easysplit\.app: [0-9]+'
-          sleep 4
-          xcrun simctl io "$DEVICE_UDID" screenshot "$RUNNER_TEMP/gate12-ios/ios-home.png"
-          xcrun simctl spawn "$DEVICE_UDID" log show --last 2m --style compact \
-            --predicate 'process == "App"' > "$RUNNER_TEMP/gate12-ios/ios-app.log" || true
-          if grep -Eqi 'Terminating app due to uncaught exception|fatal error|SIGABRT' "$RUNNER_TEMP/gate12-ios/ios-app.log"; then
-            cat "$RUNNER_TEMP/gate12-ios/ios-app.log"
-            exit 1
-          fi
-          echo 'IOS_SIMULATOR_BUILD_LAUNCH=PASS' | tee "$RUNNER_TEMP/gate12-ios/ios-result.txt"
-
-      - name: Upload iOS and regression evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: gate12-ios-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/gate12-ios
-          if-no-files-found: warn
-          retention-days: 7
-
   android-api-36:
-    name: Android 16 / API 36 device smoke
+    name: Android 16 / API 36 final device smoke
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 35
     steps:
       - name: Checkout validation branch
         uses: actions/checkout@v5
 
-      - name: Apply isolated Gate 1+2 candidate
+      - name: Apply unchanged isolated Gate 1+2 candidate
         run: |
           python3 .github/validation/apply-gate12-candidate.py
           git diff --check
@@ -229,7 +80,10 @@ jobs:
             --name EasySplit_API36 \
             --package 'system-images;android-36;google_apis;x86_64' \
             --device pixel_6
-          sudo chmod 666 /dev/kvm || true
+          if [ -e /dev/kvm ]; then
+            sudo chown "$USER" /dev/kvm 2>/dev/null || sudo chmod 666 /dev/kvm || true
+            ls -l /dev/kvm
+          fi
 
       - name: Build signed debug APK
         shell: bash
@@ -244,23 +98,41 @@ jobs:
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK" \
             | tee "$RUNNER_TEMP/gate12-android/apk-signing.txt"
 
-      - name: Boot clean Android 16 emulator
+      - name: Boot clean Android 16 emulator with fail-fast diagnostics
         shell: bash
         run: |
           set -euo pipefail
+          EMULATOR_LOG="$RUNNER_TEMP/gate12-android/emulator.log"
           nohup emulator -avd EasySplit_API36 \
             -no-window -noaudio -no-boot-anim -no-snapshot -wipe-data \
             -gpu swiftshader_indirect \
-            >"$RUNNER_TEMP/gate12-android/emulator.log" 2>&1 &
-          echo $! > "$RUNNER_TEMP/gate12-android/emulator.pid"
-          adb wait-for-device
+            >"$EMULATOR_LOG" 2>&1 &
+          EMULATOR_PID=$!
+          echo "$EMULATOR_PID" > "$RUNNER_TEMP/gate12-android/emulator.pid"
+
           booted=''
-          for attempt in $(seq 1 240); do
-            booted=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
-            if [ "$booted" = '1' ]; then break; fi
+          for attempt in $(seq 1 180); do
+            if ! kill -0 "$EMULATOR_PID" 2>/dev/null; then
+              echo 'Android emulator process exited before becoming ready.'
+              cat "$EMULATOR_LOG"
+              exit 1
+            fi
+            if adb get-state 2>/dev/null | grep -q '^device$'; then
+              booted=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
+              if [ "$booted" = '1' ]; then
+                break
+              fi
+            fi
             sleep 1
           done
-          test "$booted" = '1'
+
+          if [ "$booted" != '1' ]; then
+            echo 'Android emulator did not complete boot within the bounded window.'
+            adb devices -l || true
+            cat "$EMULATOR_LOG"
+            exit 1
+          fi
+
           adb shell settings put global window_animation_scale 0
           adb shell settings put global transition_animation_scale 0
           adb shell settings put global animator_duration_scale 0
@@ -277,7 +149,7 @@ jobs:
           adb exec-out screencap -p > "$RUNNER_TEMP/gate12-android/android-home.png"
           adb logcat -d -v threadtime > "$RUNNER_TEMP/gate12-android/logcat.txt"
 
-      - name: Upload Android evidence
+      - name: Capture Android evidence
         if: always()
         shell: bash
         run: |
