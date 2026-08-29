@@ -48,15 +48,9 @@ import { createReceiptDraft, receiptConfirmationPayload, receiptScanUserMessage 
 import { getCookie, setCookie } from '../../lib/cookies';
 import { triggerHaptic } from '../../lib/haptics';
 import { MOBILE_BACK_REQUEST_EVENT } from '../../lib/mobileEvents';
-import { clearRoomCredentials, roomHeaders, saveRoomCredentials } from '../../lib/roomTokens';
+import { clearRoomCredentials, getOrCreateRoomClientId, roomHeaders, saveRoomCredentials } from '../../lib/roomTokens';
 import { fetchPaginatedAccountData } from '../../lib/accountClient';
 import { apiUrl, publicWebUrl } from '../../lib/platformTransport';
-import {
-  clearCreatorIntent,
-  readCreatorIntent,
-  saveCreatorIntent,
-  type CreatorIntent,
-} from '../../lib/creatorIntent';
 import { isValidIsraeliPhone } from '../../lib/bitDeepLink';
 import { Capacitor } from '@capacitor/core';
 import { Camera as CapCamera, CameraResultType, CameraSource } from '@capacitor/camera';
@@ -70,29 +64,6 @@ const PASTEL_COLORS = [
   { bg: 'bg-pink-100 dark:bg-pink-950/60', text: 'text-pink-700 dark:text-pink-300' },
   { bg: 'bg-zinc-100 dark:bg-zinc-800', text: 'text-zinc-700 dark:text-zinc-300' },
 ];
-
-function savePendingCreatorIntent(intent: CreatorIntent): void {
-  saveCreatorIntent(localStorage, intent);
-  clearCreatorIntent(sessionStorage);
-}
-
-function readPendingCreatorIntent(): CreatorIntent | null {
-  const durableIntent = readCreatorIntent(localStorage);
-  if (durableIntent) return durableIntent;
-
-  // Migrate an intent created by an older build before the next auth attempt.
-  const legacyIntent = readCreatorIntent(sessionStorage);
-  if (legacyIntent) {
-    saveCreatorIntent(localStorage, legacyIntent);
-    clearCreatorIntent(sessionStorage);
-  }
-  return legacyIntent;
-}
-
-function clearPendingCreatorIntent(): void {
-  clearCreatorIntent(localStorage);
-  clearCreatorIntent(sessionStorage);
-}
 
 function PorcelainReceiptMark() {
   return (
@@ -524,7 +495,21 @@ export default function HomePage() {
     };
   }, [historyList, userGroups, t]);
 
-  const handleClearActiveSession = () => {
+  const handleClearActiveSession = async () => {
+    if (activeSession?.isHost && activeSession?.id) {
+      try {
+        const response = await fetch(apiUrl(`/api/session/${encodeURIComponent(activeSession.id)}`), {
+          method: 'DELETE',
+          headers: roomHeaders('session', activeSession.id, false),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || 'Could not delete the session');
+        clearRoomCredentials('session', activeSession.id);
+      } catch (error) {
+        alert(error instanceof Error ? error.message : 'Could not delete the session');
+        return false;
+      }
+    }
     localStorage.removeItem('billsplit_active_session');
     setActiveSession(null);
     return true;
@@ -538,7 +523,7 @@ export default function HomePage() {
   const handleUniversalJoin = async (e: React.FormEvent) => {
     e.preventDefault();
     const code = universalJoinCode.trim();
-    if (!/^(?:\d{4}|\d{8})$/.test(code)) return;
+    if (!/^(?:\d{4}|\d{5}|\d{8})$/.test(code)) return;
 
     setIsUploading(true);
     try {
@@ -617,17 +602,13 @@ export default function HomePage() {
     }
   };
 
-  const creatorIntentInFlightRef = useRef(false);
-
   const launchManualSession = async (
     billData: { storeName: string; date?: string; currency: string; items: any[] },
-    intent?: Extract<CreatorIntent, { type: 'receipt-session' }>,
   ): Promise<boolean> => {
     try {
-      const receiptDraft = intent?.receiptDraft ?? pendingReceiptDraft;
-      const scanId = intent?.scanId ?? pendingScanId;
-      const recoveryToken = intent?.recoveryToken ?? pendingRecoveryToken;
-      const creatorProfile = intent?.creatorProfile;
+      const receiptDraft = pendingReceiptDraft;
+      const scanId = pendingScanId;
+      const recoveryToken = pendingRecoveryToken;
       const res = await fetch(apiUrl('/api/receipt/scan'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -636,8 +617,9 @@ export default function HomePage() {
             ...billData,
             ...receiptConfirmationPayload(receiptDraft),
           },
-          hostName: creatorProfile?.displayName || profile.displayName || 'Host',
-          hostPhone: creatorProfile?.phoneNumber || profile.phoneNumber || '',
+          hostName: profile.displayName || 'Host',
+          hostPhone: profile.phoneNumber || '',
+          clientId: getOrCreateRoomClientId(),
           scanId: scanId || undefined,
           recoveryToken: recoveryToken || undefined,
           confirmedByUser: true,
@@ -676,36 +658,6 @@ export default function HomePage() {
   };
 
   const handleLaunchManualSession = async (billData: { storeName: string; date?: string; currency: string; items: any[] }) => {
-    if (!firebaseUser) {
-      const { _previewImages, ...receiptDraft } = pendingReceiptDraft || {};
-      const intent: Extract<CreatorIntent, { type: 'receipt-session' }> = {
-        type: 'receipt-session',
-        createdAt: Date.now(),
-        billData,
-        receiptDraft,
-        scanId: pendingScanId,
-        recoveryToken: pendingRecoveryToken,
-        creatorProfile: {
-          displayName: profile.displayName.trim(),
-          phoneNumber: profile.phoneNumber || '',
-        },
-      };
-      savePendingCreatorIntent(intent);
-      creatorIntentInFlightRef.current = true;
-      triggerHaptic('medium');
-      try {
-        const loginResult = await loginWithGoogle();
-        if (loginResult === 'authenticated') {
-          const success = await launchManualSession(billData, intent);
-          if (success) clearPendingCreatorIntent();
-        } else if (loginResult === 'cancelled' || loginResult === 'failed') {
-          clearPendingCreatorIntent();
-        }
-      } finally {
-        creatorIntentInFlightRef.current = false;
-      }
-      return;
-    }
     await launchManualSession(billData);
   };
 
@@ -731,7 +683,6 @@ export default function HomePage() {
 
   const createGroup = async (
     groupData: { name: string; currency: string },
-    intent?: Extract<CreatorIntent, { type: 'group' }>,
   ): Promise<boolean> => {
     try {
       setIsUploading(true);
@@ -741,8 +692,9 @@ export default function HomePage() {
         body: JSON.stringify({
           name: groupData.name,
           currency: groupData.currency,
-          hostName: intent?.creatorProfile?.displayName || profile.displayName || 'Host',
-          hostPhone: intent?.creatorProfile?.phoneNumber || profile.phoneNumber || '',
+          hostName: profile.displayName || 'Host',
+          hostPhone: profile.phoneNumber || '',
+          clientId: getOrCreateRoomClientId(),
         })
       });
 
@@ -771,56 +723,8 @@ export default function HomePage() {
   };
 
   const handleCreateGroup = async (groupData: { name: string; currency: string }) => {
-    if (!firebaseUser) {
-      const intent: Extract<CreatorIntent, { type: 'group' }> = {
-        type: 'group',
-        createdAt: Date.now(),
-        groupData,
-        creatorProfile: {
-          displayName: profile.displayName.trim(),
-          phoneNumber: profile.phoneNumber || '',
-        },
-      };
-      savePendingCreatorIntent(intent);
-      creatorIntentInFlightRef.current = true;
-      triggerHaptic('medium');
-      try {
-        const loginResult = await loginWithGoogle();
-        if (loginResult === 'authenticated') {
-          const success = await createGroup(groupData, intent);
-          if (success) clearPendingCreatorIntent();
-        } else if (loginResult === 'cancelled' || loginResult === 'failed') {
-          clearPendingCreatorIntent();
-        }
-      } finally {
-        creatorIntentInFlightRef.current = false;
-      }
-      return;
-    }
     await createGroup(groupData);
   };
-
-  useEffect(() => {
-    if (!firebaseUser || creatorIntentInFlightRef.current) return;
-
-    const intent = readPendingCreatorIntent();
-    if (!intent) return;
-    const creatorName = intent.creatorProfile?.displayName || profile.displayName.trim();
-    const creatorPhone = intent.creatorProfile?.phoneNumber || profile.phoneNumber || '';
-    if (!creatorName || !isValidIsraeliPhone(creatorPhone)) return;
-    creatorIntentInFlightRef.current = true;
-
-    const resume = intent.type === 'receipt-session'
-      ? launchManualSession(intent.billData, intent)
-      : createGroup(intent.groupData, intent);
-    void resume
-      .then((success) => {
-        if (success) clearPendingCreatorIntent();
-      })
-      .finally(() => {
-        creatorIntentInFlightRef.current = false;
-      });
-  }, [firebaseUser, profile.displayName, profile.phoneNumber]);
 
 
 
@@ -980,7 +884,7 @@ export default function HomePage() {
                     </button>
                   </div>
 
-                  <div className="flex items-center justify-between">
+                  <div className="space-y-3">
                     <div>
                       <h3 className="text-base font-bold text-brand-950 dark:text-white leading-tight">{activeSession.storeName}</h3>
                       <p className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">#{activeSession.code}</p>
@@ -988,9 +892,9 @@ export default function HomePage() {
 
                     <button
                       onClick={handleReenterActiveSession}
-                      className="py-1.5 px-3 photo-btn-dark text-[11px] flex items-center gap-1 shadow-sm"
+                      className="w-full py-3.5 px-5 photo-btn-dark text-sm flex items-center justify-center gap-2 shadow-md"
                     >
-                      <Play className="w-3 h-3 fill-current" />
+                      <Play className="w-4 h-4 fill-current" />
                       <span>{t('reenterActiveSession', undefined, 'Re-Enter Active Session')}</span>
                     </button>
                   </div>

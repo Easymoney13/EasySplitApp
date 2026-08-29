@@ -130,6 +130,7 @@ export function receiptConfirmationPayload(receipt: any) {
   if (!receipt || typeof receipt !== 'object') return {};
   return {
     date: typeof receipt.date === 'string' ? receipt.date : '',
+    restaurant: receipt.restaurant && typeof receipt.restaurant === 'object' ? receipt.restaurant : null,
     receiptTotal: receipt.receiptTotal ?? null,
     subtotal: receipt.subtotal ?? null,
     tax: receipt.tax ?? null,

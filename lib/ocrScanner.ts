@@ -4,6 +4,13 @@ import { reconstructReceiptRows } from './ocrRows';
 
 export interface ParsedBill {
   storeName: string;
+  restaurant?: {
+    printedName: string;
+    businessId: string;
+    address: string;
+    phone: string;
+    source: 'client-tesseract';
+  };
   date: string;
   currency: string;
   receiptTotal?: number | null;
@@ -294,6 +301,26 @@ export function parseReceiptText(rawText: string): ParsedBill | null {
     }
   }
 
+  // Preserve only explicitly printed business identity fields. These are kept
+  // separate from purchased rows so restaurant analytics never depends on a
+  // display title or on guessing from a menu item.
+  const businessIdMatch = rawText.match(
+    /(?:ח\s*[.׳']?\s*פ|ע\s*[.׳']?\s*מ|עוסק\s+מורשה|מספר\s+(?:חברה|עוסק)|company\s*(?:id|no)|business\s*(?:id|no)|vat\s*(?:id|no))\s*[:#-]?\s*(\d[\d\s-]{3,18}\d)/i,
+  );
+  const businessPhoneMatch = rawText.match(
+    /(?:טלפון|טל[.׳']?|phone|tel[.]?)\s*[:#-]?\s*((?:\+?972|0)[\d\s()\-]{7,18}\d)/i,
+  );
+  const addressMatch = rawText.match(
+    /(?:כתובת|address)\s*[:#-]?\s*([^\n]{4,160})/i,
+  );
+  const restaurant = {
+    printedName: storeName === 'Scanned Receipt' ? '' : storeName,
+    businessId: businessIdMatch?.[1]?.replace(/\D/g, '') || '',
+    address: addressMatch?.[1]?.trim() || '',
+    phone: businessPhoneMatch?.[1]?.trim() || '',
+    source: 'client-tesseract' as const,
+  };
+
   // 2. Currency Detection (Automatic NIS force for Hebrew receipts)
   const hasHebrewText = /[\u0590-\u05FF]/.test(rawText);
   let currency = 'USD';
@@ -438,6 +465,7 @@ export function parseReceiptText(rawText: string): ParsedBill | null {
 
   return {
     storeName,
+    restaurant,
     date: dateStr,
     currency,
     receiptTotal,

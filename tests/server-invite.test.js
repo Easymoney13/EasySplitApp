@@ -149,19 +149,120 @@ test('guest receipt parsing and legacy invite access remain account-free', { tim
         currency: 'NIS',
         items: [{ name: 'Coffee', price: 12 }],
       },
+      hostName: 'Guest Creator',
+      hostPhone: '0501234567',
+      clientId: 'guest-creator-device',
       confirmedByUser: true,
     }),
   });
-  assert.equal(anonymousSessionCreation.status, 401);
-  assert.equal((await anonymousSessionCreation.json()).errorCode, 'CREATOR_ACCOUNT_REQUIRED');
+  assert.equal(anonymousSessionCreation.status, 200);
+  const createdSession = await anonymousSessionCreation.json();
+  assert.equal(createdSession.success, true);
+
+  const concurrentJoinRequest = () => fetch(`${baseUrl}/api/session/${createdSession.sessionId}/join`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      name: 'Kuti',
+      phone: '0507654321',
+      clientId: 'kuti-stable-device',
+    }),
+  });
+  const [firstConcurrentJoin, secondConcurrentJoin] = await Promise.all([
+    concurrentJoinRequest(),
+    concurrentJoinRequest(),
+  ]);
+  assert.equal(firstConcurrentJoin.status, 200);
+  assert.equal(secondConcurrentJoin.status, 200);
+  const firstConcurrentBody = await firstConcurrentJoin.json();
+  const secondConcurrentBody = await secondConcurrentJoin.json();
+  assert.equal(firstConcurrentBody.memberId, secondConcurrentBody.memberId);
+  assert.equal(secondConcurrentBody.session.members.length, 2);
+
+  const claimWithForgedClientMemberId = await fetch(`${baseUrl}/api/session/action`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-room-token': secondConcurrentBody.accessToken,
+    },
+    body: JSON.stringify({
+      sessionId: createdSession.sessionId,
+      action: 'TOGGLE_CLAIM',
+      actionId: 'race-claim-1',
+      payload: {
+        itemId: createdSession.session.items[0].id,
+        memberId: createdSession.hostId,
+        claimed: true,
+      },
+    }),
+  });
+  assert.equal(claimWithForgedClientMemberId.status, 200);
+  const claimBody = await claimWithForgedClientMemberId.json();
+  assert.deepEqual(claimBody.session.items[0].claimedBy, [secondConcurrentBody.memberId]);
+  const persistedAfterRace = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+  const raceVisits = Object.values(persistedAfterRace.restaurantVisits || {})
+    .filter((visit) => visit.sessionId === createdSession.sessionId);
+  assert.equal(raceVisits.length, 2);
+  assert.equal(new Set(raceVisits.map((visit) => visit.userKey)).size, 2);
+
+  const laniJoinResponse = await fetch(`${baseUrl}/api/session/${createdSession.sessionId}/join`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      name: 'Lani',
+      phone: '0523456789',
+      clientId: 'lani-stable-device',
+    }),
+  });
+  assert.equal(laniJoinResponse.status, 200);
+  const laniJoinBody = await laniJoinResponse.json();
+
+  const finishFor = async (accessToken, memberId, actionId) => {
+    const response = await fetch(`${baseUrl}/api/session/action`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-room-token': accessToken,
+      },
+      body: JSON.stringify({
+        sessionId: createdSession.sessionId,
+        action: 'TOGGLE_SETTLED',
+        actionId,
+        payload: { memberId, settled: true },
+      }),
+    });
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+
+  const hostFinished = await finishFor(createdSession.accessToken, 'forged-member', 'finish-host');
+  assert.equal(hostFinished.session.status, 'active');
+  const kutiFinished = await finishFor(firstConcurrentBody.accessToken, createdSession.hostId, 'finish-kuti');
+  assert.equal(kutiFinished.session.status, 'active');
+  const laniFinished = await finishFor(laniJoinBody.accessToken, createdSession.hostId, 'finish-lani');
+  assert.equal(laniFinished.session.status, 'settled');
+  assert.equal(laniFinished.session.members.every((member) => member.settled), true);
+
+  const persistedAfterThreePersonFinish = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+  const finishedSessionVisits = Object.values(persistedAfterThreePersonFinish.restaurantVisits || {})
+    .filter((visit) => visit.sessionId === createdSession.sessionId);
+  assert.equal(finishedSessionVisits.length, 3);
+  assert.equal(new Set(finishedSessionVisits.map((visit) => visit.userKey)).size, 3);
+  assert.equal(persistedAfterThreePersonFinish.history.find((entry) => entry.id === createdSession.sessionId)?.status, 'settled');
 
   const anonymousGroupCreation = await fetch(`${baseUrl}/api/groups`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ name: 'Creator Gate Test', currency: 'NIS' }),
+    body: JSON.stringify({
+      name: 'Creator Gate Test',
+      currency: 'NIS',
+      hostName: 'Guest Creator',
+      hostPhone: '0501234567',
+      clientId: 'guest-creator-device',
+    }),
   });
-  assert.equal(anonymousGroupCreation.status, 401);
-  assert.equal((await anonymousGroupCreation.json()).errorCode, 'CREATOR_ACCOUNT_REQUIRED');
+  assert.equal(anonymousGroupCreation.status, 200);
+  assert.equal((await anonymousGroupCreation.json()).success, true);
 
   const sessionDiscovery = await fetch(`${baseUrl}/api/session/4321`);
   assert.equal(sessionDiscovery.status, 200);

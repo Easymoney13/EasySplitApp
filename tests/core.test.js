@@ -17,6 +17,7 @@ const { processGroupBillAction } = require('../lib/groupActions');
 const security = require('../lib/security');
 const { reconstructReceiptRows } = require('../lib/ocrRows');
 const { reserveUniqueFirestoreRoomCode } = require('../lib/db');
+const { createRestaurantIdentity } = require('../lib/restaurantIdentity');
 const {
   assessOcrReadability,
   evaluateReceiptAccuracy,
@@ -79,7 +80,7 @@ test('room code allocation finds a deterministic free code after random retries 
 
 test('Firestore room codes are reserved atomically before room persistence', async () => {
   const created = [];
-  const values = [12345678, 87654321];
+  const values = [12345, 87654];
   const firestore = {
     collection(name) {
       assert.equal(name, '_room_codes');
@@ -88,7 +89,7 @@ test('Firestore room codes are reserved atomically before room persistence', asy
           return {
             async create(value) {
               created.push({ code, value });
-              if (code === '12345678') throw Object.assign(new Error('occupied'), { code: 'already-exists' });
+              if (code === '12345') throw Object.assign(new Error('occupied'), { code: 'already-exists' });
             },
           };
         },
@@ -97,10 +98,11 @@ test('Firestore room codes are reserved atomically before room persistence', asy
   };
 
   const code = await reserveUniqueFirestoreRoomCode(firestore, 'session', 'sess_secure', () => values.shift());
-  assert.equal(code, '87654321');
+  assert.equal(code, '87654');
   assert.equal(created.length, 2);
   assert.equal(created[1].value.roomType, 'session');
   assert.equal(created[1].value.roomId, 'sess_secure');
+  assert.ok(created[1].value.expiresAt > created[1].value.createdAt);
 });
 
 test('access token hashes compare without exposing the token', () => {
@@ -269,6 +271,53 @@ test('concurrent authenticated rejoins keep both recently issued room tokens val
   assert.equal(findRoomMember(room, { accessToken: second.accessToken })?.id, 'uid-1');
   assert.equal(findRoomMember(room, { accessToken: third.accessToken })?.id, 'uid-1');
   assert.equal(publicRoom(room).members[0].accessTokenHashes, undefined);
+});
+
+test('concurrent guest rejoins with one stable client identity create exactly one member', () => {
+  const host = createRoomMember({ clientId: 'host-device', name: 'Host', phone: '0501111111', isHost: true });
+  const room = { members: [host.member] };
+  const first = joinRoom(room, { clientId: 'guest-device', name: 'Kuti', phone: '0502222222' });
+  const second = joinRoom(room, { clientId: 'guest-device', name: 'Kuti', phone: '0502222222' });
+  assert.equal(first.member.id, second.member.id);
+  assert.equal(room.members.length, 2);
+  assert.equal(findRoomMember(room, { accessToken: first.accessToken })?.id, first.member.id);
+  assert.equal(findRoomMember(room, { accessToken: second.accessToken })?.id, first.member.id);
+  assert.equal(JSON.stringify(publicRoom(room)).includes('clientIdentityHash'), false);
+});
+
+test('a session closes only after every active participant finishes', () => {
+  const first = processSessionAction(
+    sampleSession(),
+    'TOGGLE_SETTLED',
+    { memberId: 'host-1', settled: true },
+    { memberId: 'host-1' },
+    () => 1000,
+  );
+  assert.equal(first.status, 'active');
+  assert.equal(first.members.find((member) => member.id === 'host-1').settledAt, 1000);
+  const final = processSessionAction(
+    first,
+    'TOGGLE_SETTLED',
+    { memberId: 'member-1', settled: true },
+    { memberId: 'member-1' },
+    () => 2000,
+  );
+  assert.equal(final.status, 'settled');
+  assert.equal(final.settledAt, 2000);
+});
+
+test('restaurant identity prefers stable business identifiers and marks name-only OCR as lower confidence', () => {
+  const exact = createRestaurantIdentity({
+    printedName: 'קפה בדיקה',
+    businessId: '515-123-456',
+    address: 'תל אביב',
+  });
+  const sameBusiness = createRestaurantIdentity({ printedName: 'Test Cafe', businessId: '515123456' });
+  const nameOnly = createRestaurantIdentity({ printedName: 'קפה בדיקה' });
+  assert.equal(exact.id, sameBusiness.id);
+  assert.equal(exact.identityBasis, 'business_id');
+  assert.ok(exact.confidence > nameOnly.confidence);
+  assert.equal(nameOnly.identityBasis, 'name_only');
 });
 
 test('rooms enforce a bounded participant count', () => {

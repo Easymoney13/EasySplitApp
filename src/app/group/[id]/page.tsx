@@ -39,7 +39,7 @@ import { getCookie, setCookie } from '../../../../lib/cookies';
 import { formatCurrency } from '../../../../lib/i18n';
 import { cleanIsraeliPhone, isValidIsraeliPhone, triggerBitPayment } from '../../../../lib/bitDeepLink';
 import { triggerHaptic } from '../../../../lib/haptics';
-import { clearRoomCredentials, getRoomMemberId, getRoomToken, roomHeaders, saveRoomCredentials } from '../../../../lib/roomTokens';
+import { clearRoomCredentials, getOrCreateRoomClientId, getRoomMemberId, getRoomToken, roomHeaders, saveRoomCredentials } from '../../../../lib/roomTokens';
 import { apiUrl, realtimeUrl } from '../../../../lib/platformTransport';
 import { MOBILE_RECOVERY_EVENT } from '../../../../lib/mobileEvents';
 import { Capacitor } from '@capacitor/core';
@@ -55,7 +55,7 @@ export default function GroupWorkspacePage() {
   const router = useRouter();
   const groupId = (params?.id as string) || '';
 
-  const { t, currency, formatPrice, formatDual, isRtl, theme, setTheme, profile } = useLanguage();
+  const { t, currency, formatPrice, formatDual, isRtl, theme, setTheme, profile, authLoading } = useLanguage();
 
   const [group, setGroup] = useState<any>(null);
   const [currentMemberId, setCurrentMemberId] = useState<string>('');
@@ -80,6 +80,7 @@ export default function GroupWorkspacePage() {
   const activeGroupTokenRef = useRef('');
   const lastMobileRecoveryAtRef = useRef(0);
   const paymentLookupRef = useRef(false);
+  const joinInFlightRef = useRef<{ roomId: string; promise: Promise<any> } | null>(null);
 
   const persistGroupToLocal = (grp: any) => {
     if (!grp || !grp.id) return;
@@ -171,7 +172,9 @@ export default function GroupWorkspacePage() {
   const [fetchError, setFetchError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!groupId || !profile.displayName) return;
+    const displayName = profile.displayName?.trim() || '';
+    const phoneNumber = profile.phoneNumber || '';
+    if (!groupId || authLoading || !displayName || !isValidIsraeliPhone(phoneNumber)) return;
     let disposed = false;
     let interval: ReturnType<typeof setInterval> | null = null;
 
@@ -198,21 +201,36 @@ export default function GroupWorkspacePage() {
           return;
         }
 
-        const joinRes = await fetch(apiUrl('/api/groups/join'), {
-          method: 'POST',
-          headers: roomHeaders('group', resolvedId),
-          body: JSON.stringify({
-            groupId: resolvedId,
-            name: profile.displayName || 'Member',
-            phone: profile.phoneNumber || '',
-          }),
-        });
-        const joined = await joinRes.json();
-        if (!joinRes.ok || !joined.group || !joined.accessToken) {
-          throw new Error(joined.error || 'Could not join group');
+        let joinEntry = joinInFlightRef.current;
+        if (!joinEntry || joinEntry.roomId !== resolvedId) {
+          const promise = (async () => {
+            const joinRes = await fetch(apiUrl('/api/groups/join'), {
+              method: 'POST',
+              headers: roomHeaders('group', resolvedId),
+              body: JSON.stringify({
+                groupId: resolvedId,
+                name: displayName,
+                phone: phoneNumber,
+                clientId: getOrCreateRoomClientId(),
+              }),
+            });
+            const joined = await joinRes.json();
+            if (!joinRes.ok || !joined.group || !joined.accessToken) {
+              throw new Error(joined.error || 'Could not join group');
+            }
+            saveRoomCredentials('group', resolvedId, joined.memberId, joined.accessToken);
+            if (resolvedId !== groupId) saveRoomCredentials('group', groupId, joined.memberId, joined.accessToken);
+            return joined;
+          })();
+          joinEntry = { roomId: resolvedId, promise };
+          joinInFlightRef.current = joinEntry;
         }
-        saveRoomCredentials('group', resolvedId, joined.memberId, joined.accessToken);
-        if (resolvedId !== groupId) saveRoomCredentials('group', groupId, joined.memberId, joined.accessToken);
+        let joined;
+        try {
+          joined = await joinEntry.promise;
+        } finally {
+          if (joinInFlightRef.current === joinEntry) joinInFlightRef.current = null;
+        }
 
         if (!disposed) {
           setCurrentMemberId(joined.memberId);
@@ -244,7 +262,7 @@ export default function GroupWorkspacePage() {
       socketRef.current = null;
       if (socket) socket.close();
     };
-  }, [groupId, profile.displayName, profile.phoneNumber]);
+  }, [groupId, profile.displayName, profile.phoneNumber, authLoading]);
 
 
   useEffect(() => {

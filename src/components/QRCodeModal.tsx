@@ -108,8 +108,8 @@ export const QRCodeModal: React.FC<QRCodeModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md animate-fadeIn text-slate-900 dark:text-white">
-      <div role="dialog" aria-modal="true" aria-label={t('shareRoomTitle', undefined, 'Invite Friends to Room')} className="relative w-full max-w-sm overflow-hidden rounded-[32px] border border-slate-200 dark:border-slate-800 bg-white dark:bg-brand-950 p-6 shadow-2xl space-y-4">
+    <div className="fixed inset-0 z-[90] flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-md animate-fadeIn text-slate-900 dark:text-white">
+      <div role="dialog" aria-modal="true" aria-label={t('shareRoomTitle', undefined, 'Invite Friends to Room')} className="relative w-full max-w-sm max-h-[calc(100dvh-1.5rem)] overflow-y-auto overscroll-contain rounded-[32px] border border-slate-200 dark:border-slate-800 bg-white dark:bg-brand-950 p-5 sm:p-6 shadow-2xl space-y-4">
         {/* Close Button */}
         <button
           onClick={onClose}
@@ -181,7 +181,7 @@ export const QRCodeModal: React.FC<QRCodeModalProps> = ({
                 <img
                   src={qrDataUrl}
                   alt={hideCode ? t('secureGroupQrAlt', undefined, 'QR code for secure group invite') : `QR Code for session ${sessionCode}`}
-                  className="w-44 h-44 object-contain rounded-xl shadow-xs"
+                  className="w-[min(11rem,48vw)] h-[min(11rem,48vw)] min-w-36 min-h-36 object-contain rounded-xl shadow-xs"
                 />
               ) : (
                 <div className="flex h-44 w-44 items-center justify-center text-xs font-semibold text-slate-400">

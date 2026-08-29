@@ -50,7 +50,7 @@ const allocateTipAdjustedCents = debtMinimizer.allocateTipAdjustedCents;
 const splitCents = debtMinimizer.splitCents;
 const toCents = debtMinimizer.toCents;
 const { createEntityId, hashAccessToken } = require('./lib/ids');
-const { ValidationError, validateItems, validateReceiptBody, validateUserSyncBody } = require('./lib/validation');
+const { ValidationError, normalizeIsraeliPhone, validateItems, validateReceiptBody, validateUserSyncBody } = require('./lib/validation');
 const { processSessionAction } = require('./lib/sessionActions');
 const {
   createRoomMember,
@@ -87,6 +87,7 @@ const {
   groupMatchesScope,
 } = require('./lib/groupLifecycle');
 const { trackAnalyticsEvent } = require('./lib/analytics');
+const { createRestaurantIdentity } = require('./lib/restaurantIdentity');
 
 const admin = require('firebase-admin');
 
@@ -156,6 +157,19 @@ async function authenticateUser(req, res, nextMiddleware) {
     req.user = null;
     return res.status(401).json({ error: 'Unauthorized: Invalid or expired token' });
   }
+}
+
+function requireValidCreatorProfile(req, res, nextMiddleware) {
+  const displayName = security.sanitizeName(req.body?.hostName, '');
+  const phone = normalizeIsraeliPhone(req.body?.hostPhone || '');
+  if (!displayName || !phone) {
+    return res.status(400).json({
+      error: 'A display name and valid Israeli mobile number are required.',
+      errorCode: 'CREATOR_PROFILE_REQUIRED',
+    });
+  }
+  req.creatorProfile = { displayName, phone };
+  return nextMiddleware();
 }
 
 const dev = process.env.NODE_ENV !== 'production';
@@ -459,15 +473,18 @@ app.prepare().then(() => {
     });
   }
 
-  function createSessionHistoryRecord(session, groupName = '') {
+  function createSessionHistoryRecord(session, groupName = '', memberIdsOverride = null) {
     const publicSession = publicRoom(session);
     const subtotal = getReceiptPayableTotal(session);
     const totalAmount = Math.round(subtotal * (1 + Number(session.tipPercentage || 0) / 100) * 100) / 100;
-    const memberIds = [...new Set((session.members || []).map((member) => (
+    const allMemberIds = [...new Set((session.members || []).map((member) => (
       member?.userId
       || member?.uid
       || (member?.id && !String(member.id).startsWith('member_') ? member.id : '')
     )).filter(Boolean))];
+    const memberIds = Array.isArray(memberIdsOverride)
+      ? [...new Set(memberIdsOverride.filter(Boolean))]
+      : allMemberIds;
     return {
       id: session.id,
       storeName: session.storeName || 'Bill Session',
@@ -480,11 +497,16 @@ app.prepare().then(() => {
       memberIds,
       items: publicSession.items || [],
       tipPercentage: session.tipPercentage || 0,
+      status: session.status === 'settled' ? 'settled' : 'active',
+      settledMemberIds: (session.members || [])
+        .filter((member) => member.active !== false && member.settled === true)
+        .map((member) => member.id),
       settledAt: session.settledAt || Date.now(),
       createdAt: session.createdAt || Date.now(),
       ...(session.groupId ? { groupId: session.groupId } : {}),
       ...(session.groupId && groupName ? { groupName } : {}),
       ...(session.payerId ? { payerId: session.payerId } : {}),
+      ...(session.restaurant?.id ? { restaurant: session.restaurant } : {}),
     };
   }
 
@@ -656,8 +678,8 @@ app.prepare().then(() => {
     };
   }
 
-  // New invites use eight digits; retain tighter limits for code discovery and
-  // legacy four-digit rooms until those records expire.
+  // Session invites use five digits and groups retain eight digits. Rate-limit
+  // discovery aggressively because human-entered codes are intentionally short.
   const roomLookupRateLimit = roomWindowRateLimit(roomLookupRateBuckets, 60, 'Too many room lookups. Please wait and try again.');
   const roomJoinRateLimit = roomWindowRateLimit(roomJoinRateBuckets, 30, 'Too many room join attempts. Please wait and try again.');
   const mutationRateLimit = roomWindowRateLimit(mutationRateBuckets, 240, 'Too many room updates. Please wait and try again.');
@@ -792,6 +814,7 @@ app.prepare().then(() => {
     }));
     const receipt = {
       storeName: security.sanitizeString(parsedReceipt.storeName || 'Scanned Receipt', 80),
+      restaurant: createRestaurantIdentity(parsedReceipt.restaurant, parsedReceipt.storeName),
       date: security.sanitizeString(parsedReceipt.date || new Date().toISOString().split('T')[0], 20),
       currency: security.sanitizeString(parsedReceipt.currency || 'NIS', 5).toUpperCase(),
       ...normalizedAmounts,
@@ -920,7 +943,7 @@ app.prepare().then(() => {
     }
   });
 
-  server.post('/api/receipt/scan', authenticateUser, security.requireAuthenticatedCreator, appCheckProtection, sessionCreateRateLimit, ocrRateLimit, async (req, res) => {
+  server.post('/api/receipt/scan', authenticateUser, requireValidCreatorProfile, appCheckProtection, sessionCreateRateLimit, ocrRateLimit, async (req, res) => {
     const startedAt = Date.now();
     const ocrSource = getOcrSource(req.body);
     void trackAnalyticsEvent('ocr_scan_started', {
@@ -979,7 +1002,7 @@ app.prepare().then(() => {
       }
       const confirmedContentDigest = groupBillContentDigest(parsedReceipt);
 
-      const rawHostName = req.body?.hostName || (req.user ? req.user.name : 'Host');
+      const rawHostName = req.creatorProfile.displayName;
       const scanId = normalizeScanId(req.body?.scanId);
       const recoveryToken = scanId ? normalizeRecoveryToken(req.body?.recoveryToken) : '';
       if (scanId && !recoveryToken) {
@@ -1029,13 +1052,20 @@ app.prepare().then(() => {
               memberId: existingHost.id,
               accessToken: existingToken,
               session: publicRoom(existingSession),
+              _visitSession: {
+                ...existingSession,
+                restaurant: existingSession.restaurant
+                  || createRestaurantIdentity({}, existingSession.storeName, existingSession.id),
+              },
+              _visitMember: existingHost,
             };
           }
 
           const host = createRoomMember({
             uid: req.user?.uid,
+            clientId: security.sanitizeString(req.body?.clientId || '', 100),
             name: rawHostName,
-            phone: req.body?.hostPhone,
+            phone: req.creatorProfile.phone,
             isHost: true,
             avatarColor: '#A3E635',
           });
@@ -1048,6 +1078,7 @@ app.prepare().then(() => {
             id: newSessionId,
             code: await db.generateUniqueRoomCode('session', newSessionId),
             storeName: security.sanitizeString(parsedReceipt.storeName || 'Scanned Receipt', 40),
+            restaurant: createRestaurantIdentity(parsedReceipt.restaurant, parsedReceipt.storeName, newSessionId),
             date: parsedReceipt.date || new Date().toISOString().split('T')[0],
             currency: security.sanitizeString(parsedReceipt.currency || 'NIS', 5),
             receiptTotal: parsedReceipt.receiptTotal,
@@ -1093,6 +1124,12 @@ app.prepare().then(() => {
                   memberId: persistedHost.id,
                   accessToken: recoveryToken,
                   session: publicRoom(creation.session),
+                  _visitSession: {
+                    ...creation.session,
+                    restaurant: creation.session.restaurant
+                      || createRestaurantIdentity(parsedReceipt.restaurant, creation.session.storeName, creation.session.id),
+                  },
+                  _visitMember: persistedHost,
                 };
               }
               const error = new Error('This receipt was already confirmed by another request.');
@@ -1125,9 +1162,15 @@ app.prepare().then(() => {
             memberId: host.member.id,
             accessToken: host.accessToken,
             session: publicRoom(newSession),
+            _visitSession: newSession,
+            _visitMember: host.member,
           };
       })();
-      return res.json(sessionResponse);
+      const { _visitSession, _visitMember, ...publicSessionResponse } = sessionResponse;
+      if (_visitSession && _visitMember && typeof db.recordRestaurantVisit === 'function') {
+        await db.recordRestaurantVisit(_visitSession, _visitMember);
+      }
+      return res.json(publicSessionResponse);
     } catch (err) {
       void trackAnalyticsEvent('ocr_scan_failed', {
         userId: req.user?.uid,
@@ -1208,11 +1251,17 @@ app.prepare().then(() => {
         }
         const joinInput = {
           uid: req.user?.uid,
+          clientId: security.sanitizeString(req.body?.clientId || '', 100),
           accessToken: getRequestRoomToken(req),
-          name: req.body?.name || req.user?.name || 'Guest',
-          phone: req.body?.phone,
+          name: security.sanitizeName(req.body?.name || req.user?.name, ''),
+          phone: normalizeIsraeliPhone(req.body?.phone || ''),
           avatarColor: getRandomAvatarColor(),
         };
+        if (!joinInput.name || !joinInput.phone) {
+          const error = new Error('A display name and valid Israeli mobile number are required to join');
+          error.statusCode = 400;
+          throw error;
+        }
         if (currentGroup) {
           const existingGroupMember = findRoomMember(currentGroup, joinInput);
           if (!existingGroupMember) {
@@ -1242,6 +1291,9 @@ app.prepare().then(() => {
           sessionId: mutation.session.id,
           metadata: { memberCount: mutation.session.members.length },
         });
+      }
+      if (typeof db.recordRestaurantVisit === 'function') {
+        await db.recordRestaurantVisit(mutation.session, joined.member);
       }
       global.broadcastSessionState(mutation.session.id);
       return res.json({
@@ -1281,7 +1333,10 @@ app.prepare().then(() => {
         if (actionId && Array.isArray(session.processedActionIds) && session.processedActionIds.includes(actionId)) {
           return { session, group: linkedGroup, history: null, idempotentReplay: true };
         }
-        const updatedSession = processSessionAction(session, action, payload, {
+        const actorPayload = ['TOGGLE_CLAIM', 'TOGGLE_SETTLED'].includes(action)
+          ? { ...(payload || {}), memberId: actor.id }
+          : payload;
+        const updatedSession = processSessionAction(session, action, actorPayload, {
           uid: req.user?.uid,
           memberId: actor.id,
         });
@@ -1310,16 +1365,25 @@ app.prepare().then(() => {
             linkedBill.assessment = updatedSession.assessment;
           }
           if (action === 'SET_PAYER' || updatedSession.payerId) linkedBill.payerId = updatedSession.payerId;
-          if (action === 'SETTLE_ALL') {
+          if (updatedSession.status === 'settled') {
             linkedBill.status = 'settled';
             linkedBill.settledAt = updatedSession.settledAt;
           }
         }
-        const shouldPersistHistory = action === 'SETTLE_ALL';
+        const shouldPersistHistory = action === 'SETTLE_ALL'
+          || (action === 'TOGGLE_SETTLED' && actorPayload?.settled !== false);
+        const actorHistoryId = actor.userId
+          || actor.uid
+          || (actor.id && !String(actor.id).startsWith('member_') ? actor.id : '');
+        const historyMemberIds = updatedSession.status === 'settled'
+          ? null
+          : [actorHistoryId].filter(Boolean);
         return {
           session: updatedSession,
           group: linkedGroup,
-          history: shouldPersistHistory ? createSessionHistoryRecord(updatedSession, linkedGroup?.name || '') : null,
+          history: shouldPersistHistory
+            ? createSessionHistoryRecord(updatedSession, linkedGroup?.name || '', historyMemberIds)
+            : null,
         };
       });
       if (!mutation) return res.status(404).json({ error: 'Session not found' });
@@ -1376,20 +1440,37 @@ app.prepare().then(() => {
     }
   });
 
+  server.delete('/api/session/:sessionId', authenticateUser, async (req, res) => {
+    try {
+      const sessionId = security.sanitizeString(req.params.sessionId, 100);
+      const session = await db.getSession(sessionId);
+      if (!session) return res.status(404).json({ error: 'Session not found' });
+      const actor = authorizedRoomMember(req, session);
+      if (!actor) return res.status(401).json({ error: 'A valid room membership is required' });
+      if (!actor.isHost) return res.status(403).json({ error: 'Only the session creator can delete this session' });
+      if (session.groupId) return res.status(409).json({ error: 'Delete this bill from its group instead' });
+      await db.deleteSession(session.id);
+      return res.json({ success: true });
+    } catch (err) {
+      return sendRouteError(res, err, 'Failed to delete session');
+    }
+  });
+
 
 
   // GROUPS API ENDPOINTS
 
   // 1. Create Group
-  server.post('/api/groups', authenticateUser, security.requireAuthenticatedCreator, sessionCreateRateLimit, async (req, res) => {
+  server.post('/api/groups', authenticateUser, requireValidCreatorProfile, sessionCreateRateLimit, async (req, res) => {
     try {
       const { name, currency, hostName, hostPhone } = req.body;
       const cleanName = security.sanitizeString(name || 'Trip Group', 40);
-      const rawHostName = hostName || (req.user ? req.user.name : 'Host');
+      const rawHostName = req.creatorProfile.displayName;
       const host = createRoomMember({
         uid: req.user?.uid,
+        clientId: security.sanitizeString(req.body?.clientId || '', 100),
         name: rawHostName,
-        phone: hostPhone,
+        phone: req.creatorProfile.phone,
         isHost: true,
         avatarColor: '#A3E635',
       });
@@ -1485,11 +1566,17 @@ app.prepare().then(() => {
       const mutation = await db.transactGroupMembership(group.id, (currentGroup) => {
         const joinInput = {
           uid: req.user?.uid,
+          clientId: security.sanitizeString(req.body?.clientId || '', 100),
           accessToken: getRequestRoomToken(req),
-          name: name || req.user?.name || 'Member',
-          phone,
+          name: security.sanitizeName(name || req.user?.name, ''),
+          phone: normalizeIsraeliPhone(phone || ''),
           avatarColor: getRandomAvatarColor(),
         };
+        if (!joinInput.name || !joinInput.phone) {
+          const error = new Error('A display name and valid Israeli mobile number are required to join');
+          error.statusCode = 400;
+          throw error;
+        }
         const existingMember = findRoomMember(currentGroup, joinInput);
         if (!existingMember) assertGroupActive(currentGroup);
         joined = joinRoom(currentGroup, joinInput);
@@ -2134,7 +2221,7 @@ app.prepare().then(() => {
           membersCount: effectiveMembers.length || histItem.membersCount || 1,
           createdAt: histItem.createdAt || 0,
           settledAt: histItem.settledAt || histItem.createdAt || 0,
-          status: 'settled',
+          status: histItem.status === 'active' ? 'active' : 'settled',
           ...(histItem.groupId ? {
             isGroupBill: true,
             groupId: histItem.groupId,

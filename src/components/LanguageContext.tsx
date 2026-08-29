@@ -524,7 +524,12 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
 
 
-  const showOnboarding = isInitialized && !authLoading && !firebaseUser && !profile.displayName;
+  const showOnboarding = Boolean(
+    isInitialized
+    && !authLoading
+    && !firebaseUser
+    && (!profile.displayName.trim() || !profile.phoneNumber || !isValidIsraeliPhone(profile.phoneNumber))
+  );
   const showAuthenticatedProfileCompletion = Boolean(
     isInitialized
     && !authLoading

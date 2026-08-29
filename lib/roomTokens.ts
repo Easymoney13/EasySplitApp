@@ -1,5 +1,7 @@
 export type RoomKind = 'session' | 'group';
 
+const ROOM_CLIENT_ID_KEY = 'billsplit_room_client_id';
+
 function tokenKey(kind: RoomKind, roomId: string) {
   return `billsplit_${kind}_token_${roomId}`;
 }
@@ -24,6 +26,17 @@ export function saveRoomCredentials(kind: RoomKind, roomId: string, memberId: st
   if (typeof window === 'undefined') return;
   if (memberId) localStorage.setItem(memberKey(kind, roomId), memberId);
   if (accessToken) localStorage.setItem(tokenKey(kind, roomId), accessToken);
+}
+
+export function getOrCreateRoomClientId() {
+  if (typeof window === 'undefined') return '';
+  const existing = localStorage.getItem(ROOM_CLIENT_ID_KEY);
+  if (existing) return existing;
+  const generated = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `client_${Date.now()}_${Math.random().toString(36).slice(2, 14)}`;
+  localStorage.setItem(ROOM_CLIENT_ID_KEY, generated);
+  return generated;
 }
 
 export function clearRoomCredentials(kind: RoomKind, roomId: string) {

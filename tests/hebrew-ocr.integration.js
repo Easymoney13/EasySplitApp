@@ -87,3 +87,24 @@ test('Hebrew OCR parser recognizes spaced totals and excludes summary rows from 
     { name: 'עוגה', price: 24 },
   ]);
 });
+
+test('Hebrew OCR preserves explicitly printed restaurant identity outside purchased rows', () => {
+  const { parseReceiptText } = loadBrowserOcrModule();
+  const receipt = parseReceiptText([
+    'קפה הבדיקה',
+    'ח.פ: 515123456',
+    'כתובת: רחוב הדוגמה 12 תל אביב',
+    'טלפון: 03-5551234',
+    'קפה 12.00',
+    'סה"כ 12.00',
+  ].join('\n'));
+  assert.ok(receipt);
+  assert.deepEqual(receipt.restaurant, {
+    printedName: 'קפה הבדיקה',
+    businessId: '515123456',
+    address: 'רחוב הדוגמה 12 תל אביב',
+    phone: '03-5551234',
+    source: 'client-tesseract',
+  });
+  assert.deepEqual(receipt.items.map(({ name }) => name), ['קפה']);
+});

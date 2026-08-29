@@ -37,7 +37,7 @@ import { AnimatedRollingNumber } from '../../../components/AnimatedRollingNumber
 import { getCookie, setCookie } from '../../../../lib/cookies';
 import { cleanIsraeliPhone, isValidIsraeliPhone, triggerBitPayment } from '../../../../lib/bitDeepLink';
 import { triggerHaptic } from '../../../../lib/haptics';
-import { getRoomMemberId, getRoomToken, roomHeaders, saveRoomCredentials } from '../../../../lib/roomTokens';
+import { getOrCreateRoomClientId, getRoomMemberId, getRoomToken, roomHeaders, saveRoomCredentials } from '../../../../lib/roomTokens';
 import { getReceiptPayableTotal } from '../../../../lib/receiptMath';
 import { allocateCentsProportionally, allocateTipAdjustedCents, splitCents, toCents } from '../../../../lib/debtMinimizer';
 import { fetchPaginatedAccountData } from '../../../../lib/accountClient';
@@ -106,6 +106,7 @@ function SessionWorkspaceInner() {
   const formatPrice = langCtx?.formatPrice || ((a: number) => `${a || 0}`);
   const formatDual = langCtx?.formatDual || ((a: number) => ({ primary: `${a || 0}` }));
   const profile = langCtx?.profile || { displayName: 'User', avatarColor: '#4DE1A1' };
+  const authLoading = langCtx?.authLoading ?? true;
   const isRtl = langCtx?.isRtl || false;
   const theme = langCtx?.theme || 'light';
   const setTheme = langCtx?.setTheme || (() => {});
@@ -184,13 +185,16 @@ function SessionWorkspaceInner() {
   const lastMobileRecoveryAtRef = useRef(0);
   const paymentLaunchRef = useRef(false);
   const finishTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const joinInFlightRef = useRef<{ roomId: string; promise: Promise<any> } | null>(null);
 
   useEffect(() => () => {
     if (finishTimerRef.current) clearTimeout(finishTimerRef.current);
   }, []);
 
   useEffect(() => {
-    if (!sessionId) return;
+    const displayName = profile.displayName?.trim() || '';
+    const phoneNumber = profile.phoneNumber || '';
+    if (!sessionId || authLoading || !displayName || !isValidIsraeliPhone(phoneNumber)) return;
     let disposed = false;
     let pollInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -218,21 +222,36 @@ function SessionWorkspaceInner() {
           return;
         }
 
-        const joinRes = await fetch(apiUrl(`/api/session/${resolvedId}/join`), {
-          method: 'POST',
-          headers: roomHeaders('session', resolvedId),
-          body: JSON.stringify({
-            name: profile?.displayName || 'Guest',
-            phone: profile?.phoneNumber || '',
-          }),
-        });
-        const joined = await joinRes.json();
-        if (!joinRes.ok || !joined.session || !joined.accessToken) {
-          throw new Error(joined.error || 'Could not join session');
+        let joinEntry = joinInFlightRef.current;
+        if (!joinEntry || joinEntry.roomId !== resolvedId) {
+          const promise = (async () => {
+            const joinRes = await fetch(apiUrl(`/api/session/${resolvedId}/join`), {
+              method: 'POST',
+              headers: roomHeaders('session', resolvedId),
+              body: JSON.stringify({
+                name: displayName,
+                phone: phoneNumber,
+                clientId: getOrCreateRoomClientId(),
+              }),
+            });
+            const joined = await joinRes.json();
+            if (!joinRes.ok || !joined.session || !joined.accessToken) {
+              throw new Error(joined.error || 'Could not join session');
+            }
+            saveRoomCredentials('session', resolvedId, joined.memberId, joined.accessToken);
+            if (resolvedId !== sessionId) saveRoomCredentials('session', sessionId, joined.memberId, joined.accessToken);
+            if (linkedGroupId) saveRoomCredentials('group', linkedGroupId, joined.memberId, joined.accessToken);
+            return joined;
+          })();
+          joinEntry = { roomId: resolvedId, promise };
+          joinInFlightRef.current = joinEntry;
         }
-        saveRoomCredentials('session', resolvedId, joined.memberId, joined.accessToken);
-        if (resolvedId !== sessionId) saveRoomCredentials('session', sessionId, joined.memberId, joined.accessToken);
-        if (linkedGroupId) saveRoomCredentials('group', linkedGroupId, joined.memberId, joined.accessToken);
+        let joined;
+        try {
+          joined = await joinEntry.promise;
+        } finally {
+          if (joinInFlightRef.current === joinEntry) joinInFlightRef.current = null;
+        }
 
         if (!disposed) {
           setCurrentMemberId(joined.memberId);
@@ -264,7 +283,7 @@ function SessionWorkspaceInner() {
       socketRef.current = null;
       if (socket) socket.close();
     };
-  }, [sessionId, profile.displayName, profile.phoneNumber]);
+  }, [sessionId, profile.displayName, profile.phoneNumber, authLoading]);
 
 
   useEffect(() => {
@@ -334,6 +353,7 @@ function SessionWorkspaceInner() {
             groupId: resolvedGroupId,
             name: profile.displayName || 'Member',
             phone: profile.phoneNumber || '',
+            clientId: getOrCreateRoomClientId(),
           }),
         });
         const joined = await joinRes.json();
@@ -1191,7 +1211,7 @@ function SessionWorkspaceInner() {
         ) : (
           <button
             onClick={() => {
-              if (isCurrentMemberSettled && !isCurrentUserHost) {
+              if (isCurrentMemberSettled) {
                 void sendAction('TOGGLE_SETTLED', { memberId: currentMemberId, settled: false });
                 return;
               }
@@ -1199,7 +1219,7 @@ function SessionWorkspaceInner() {
             }}
             className="brand-tap py-3.5 px-6 rounded-xl bg-brand-600 hover:bg-brand-700 dark:bg-brand-300 dark:hover:bg-brand-200 text-white dark:text-brand-950 font-bold shadow-brand text-sm transition-all"
           >
-            {isCurrentMemberSettled && !isCurrentUserHost
+            {isCurrentMemberSettled
               ? t('reopenMyShareBtn', undefined, 'Reopen My Share')
               : t('settleAndPayBtn', undefined, 'Settle & Pay')}
           </button>
@@ -1610,9 +1630,7 @@ function SessionWorkspaceInner() {
                     setIsSettling('loading');
                     triggerHaptic('medium');
 
-                    const success = isCurrentUserHost
-                      ? await sendAction('SETTLE_ALL', {})
-                      : await sendAction('TOGGLE_SETTLED', { memberId: currentMemberId, settled: true });
+                    const success = await sendAction('TOGGLE_SETTLED', { memberId: currentMemberId, settled: true });
 
                     if (!success) {
                       setIsSettling('idle');
@@ -1663,9 +1681,6 @@ function SessionWorkspaceInner() {
 
                     setTimeout(() => {
                       setShowSettleModal(false);
-                      if (isCurrentUserHost) {
-                        localStorage.removeItem('billsplit_active_session');
-                      }
                       setIsSettling('idle');
                     }, 700);
                   }}
@@ -1676,7 +1691,7 @@ function SessionWorkspaceInner() {
                   {isSettling === 'loading' ? (
                     <>
                       <Loader2 className="w-5 h-5 animate-spin text-white" />
-                      <span className="text-white">{isCurrentUserHost ? t('settlingSession', undefined, 'Settling Session...') : t('markingPaid', undefined, 'Marking Paid...')}</span>
+                      <span className="text-white">{t('markingPaid', undefined, 'Finishing your payment...')}</span>
                     </>
                   ) : isSettling === 'success' ? (
                     <>
@@ -1687,9 +1702,7 @@ function SessionWorkspaceInner() {
                     <>
                       <CheckCircle2 className="w-5 h-5 text-white group-hover:scale-110 transition-transform" />
                       <span className="text-white">
-                        {isCurrentUserHost
-                          ? t('settleAndCloseSessionBtn', undefined, 'Settle Payment & Close Session')
-                          : t('markPaidBtn', undefined, 'Mark My Share as Paid')}
+                        {t('finishAndPayBtn', undefined, 'Finish and Pay')}
                       </span>
                     </>
                   )}
