@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   intentionalRendererTerminationLines,
+  readLogcatWithRetries,
   recordIntentionalRendererTerminations,
   rendererTerminationLines,
   unexpectedRendererTerminationLines,
@@ -27,6 +28,30 @@ function recordRootBack(afterLogcat, beforeLogcat = '') {
   );
   return expected;
 }
+
+test('logcat reads recover from a transient ADB failure without changing their output', () => {
+  let reads = 0;
+  const logcat = readLogcatWithRetries(() => {
+    reads += 1;
+    if (reads < 3) throw new Error('transient adb failure');
+    return 'complete logcat';
+  });
+
+  assert.equal(logcat, 'complete logcat');
+  assert.equal(reads, 3);
+});
+
+test('logcat reads still fail closed after the bounded retry budget', () => {
+  let reads = 0;
+  assert.throws(
+    () => readLogcatWithRetries(() => {
+      reads += 1;
+      throw new Error(`adb failure ${reads}`);
+    }),
+    /adb failure 3/,
+  );
+  assert.equal(reads, 3);
+});
 
 test('renderer scan records only a new code -1 emitted by an intentional process stop', () => {
   const expected = new Map();

@@ -7,6 +7,7 @@ import {
 } from './native-android-onboarding.mjs';
 import {
   recordIntentionalRendererTerminations,
+  readLogcatWithRetries,
   unexpectedRendererTerminationLines,
   waitForIntentionalRendererTerminations,
 } from './native-android-logcat.mjs';
@@ -27,6 +28,10 @@ function adb(...args) {
     stdio: ['ignore', 'pipe', 'pipe'],
     maxBuffer: 16 * 1024 * 1024,
   }).trim();
+}
+
+function readLogcat() {
+  return readLogcatWithRetries(() => adb('logcat', '-d', '-v', 'brief'));
 }
 
 async function waitFor(label, check, timeoutMs = 60_000, intervalMs = 500) {
@@ -373,7 +378,7 @@ function openDeepLink(url) {
 }
 
 function assertNoNativeCrash() {
-  const logcat = adb('logcat', '-d', '-v', 'brief');
+  const logcat = readLogcat();
   const fatal = logcat
     .split('\n')
     .filter((line) => (
@@ -391,7 +396,7 @@ function assertNoNativeCrash() {
 
 async function captureExpectedRendererTermination(terminate, options = {}) {
   assertNoNativeCrash();
-  const beforeLogcat = adb('logcat', '-d', '-v', 'brief');
+  const beforeLogcat = readLogcat();
   const beforeAppProcessIds = appProcessIds();
   if (options.requireRootBackTeardown && beforeAppProcessIds.length !== 1) {
     throw new Error(`Root Back requires exactly one EasySplit process, received: ${beforeAppProcessIds.join(', ') || 'none'}`);
@@ -400,7 +405,7 @@ async function captureExpectedRendererTermination(terminate, options = {}) {
   let afterLogcat;
   if (options.requireRootBackTeardown) {
     const evidence = await waitForIntentionalRendererTerminations(
-      () => adb('logcat', '-d', '-v', 'brief'),
+      readLogcat,
       beforeLogcat,
       { ...options, appProcessIds: beforeAppProcessIds },
     );
@@ -410,7 +415,7 @@ async function captureExpectedRendererTermination(terminate, options = {}) {
     }
   } else {
     await sleep(1_000);
-    afterLogcat = adb('logcat', '-d', '-v', 'brief');
+    afterLogcat = readLogcat();
   }
   recordIntentionalRendererTerminations(
     expectedRendererTerminationCounts,

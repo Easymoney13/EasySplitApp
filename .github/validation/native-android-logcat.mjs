@@ -8,6 +8,22 @@ const KILLED_RENDERER_EXIT_PATTERN = new RegExp(`^${ZYGOTE_LOG_PREFIX}\\s*Proces
 const SYSTEM_RENDERER_KILL_PATTERN = new RegExp(`^${ACTIVITY_MANAGER_LOG_PREFIX}\\s*Killing (\\d+):com\\.google\\.android\\.webview:sandboxed_process.*:\\s*isolated not needed\\s*$`, 'i');
 const APP_DESTROYED_PATTERN = new RegExp(`^${CAPACITOR_LOG_PREFIX}\\s*App destroyed\\s*$`, 'i');
 
+export function readLogcatWithRetries(readLogcat, { attempts = 3 } = {}) {
+  if (!Number.isSafeInteger(attempts) || attempts < 1) {
+    throw new Error('Logcat retry attempts must be a positive integer');
+  }
+
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return String(readLogcat());
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
 export function rendererTerminationLines(logcat = '') {
   return String(logcat)
     .split('\n')
