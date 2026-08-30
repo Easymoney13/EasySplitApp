@@ -139,6 +139,8 @@ test('Android runtime smoke pins CTS gesture navigation and verifies exactly-onc
   assert.match(runtimeSmoke, /onBackNavigationDone\.\*triggerBack=true/);
   assert.match(runtimeSmoke, /Notifying listeners for event backButton/);
   assert.match(runtimeSmoke, /starts === 1 && commits === 1 && notifications === 1 && completed/);
+  assert.match(runtimeSmoke, /requireRootBackTeardown: true/);
+  assert.match(runtimeSmoke, /EasySplit warm resume did not preserve the root Back app process/);
   assert.doesNotMatch(runtimeSmoke, /for \(const edge of \['left', 'right'\]\)/);
 });
 
@@ -185,7 +187,7 @@ test('Android runtime allows full logcat output for crash scanning', async () =>
   assert.match(runtimeSmoke, /Error injecting safe area CSS/);
   assert.match(runtimeSmoke, /await captureExpectedRendererTermination\(async \(\) => \{/);
   assert.match(runtimeSmoke, /recordIntentionalRendererTerminations/);
-  assert.match(runtimeSmoke, /captureExpectedRendererTermination\([\s\S]*?performAndroidBack\('root'[\s\S]*?requireCleanExit: true/);
+  assert.match(runtimeSmoke, /captureExpectedRendererTermination\([\s\S]*?performAndroidBack\('root'[\s\S]*?requireRootBackTeardown: true/);
 });
 
 test('Android emulator runner delegates validation and diagnostics to one shell wrapper', async () => {

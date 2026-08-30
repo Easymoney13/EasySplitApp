@@ -8,6 +8,7 @@ import {
 import {
   recordIntentionalRendererTerminations,
   unexpectedRendererTerminationLines,
+  waitForIntentionalRendererTerminations,
 } from './native-android-logcat.mjs';
 
 const ADB = process.env.ADB || 'adb';
@@ -386,15 +387,37 @@ function assertNoNativeCrash() {
 async function captureExpectedRendererTermination(terminate, options = {}) {
   assertNoNativeCrash();
   const beforeLogcat = adb('logcat', '-d', '-v', 'brief');
+  const beforeAppProcessIds = appProcessIds();
+  if (options.requireRootBackTeardown && beforeAppProcessIds.length !== 1) {
+    throw new Error(`Root Back requires exactly one EasySplit process, received: ${beforeAppProcessIds.join(', ') || 'none'}`);
+  }
   await terminate();
-  await sleep(1_000);
-  const afterLogcat = adb('logcat', '-d', '-v', 'brief');
+  let afterLogcat;
+  if (options.requireRootBackTeardown) {
+    const evidence = await waitForIntentionalRendererTerminations(
+      () => adb('logcat', '-d', '-v', 'brief'),
+      beforeLogcat,
+      { ...options, appProcessIds: beforeAppProcessIds },
+    );
+    afterLogcat = evidence.afterLogcat;
+    if (evidence.expectedLines.length > 1) {
+      throw new Error(`Root Back emitted ${evidence.expectedLines.length} renderer terminations; expected at most one`);
+    }
+  } else {
+    await sleep(1_000);
+    afterLogcat = adb('logcat', '-d', '-v', 'brief');
+  }
   recordIntentionalRendererTerminations(
     expectedRendererTerminationCounts,
     beforeLogcat,
     afterLogcat,
-    options,
+    { ...options, appProcessIds: beforeAppProcessIds },
   );
+  if (options.requireRootBackTeardown
+    && !sameProcessIds(beforeAppProcessIds, appProcessIds())) {
+    throw new Error('EasySplit process changed while handling root Back');
+  }
+  return { appProcessIds: beforeAppProcessIds };
 }
 
 function appProcessIds() {
@@ -403,6 +426,11 @@ function appProcessIds() {
   } catch {
     return [];
   }
+}
+
+function sameProcessIds(left, right) {
+  return left.length === right.length
+    && [...left].sort().every((processId, index) => processId === [...right].sort()[index]);
 }
 
 async function forceStopApp(label) {
@@ -563,9 +591,9 @@ async function testColdDeepLinkBack() {
 
 async function testRootBackAndResume() {
   let page = await launchHomeWithGuest('root Back setup');
-  await captureExpectedRendererTermination(
+  const rootBackProcess = await captureExpectedRendererTermination(
     () => performAndroidBack('root', async () => !isEasySplitFocused()),
-    { requireCleanExit: true },
+    { requireRootBackTeardown: true },
   );
   if (isEasySplitFocused()) throw new Error('Back on root did not return control to Android');
   console.log('ANDROID_BACK_ROOT=PASS');
@@ -580,6 +608,9 @@ async function testRootBackAndResume() {
     `Boolean(document.querySelector('[data-testid="start-split-button"]'))`,
   ), RUNTIME_TIMEOUT_MS);
   await expectPersistedGuestProfile(page, 'guest profile after warm resume');
+  if (!sameProcessIds(rootBackProcess.appProcessIds, appProcessIds())) {
+    throw new Error('EasySplit warm resume did not preserve the root Back app process');
+  }
   console.log('ANDROID_BACKGROUND_RESUME=PASS');
 }
 
