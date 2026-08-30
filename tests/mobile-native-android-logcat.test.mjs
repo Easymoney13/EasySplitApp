@@ -81,6 +81,14 @@ test('root Back accepts cross-thread Zygote evidence logged before ActivityManag
   assert.deepEqual(unexpectedRendererTerminationLines(intentional, expected), []);
 });
 
+test('root Back accepts Android 16 reporting its isolated-process kill before Chromium observes it', () => {
+  const expected = recordRootBack(
+    `${appDestroyed}\n${systemKill}\n${intentional}\n${killedExit}`,
+  );
+
+  assert.deepEqual(unexpectedRendererTerminationLines(intentional, expected), []);
+});
+
 for (const [name, logcat] of [
   ['missing app destruction', `${intentional}\n${systemKill}\n${killedExit}`],
   ['app destruction from a different PID', `${appDestroyed.replace('( 100)', '( 999)')}\n${intentional}\n${systemKill}\n${killedExit}`],
@@ -90,7 +98,6 @@ for (const [name, logcat] of [
   ['mismatched ActivityManager PID', `${appDestroyed}\n${intentional}\n${systemKill.replace('Killing 200:', 'Killing 999:')}\n${killedExit}`],
   ['mismatched Zygote PID', `${appDestroyed}\n${intentional}\n${systemKill}\n${killedExit.replace('Process 200', 'Process 999')}`],
   ['unexpected renderer exit signal', `${appDestroyed}\n${intentional}\n${systemKill}\n${killedExit.replace('signal 9 (Killed)', 'signal 6 (Aborted)')}`],
-  ['system kill before crash', `${appDestroyed}\n${systemKill}\n${intentional}\n${killedExit}`],
 ]) {
   test(`root Back rejects ${name}`, () => {
     const expected = recordRootBack(logcat);
