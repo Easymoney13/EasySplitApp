@@ -152,6 +152,10 @@ test('Android runtime smoke binds the exact EasySplit WebView and isolates failu
   assert.match(runtimeSmoke, /window\.__EASYSPLIT_MOBILE_SHELL__ === true/);
   assert.match(runtimeSmoke, /'pm', 'clear', PACKAGE/);
   assert.match(runtimeSmoke, /await resetAppData\(label\)/);
+  assert.match(runtimeSmoke, /await certifyGuestProfileAcrossRestart\(\{/);
+  assert.match(runtimeSmoke, /forceStopApp\(`\$\{label\} durability certification`\)/);
+  assert.match(runtimeSmoke, /guestOnboardingController\(page\)\.readState\(\)/);
+  assert.match(runtimeSmoke, /await expectRoute\(page, '\/'\)/);
   for (const scenario of [
     'guest-continuity',
     'sheet-back',
@@ -176,6 +180,11 @@ test('Android runtime allows full logcat output for crash scanning', async () =>
   const runtimeSmoke = await read('.github/validation/native-android-runtime.mjs');
 
   assert.match(runtimeSmoke, /maxBuffer: 16 \* 1024 \* 1024/);
+  assert.match(runtimeSmoke, /expectedRendererTerminationCounts = new Map\(\)/);
+  assert.match(runtimeSmoke, /unexpectedRendererTerminationLines/);
+  assert.match(runtimeSmoke, /Error injecting safe area CSS/);
+  assert.match(runtimeSmoke, /await captureExpectedRendererTermination\(async \(\) => \{/);
+  assert.match(runtimeSmoke, /recordIntentionalRendererTerminations/);
 });
 
 test('Android emulator runner delegates validation and diagnostics to one shell wrapper', async () => {

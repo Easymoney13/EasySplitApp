@@ -1,6 +1,14 @@
 import { execFileSync } from 'node:child_process';
 import WebSocket from 'ws';
-import { synchronizeGuestOnboarding } from './native-android-onboarding.mjs';
+import {
+  certifyGuestProfileAcrossRestart,
+  expectedGuestProfileIsStable,
+  synchronizeGuestOnboarding,
+} from './native-android-onboarding.mjs';
+import {
+  recordIntentionalRendererTerminations,
+  unexpectedRendererTerminationLines,
+} from './native-android-logcat.mjs';
 
 const ADB = process.env.ADB || 'adb';
 const PACKAGE = 'com.easysplit.app';
@@ -8,6 +16,7 @@ const ACTIVITY = `${PACKAGE}/.MainActivity`;
 const DEVTOOLS_PORT = 9222;
 const RUNTIME_TIMEOUT_MS = 120_000;
 const GESTURAL_NAV_OVERLAY = 'com.android.internal.systemui.navbar.gestural';
+const expectedRendererTerminationCounts = new Map();
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -183,7 +192,7 @@ async function expectPersistedGuestProfile(page, label) {
   try {
     await waitFor(label, async () => {
       const state = await controller.readState();
-      return state.profileReady && !state.dialogVisible;
+      return expectedGuestProfileIsStable(state);
     });
   } catch (error) {
     const snapshot = await controller.readState()
@@ -364,8 +373,27 @@ function assertNoNativeCrash() {
     .filter((line) => (
       /ANR in com\.easysplit\.app|Process:\s*com\.easysplit\.app/i.test(line)
       || /Fatal signal \d+.*com\.easysplit\.app|Cmdline:\s*com\.easysplit\.app/i.test(line)
+      || /Error injecting safe area CSS/i.test(line)
     ));
+  const unexpectedRendererTerminations = unexpectedRendererTerminationLines(
+    logcat,
+    expectedRendererTerminationCounts,
+  );
+  fatal.push(...unexpectedRendererTerminations);
   if (fatal.length) throw new Error(`Native crash/ANR detected:\n${fatal.join('\n')}`);
+}
+
+async function captureExpectedRendererTermination(terminate) {
+  assertNoNativeCrash();
+  const beforeLogcat = adb('logcat', '-d', '-v', 'brief');
+  await terminate();
+  await sleep(1_000);
+  const afterLogcat = adb('logcat', '-d', '-v', 'brief');
+  recordIntentionalRendererTerminations(
+    expectedRendererTerminationCounts,
+    beforeLogcat,
+    afterLogcat,
+  );
 }
 
 function appProcessIds() {
@@ -377,16 +405,20 @@ function appProcessIds() {
 }
 
 async function forceStopApp(label) {
-  adb('shell', 'am', 'force-stop', PACKAGE);
-  await waitFor(`${label} process exit`, async () => appProcessIds().length === 0, 30_000, 250);
+  await captureExpectedRendererTermination(async () => {
+    adb('shell', 'am', 'force-stop', PACKAGE);
+    await waitFor(`${label} process exit`, async () => appProcessIds().length === 0, 30_000, 250);
+  });
 }
 
 async function resetAppData(label) {
-  const clearResult = adb('shell', 'pm', 'clear', PACKAGE);
-  if (!/^Success$/m.test(clearResult)) {
-    throw new Error(`${label} package-data reset failed: ${clearResult || 'no output'}`);
-  }
-  await waitFor(`${label} clean process exit`, async () => appProcessIds().length === 0, 30_000, 250);
+  await captureExpectedRendererTermination(async () => {
+    const clearResult = adb('shell', 'pm', 'clear', PACKAGE);
+    if (!/^Success$/m.test(clearResult)) {
+      throw new Error(`${label} package-data reset failed: ${clearResult || 'no output'}`);
+    }
+    await waitFor(`${label} clean process exit`, async () => appProcessIds().length === 0, 30_000, 250);
+  });
   console.log(`ANDROID_SCENARIO_DATA_RESET=${label}`);
 }
 
@@ -395,7 +427,7 @@ async function launchHomeWithGuest(label) {
   const launch = adb('shell', 'am', 'start', '-W', '-n', ACTIVITY);
   if (!launchAccepted(launch)) throw new Error(`${label} dispatch failed:\n${launch}`);
 
-  const page = await connectWebView();
+  let page = await connectWebView();
   await waitForEasySplitFocused(`${label} foreground`);
   await waitForMobileShellStable(page, `${label} stable mobile shell`);
   await waitFor(`${label} hydrated home`, async () => cdpEvaluate(
@@ -405,6 +437,30 @@ async function launchHomeWithGuest(label) {
   await completeGuestOnboarding(page);
   await expectRoute(page, '/');
   await expectPersistedGuestProfile(page, `${label} guest profile`);
+
+  await certifyGuestProfileAcrossRestart({
+    readState: () => guestOnboardingController(page).readState(),
+    restart: async () => {
+      await forceStopApp(`${label} durability certification`);
+      const relaunch = adb('shell', 'am', 'start', '-W', '-n', ACTIVITY);
+      if (!launchAccepted(relaunch)) {
+        throw new Error(`${label} durability relaunch failed:\n${relaunch}`);
+      }
+      page = await connectWebView();
+      await waitForEasySplitFocused(`${label} durability foreground`);
+      await waitForMobileShellStable(page, `${label} durability stable mobile shell`);
+      await waitFor(`${label} durability hydrated home`, async () => cdpEvaluate(
+        page.webSocketDebuggerUrl,
+        `Boolean(document.querySelector('[data-testid="start-split-button"]'))`,
+      ), RUNTIME_TIMEOUT_MS);
+      await expectRoute(page, '/');
+      return page;
+    },
+  }, {
+    timeoutMs: RUNTIME_TIMEOUT_MS,
+    intervalMs: 250,
+  });
+
   assertEmulatorSystemHealthy();
   return page;
 }
