@@ -120,6 +120,11 @@ function isEasySplitFocused() {
   return /topResumedActivity=.*com\.easysplit\.app\/\.MainActivity/.test(activities);
 }
 
+function topResumedActivity() {
+  const activities = adb('shell', 'dumpsys', 'activity', 'activities');
+  return activities.match(/topResumedActivity=.*?\su\d+\s+(\S+)/)?.[1] || null;
+}
+
 async function waitForEasySplitFocused(label = 'EasySplit foreground activity') {
   return waitFor(label, async () => isEasySplitFocused(), RUNTIME_TIMEOUT_MS, 750);
 }
@@ -532,8 +537,8 @@ async function testGuestContinuity() {
   console.log('ANDROID_GUEST_COLD_CONTINUITY=PASS');
 }
 
-async function testSheetBack() {
-  let page = await launchHomeWithGuest('sheet Back setup');
+async function testCameraBack() {
+  let page = await launchHomeWithGuest('camera Back setup');
 
   const clicked = await cdpEvaluate(
     page.webSocketDebuggerUrl,
@@ -541,24 +546,21 @@ async function testSheetBack() {
   );
   if (!clicked) throw new Error('Start Split button could not be clicked');
 
-  await waitFor('Start Split sheet', async () => cdpEvaluate(
-    page.webSocketDebuggerUrl,
-    `Boolean(document.querySelector('[data-testid="start-split-sheet"]'))`,
-  ), RUNTIME_TIMEOUT_MS);
+  const cameraActivity = await waitFor('native camera foreground activity', async () => {
+    const activity = topResumedActivity();
+    return activity && !activity.startsWith('com.easysplit.app/') ? activity : null;
+  }, 30_000, 500);
+  if (/permissioncontroller/i.test(cameraActivity)) {
+    throw new Error(`Start Split opened a permission dialog instead of the native camera: ${cameraActivity}`);
+  }
 
-  await performAndroidBack('sheet', async () => !await cdpEvaluate(
-    page.webSocketDebuggerUrl,
-    `Boolean(document.querySelector('[data-testid="start-split-sheet"]'))`,
-  ));
-  if (!isEasySplitFocused()) throw new Error('Back from Start Split sheet backgrounded the app');
-
+  androidBackGesture();
+  await waitForEasySplitFocused('EasySplit foreground after camera Back');
   page = await connectWebView();
-  const sheetStillOpen = await cdpEvaluate(
-    page.webSocketDebuggerUrl,
-    `Boolean(document.querySelector('[data-testid="start-split-sheet"]'))`,
-  );
-  if (sheetStillOpen) throw new Error('Back did not dismiss the Start Split sheet');
-  console.log('ANDROID_BACK_SHEET_DISMISS=PASS');
+  await waitForMobileShellStable(page, 'stable EasySplit home after camera Back');
+  await expectRoute(page, '/');
+  await expectPersistedGuestProfile(page, 'guest profile after camera Back');
+  console.log('ANDROID_BACK_CAMERA_DISMISS=PASS');
 }
 
 async function testLiveDeepLinkBack() {
@@ -633,7 +635,7 @@ async function main() {
 
   const failures = [];
   await runScenario('guest-continuity', testGuestContinuity, failures);
-  await runScenario('sheet-back', testSheetBack, failures);
+  await runScenario('camera-back', testCameraBack, failures);
   await runScenario('live-deep-link-back', testLiveDeepLinkBack, failures);
   await runScenario('cold-deep-link-back', testColdDeepLinkBack, failures);
   await runScenario('root-back-resume', testRootBackAndResume, failures);

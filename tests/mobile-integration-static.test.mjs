@@ -110,10 +110,11 @@ test('native projects wire sharing, external payment apps, and inbound app links
   assert.doesNotMatch(bit, /alert\(/);
 });
 
-test('Android back gives an open Start Split sheet first refusal before shell navigation', async () => {
+test('Android back returns from the direct native camera to the hydrated EasySplit home', async () => {
   const events = await read('lib/mobileEvents.ts');
   const runtime = await read('mobile/runtime/mobileRuntime.ts');
   const home = await read('src/app/page.tsx');
+  const runtimeSmoke = await read('.github/validation/native-android-runtime.mjs');
   const config = await read('capacitor.config.ts');
 
   assert.match(events, /MOBILE_BACK_REQUEST_EVENT/);
@@ -123,7 +124,9 @@ test('Android back gives an open Start Split sheet first refusal before shell na
   assert.match(home, /event\.preventDefault\(\)/);
   assert.match(home, /setShowStartSplitModal\(false\)/);
   assert.match(home, /data-testid="start-split-button"/);
-  assert.match(home, /data-testid="start-split-sheet"/);
+  assert.match(home, /onClick=\{\(\) => \{\s+handleScanCamera\(\)/);
+  assert.match(runtimeSmoke, /native camera foreground activity/);
+  assert.match(runtimeSmoke, /ANDROID_BACK_CAMERA_DISMISS=PASS/);
   assert.doesNotMatch(config, /disableBackButtonHandler:\s*true/);
 });
 
@@ -161,7 +164,7 @@ test('Android runtime smoke binds the exact EasySplit WebView and isolates failu
   assert.match(runtimeSmoke, /await expectRoute\(page, '\/'\)/);
   for (const scenario of [
     'guest-continuity',
-    'sheet-back',
+    'camera-back',
     'live-deep-link-back',
     'cold-deep-link-back',
     'root-back-resume',
