@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "node server.js",
+    "postinstall": "node scripts/patch-capacitor-system-bars.mjs",
     "build": "next build",
     "start": "NODE_ENV=production node server.js",
     "typecheck": "tsc --noEmit --incremental false",

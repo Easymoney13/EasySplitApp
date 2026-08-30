@@ -125,3 +125,79 @@ test('Android back gives an open Start Split sheet first refusal before shell na
   assert.match(home, /data-testid="start-split-sheet"/);
   assert.doesNotMatch(config, /disableBackButtonHandler:\s*true/);
 });
+
+test('Android runtime smoke pins CTS gesture navigation and verifies exactly-once committed Back', async () => {
+  const runtimeSmoke = await read('.github/validation/native-android-runtime.mjs');
+
+  assert.match(runtimeSmoke, /com\.android\.internal\.systemui\.navbar\.gestural/);
+  assert.match(runtimeSmoke, /config_navBarInteractionMode/);
+  assert.match(runtimeSmoke, /'cmd', 'overlay', 'enable', GESTURAL_NAV_OVERLAY/);
+  assert.match(runtimeSmoke, /ANDROID_GESTURE_NAVIGATION=PASS/);
+  assert.match(runtimeSmoke, /'touchscreen', '-d', '0', 'swipe'/);
+  assert.match(runtimeSmoke, /String\(startX\).*String\(endX\).*'120'/s);
+  assert.match(runtimeSmoke, /startBackNavigation\.\*com\\\.easysplit\\\.app\\\/\\\.MainActivity/);
+  assert.match(runtimeSmoke, /onBackNavigationDone\.\*triggerBack=true/);
+  assert.match(runtimeSmoke, /Notifying listeners for event backButton/);
+  assert.match(runtimeSmoke, /starts === 1 && commits === 1 && notifications === 1 && completed/);
+  assert.match(runtimeSmoke, /requireRootBackTeardown: true/);
+  assert.match(runtimeSmoke, /EasySplit warm resume did not preserve the root Back app process/);
+  assert.doesNotMatch(runtimeSmoke, /for \(const edge of \['left', 'right'\]\)/);
+});
+
+test('Android runtime smoke binds the exact EasySplit WebView and isolates failure-reporting scenarios', async () => {
+  const runtimeSmoke = await read('.github/validation/native-android-runtime.mjs');
+
+  assert.match(runtimeSmoke, /webview_devtools_remote_\$\{pid\}/);
+  assert.doesNotMatch(runtimeSmoke, /reverse\(\)\.find\(\(line\) => line\.includes\('webview_devtools_remote'\)\)/);
+  assert.match(runtimeSmoke, /page\.url\.startsWith\('https:\/\/localhost\/'\)/);
+  assert.doesNotMatch(runtimeSmoke, /pages\.find\(\(page\) => page\.type === 'page'\)\s*\|\|/);
+  assert.match(runtimeSmoke, /window\.__EASYSPLIT_MOBILE_SHELL__ === true/);
+  assert.match(runtimeSmoke, /'pm', 'clear', PACKAGE/);
+  assert.match(runtimeSmoke, /await resetAppData\(label\)/);
+  assert.match(runtimeSmoke, /await certifyGuestProfileAcrossRestart\(\{/);
+  assert.match(runtimeSmoke, /forceStopApp\(`\$\{label\} durability certification`\)/);
+  assert.match(runtimeSmoke, /guestOnboardingController\(page\)\.readState\(\)/);
+  assert.match(runtimeSmoke, /await expectRoute\(page, '\/'\)/);
+  for (const scenario of [
+    'guest-continuity',
+    'sheet-back',
+    'live-deep-link-back',
+    'cold-deep-link-back',
+    'root-back-resume',
+    'crash-anr-scan',
+  ]) {
+    assert.match(runtimeSmoke, new RegExp(`runScenario\\('${scenario}'`));
+  }
+  assert.match(runtimeSmoke, /Android runtime scenarios failed/);
+});
+
+test('Android runtime treats an omitted shell route as Home', async () => {
+  const runtimeSmoke = await read('.github/validation/native-android-runtime.mjs');
+
+  assert.match(runtimeSmoke, /\(params\.get\('esRoute'\) \|\| '\/'\) ===/);
+  assert.match(runtimeSmoke, /\(new URLSearchParams\(window\.location\.search\)\.get\('esRoute'\) \|\| '\/'\) === '\/'/);
+});
+
+test('Android runtime allows full logcat output for crash scanning', async () => {
+  const runtimeSmoke = await read('.github/validation/native-android-runtime.mjs');
+
+  assert.match(runtimeSmoke, /maxBuffer: 16 \* 1024 \* 1024/);
+  assert.match(runtimeSmoke, /expectedRendererTerminationCounts = new Map\(\)/);
+  assert.match(runtimeSmoke, /unexpectedRendererTerminationLines/);
+  assert.match(runtimeSmoke, /Error injecting safe area CSS/);
+  assert.match(runtimeSmoke, /await captureExpectedRendererTermination\(async \(\) => \{/);
+  assert.match(runtimeSmoke, /recordIntentionalRendererTerminations/);
+  assert.match(runtimeSmoke, /captureExpectedRendererTermination\([\s\S]*?performAndroidBack\('root'[\s\S]*?requireRootBackTeardown: true/);
+});
+
+test('Android emulator runner delegates validation and diagnostics to one shell wrapper', async () => {
+  const workflow = await read('.github/workflows/capacitor-native-builds.yml');
+
+  assert.match(
+    workflow,
+    /script: bash \.github\/validation\/run-native-android-runtime\.sh "\$RUNNER_TEMP\/easysplit-android-smoke" android-runtime\/app-debug\.apk/,
+  );
+  assert.doesNotMatch(workflow, /set \+e|RUNTIME_STATUS=\$\?/);
+  assert.match(workflow, /test -s "\$SCREENSHOT"/);
+  assert.match(workflow, /test -s "\$LOGCAT"/);
+});

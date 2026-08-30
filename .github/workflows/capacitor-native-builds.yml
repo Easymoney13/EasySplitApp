@@ -195,7 +195,7 @@ jobs:
   android-api-36-runtime:
     name: Android 16 install + launch + Back + deep links
     needs: compile-native-projects
-    runs-on: macos-15-intel
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - name: Checkout source
@@ -216,6 +216,14 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Enable KVM acceleration
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
       - name: Install exact dependencies for runtime harness
         run: npm ci
 
@@ -229,7 +237,7 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 36
-          target: default
+          target: google_apis
           arch: x86_64
           profile: pixel_6
           disable-animations: true
@@ -239,22 +247,27 @@ jobs:
             adb kill-server || true
             adb start-server
             adb devices
-          script: |
-            mkdir -p "$RUNNER_TEMP/easysplit-android-smoke"
-            adb install -r android-runtime/app-debug.apk
-            node .github/validation/native-android-runtime.mjs > "$RUNNER_TEMP/easysplit-android-smoke/result.txt" 2>&1 || true
-            adb exec-out screencap -p > "$RUNNER_TEMP/easysplit-android-smoke/final.png" || true
-            adb logcat -d -v threadtime > "$RUNNER_TEMP/easysplit-android-smoke/logcat.txt" || true
+          script: bash .github/validation/run-native-android-runtime.sh "$RUNNER_TEMP/easysplit-android-smoke" android-runtime/app-debug.apk
 
       - name: Require Android runtime PASS evidence
         shell: bash
         run: |
           set -euo pipefail
           RESULT="$RUNNER_TEMP/easysplit-android-smoke/result.txt"
+          EXIT_CODE="$RUNNER_TEMP/easysplit-android-smoke/exit-code.txt"
+          SCREENSHOT="$RUNNER_TEMP/easysplit-android-smoke/final.png"
+          LOGCAT="$RUNNER_TEMP/easysplit-android-smoke/logcat.txt"
           test -s "$RESULT"
+          test -s "$EXIT_CODE"
+          test -s "$SCREENSHOT"
+          test -s "$LOGCAT"
           cat "$RESULT"
+          test "$(cat "$EXIT_CODE")" -eq 0
           for marker in \
+            ANDROID_GESTURE_NAVIGATION=PASS \
             ANDROID_COLD_LAUNCH=PASS \
+            ANDROID_GUEST_LIVE_CONTINUITY=PASS \
+            ANDROID_GUEST_COLD_CONTINUITY=PASS \
             ANDROID_BACK_SHEET_DISMISS=PASS \
             ANDROID_LIVE_DEEP_LINK=PASS \
             ANDROID_COLD_DEEP_LINK=PASS \
