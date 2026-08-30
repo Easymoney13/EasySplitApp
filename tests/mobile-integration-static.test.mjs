@@ -161,3 +161,12 @@ test('Android runtime allows full logcat output for crash scanning', async () =>
 
   assert.match(runtimeSmoke, /maxBuffer: 16 \* 1024 \* 1024/);
 });
+
+test('guest onboarding persists before native deep links can pause the app', async () => {
+  const runtimeSmoke = await read('.github/validation/native-android-runtime.mjs');
+  const languageContext = await read('src/components/LanguageContext.tsx');
+
+  assert.match(languageContext, /localStorage\.setItem\('billsplit_local_profile', JSON\.stringify\(completedProfile\)\);\s+localStorage\.setItem\('billsplit_phone', phoneNumber\);\s+setProfile\(completedProfile\)/);
+  assert.match(runtimeSmoke, /expectPersistedGuestProfile\(page, 'guest profile after live deep link'\)/);
+  assert.match(runtimeSmoke, /expectPersistedGuestProfile\(page, 'guest profile after cold deep link'\)/);
+});

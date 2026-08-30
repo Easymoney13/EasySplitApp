@@ -163,6 +163,24 @@ async function completeGuestOnboardingIfNeeded(page) {
     page.webSocketDebuggerUrl,
     `!document.querySelector('[role="dialog"][aria-modal="true"]')`,
   ));
+
+  await expectPersistedGuestProfile(page, 'guest onboarding persistence');
+}
+
+async function expectPersistedGuestProfile(page, label) {
+  await waitFor(label, async () => cdpEvaluate(
+    page.webSocketDebuggerUrl,
+    `(() => {
+      try {
+        const profile = JSON.parse(localStorage.getItem('billsplit_local_profile') || 'null');
+        return profile?.displayName === 'Android Smoke'
+          && profile?.phoneNumber === '0501234567'
+          && !document.querySelector('[role="dialog"][aria-modal="true"]');
+      } catch (_) {
+        return false;
+      }
+    })()`,
+  ));
 }
 
 function assertEmulatorSystemHealthy() {
@@ -334,6 +352,7 @@ async function main() {
     paramValue: 'smoke-group',
     hash: '#invite=smoke-token',
   });
+  await expectPersistedGuestProfile(page, 'guest profile after live deep link');
 
   await performAndroidBack('live-deep-link', async () => cdpEvaluate(
     page.webSocketDebuggerUrl,
@@ -348,6 +367,7 @@ async function main() {
   page = await connectWebView();
   await waitForEasySplitFocused('EasySplit foreground after cold deep link');
   await expectRoute(page, '/group/smoke-group');
+  await expectPersistedGuestProfile(page, 'guest profile after cold deep link');
 
   await performAndroidBack('cold-deep-link', async () => cdpEvaluate(
     page.webSocketDebuggerUrl,

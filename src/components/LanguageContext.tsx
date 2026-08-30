@@ -710,14 +710,16 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 const displayName = guestName.trim();
                 const phoneNumber = cleanIsraeliPhone(guestPhone);
                 if (!displayName || !isValidIsraeliPhone(phoneNumber)) return;
-                setProfile((current) => ({
-                  ...current,
+                const completedProfile = {
+                  ...profile,
                   displayName,
                   phoneNumber,
-                  avatarColor: current.avatarColor || '#4DE1A1',
-                  avatarUrl: current.avatarUrl || firebaseUser?.photoURL || undefined,
-                }));
+                  avatarColor: profile.avatarColor || '#4DE1A1',
+                  avatarUrl: profile.avatarUrl || firebaseUser?.photoURL || undefined,
+                };
+                localStorage.setItem('billsplit_local_profile', JSON.stringify(completedProfile));
                 localStorage.setItem('billsplit_phone', phoneNumber);
+                setProfile(completedProfile);
               }}
             >
               <div>
