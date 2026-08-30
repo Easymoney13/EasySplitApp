@@ -1,5 +1,6 @@
 const RENDERER_TERMINATION_PATTERN = /aw_browser_terminator.*Renderer process .*crash detected/i;
 const INTENTIONAL_RENDERER_TERMINATION_PATTERN = /crash detected \(code -1\)/i;
+const CLEAN_RENDERER_EXIT_PATTERN = /Zygote.*Process (\d+) exited cleanly \(0\)/i;
 
 export function rendererTerminationLines(logcat = '') {
   return String(logcat)
@@ -13,12 +14,31 @@ function lineCounts(lines) {
   return counts;
 }
 
-export function recordIntentionalRendererTerminations(expectedCounts, beforeLogcat, afterLogcat) {
+function rendererProcessId(line) {
+  return line.match(/Renderer process \((\d+)\)/i)?.[1] || null;
+}
+
+export function recordIntentionalRendererTerminations(
+  expectedCounts,
+  beforeLogcat,
+  afterLogcat,
+  { requireCleanExit = false } = {},
+) {
+  const cleanExitProcessIds = new Set(
+    String(afterLogcat)
+      .split('\n')
+      .map((line) => line.match(CLEAN_RENDERER_EXIT_PATTERN)?.[1] || null)
+      .filter(Boolean),
+  );
+  const expectedLine = (line) => (
+    INTENTIONAL_RENDERER_TERMINATION_PATTERN.test(line)
+    && (!requireCleanExit || cleanExitProcessIds.has(rendererProcessId(line)))
+  );
   const beforeCounts = lineCounts(
-    rendererTerminationLines(beforeLogcat).filter((line) => INTENTIONAL_RENDERER_TERMINATION_PATTERN.test(line)),
+    rendererTerminationLines(beforeLogcat).filter(expectedLine),
   );
   const afterCounts = lineCounts(
-    rendererTerminationLines(afterLogcat).filter((line) => INTENTIONAL_RENDERER_TERMINATION_PATTERN.test(line)),
+    rendererTerminationLines(afterLogcat).filter(expectedLine),
   );
 
   for (const [line, count] of afterCounts) {

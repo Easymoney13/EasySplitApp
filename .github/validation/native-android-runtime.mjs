@@ -383,7 +383,7 @@ function assertNoNativeCrash() {
   if (fatal.length) throw new Error(`Native crash/ANR detected:\n${fatal.join('\n')}`);
 }
 
-async function captureExpectedRendererTermination(terminate) {
+async function captureExpectedRendererTermination(terminate, options = {}) {
   assertNoNativeCrash();
   const beforeLogcat = adb('logcat', '-d', '-v', 'brief');
   await terminate();
@@ -393,6 +393,7 @@ async function captureExpectedRendererTermination(terminate) {
     expectedRendererTerminationCounts,
     beforeLogcat,
     afterLogcat,
+    options,
   );
 }
 
@@ -562,7 +563,10 @@ async function testColdDeepLinkBack() {
 
 async function testRootBackAndResume() {
   let page = await launchHomeWithGuest('root Back setup');
-  await performAndroidBack('root', async () => !isEasySplitFocused());
+  await captureExpectedRendererTermination(
+    () => performAndroidBack('root', async () => !isEasySplitFocused()),
+    { requireCleanExit: true },
+  );
   if (isEasySplitFocused()) throw new Error('Back on root did not return control to Android');
   console.log('ANDROID_BACK_ROOT=PASS');
 

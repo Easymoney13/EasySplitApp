@@ -185,6 +185,7 @@ test('Android runtime allows full logcat output for crash scanning', async () =>
   assert.match(runtimeSmoke, /Error injecting safe area CSS/);
   assert.match(runtimeSmoke, /await captureExpectedRendererTermination\(async \(\) => \{/);
   assert.match(runtimeSmoke, /recordIntentionalRendererTerminations/);
+  assert.match(runtimeSmoke, /captureExpectedRendererTermination\([\s\S]*?performAndroidBack\('root'[\s\S]*?requireCleanExit: true/);
 });
 
 test('Android emulator runner delegates validation and diagnostics to one shell wrapper', async () => {
