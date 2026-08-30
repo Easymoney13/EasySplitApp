@@ -63,7 +63,24 @@ test('local guest profile remains authoritative and supports the legacy phone ke
   });
 });
 
-test('logout/account transition removes the transient guest backup', () => {
+test('account scope quarantines the guest backup without destroying recovery', () => {
+  const local = createStorage({ billsplit_account_scope: 'guest' });
+  const session = createStorage();
+  persistGuestProfile(local, session, profile);
+
+  local.removeItem('billsplit_local_profile');
+  local.removeItem('billsplit_phone');
+  local.setItem('billsplit_account_scope', 'user:alice');
+  assert.equal(readGuestProfile(local, session), null);
+
+  local.setItem('billsplit_account_scope', 'guest');
+  assert.deepEqual(readGuestProfile(local, session), {
+    ...profile,
+    avatarUrl: undefined,
+  });
+});
+
+test('explicit logout removes the transient guest backup', () => {
   const session = createStorage({
     [GUEST_PROFILE_BACKUP_KEY]: JSON.stringify(profile),
   });

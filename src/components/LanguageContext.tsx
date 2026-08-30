@@ -219,7 +219,6 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           const pendingCreatorIntent = readCreatorIntent(localStorage);
           const accountTransition = transitionAccountScope(localStorage, user?.uid || '');
           if (accountTransition.changed) {
-            clearGuestProfileBackup(sessionStorage);
             if (user?.uid) {
               consumeGuestAccountMigration(
                 localStorage,

@@ -174,8 +174,12 @@ async function expectPersistedGuestProfile(page, label) {
       `(() => {
         try {
           const profile = JSON.parse(localStorage.getItem('billsplit_local_profile') || 'null');
+          const backup = JSON.parse(sessionStorage.getItem('billsplit_guest_profile_backup') || 'null');
           return profile?.displayName === 'Android Smoke'
             && profile?.phoneNumber === '0501234567'
+            && backup?.displayName === 'Android Smoke'
+            && backup?.phoneNumber === '0501234567'
+            && localStorage.getItem('billsplit_account_scope') === 'guest'
             && !document.querySelector('[role="dialog"][aria-modal="true"]');
         } catch (_) {
           return false;
