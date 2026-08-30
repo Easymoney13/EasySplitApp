@@ -137,16 +137,43 @@ test('Android runtime smoke completes first-run onboarding before testing Back',
   assert.match(runtimeSmoke, /waitFor\('guest onboarding dismissal'/);
 });
 
-test('Android runtime smoke uses a short predictive Back gesture with verified completion', async () => {
+test('Android runtime smoke pins CTS gesture navigation and verifies exactly-once committed Back', async () => {
   const runtimeSmoke = await read('.github/validation/native-android-runtime.mjs');
 
-  assert.match(runtimeSmoke, /const edgeOffset = Math\.max\(24, Math\.round\(width \* 0\.03\)\)/);
+  assert.match(runtimeSmoke, /com\.android\.internal\.systemui\.navbar\.gestural/);
+  assert.match(runtimeSmoke, /config_navBarInteractionMode/);
+  assert.match(runtimeSmoke, /'cmd', 'overlay', 'enable', GESTURAL_NAV_OVERLAY/);
+  assert.match(runtimeSmoke, /ANDROID_GESTURE_NAVIGATION=PASS/);
   assert.match(runtimeSmoke, /'touchscreen', '-d', '0', 'swipe'/);
   assert.match(runtimeSmoke, /String\(startX\).*String\(endX\).*'120'/s);
-  assert.match(runtimeSmoke, /for \(const edge of \['left', 'right'\]\)/);
+  assert.match(runtimeSmoke, /startBackNavigation\.\*com\\\.easysplit\\\.app\\\/\\\.MainActivity/);
+  assert.match(runtimeSmoke, /onBackNavigationDone\.\*triggerBack=true/);
   assert.match(runtimeSmoke, /Notifying listeners for event backButton/);
-  assert.match(runtimeSmoke, /waitForAndroidBackOutcome\(baselineNotifications, completionCheck\)/);
-  assert.match(runtimeSmoke, /Once either signal changes, never inject a second Back/);
+  assert.match(runtimeSmoke, /starts === 1 && commits === 1 && notifications === 1 && completed/);
+  assert.doesNotMatch(runtimeSmoke, /for \(const edge of \['left', 'right'\]\)/);
+});
+
+test('Android runtime smoke binds the exact EasySplit WebView and isolates failure-reporting scenarios', async () => {
+  const runtimeSmoke = await read('.github/validation/native-android-runtime.mjs');
+
+  assert.match(runtimeSmoke, /webview_devtools_remote_\$\{pid\}/);
+  assert.doesNotMatch(runtimeSmoke, /reverse\(\)\.find\(\(line\) => line\.includes\('webview_devtools_remote'\)\)/);
+  assert.match(runtimeSmoke, /page\.url\.startsWith\('https:\/\/localhost\/'\)/);
+  assert.doesNotMatch(runtimeSmoke, /pages\.find\(\(page\) => page\.type === 'page'\)\s*\|\|/);
+  assert.match(runtimeSmoke, /__EASYSPLIT_MOBILE_RUNTIME_READY__ === true/);
+  assert.match(runtimeSmoke, /'pm', 'clear', PACKAGE/);
+  assert.match(runtimeSmoke, /await resetAppData\(label\)/);
+  for (const scenario of [
+    'guest-continuity',
+    'sheet-back',
+    'live-deep-link-back',
+    'cold-deep-link-back',
+    'root-back-resume',
+    'crash-anr-scan',
+  ]) {
+    assert.match(runtimeSmoke, new RegExp(`runScenario\\('${scenario}'`));
+  }
+  assert.match(runtimeSmoke, /Android runtime scenarios failed/);
 });
 
 test('Android runtime treats an omitted shell route as Home', async () => {

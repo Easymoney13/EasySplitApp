@@ -250,7 +250,11 @@ jobs:
           script: |
             mkdir -p "$RUNNER_TEMP/easysplit-android-smoke"
             adb install -r android-runtime/app-debug.apk
-            node .github/validation/native-android-runtime.mjs > "$RUNNER_TEMP/easysplit-android-smoke/result.txt" 2>&1 || true
+            set +e
+            node .github/validation/native-android-runtime.mjs > "$RUNNER_TEMP/easysplit-android-smoke/result.txt" 2>&1
+            RUNTIME_STATUS=$?
+            set -e
+            printf '%s\n' "$RUNTIME_STATUS" > "$RUNNER_TEMP/easysplit-android-smoke/exit-code.txt"
             adb exec-out screencap -p > "$RUNNER_TEMP/easysplit-android-smoke/final.png" || true
             adb logcat -d -v threadtime > "$RUNNER_TEMP/easysplit-android-smoke/logcat.txt" || true
 
@@ -259,10 +263,16 @@ jobs:
         run: |
           set -euo pipefail
           RESULT="$RUNNER_TEMP/easysplit-android-smoke/result.txt"
+          EXIT_CODE="$RUNNER_TEMP/easysplit-android-smoke/exit-code.txt"
           test -s "$RESULT"
+          test -s "$EXIT_CODE"
           cat "$RESULT"
+          test "$(cat "$EXIT_CODE")" -eq 0
           for marker in \
+            ANDROID_GESTURE_NAVIGATION=PASS \
             ANDROID_COLD_LAUNCH=PASS \
+            ANDROID_GUEST_LIVE_CONTINUITY=PASS \
+            ANDROID_GUEST_COLD_CONTINUITY=PASS \
             ANDROID_BACK_SHEET_DISMISS=PASS \
             ANDROID_LIVE_DEEP_LINK=PASS \
             ANDROID_COLD_DEEP_LINK=PASS \
