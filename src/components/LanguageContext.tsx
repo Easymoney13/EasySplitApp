@@ -738,6 +738,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               <div>
                 <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block mb-1">
                   {language === 'he' ? 'מספר טלפון (Bit / Paybox)' : 'Phone Number (Bit / Paybox)'}
+                  <span className="text-rose-500 font-bold ms-1">*</span>
                 </label>
                 <div className="relative">
                   <Phone className="pointer-events-none absolute left-3.5 rtl:left-auto rtl:right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -747,7 +748,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                     value={guestPhone}
                     onChange={(event) => setGuestPhone(event.target.value)}
                     maxLength={16}
-                    placeholder={language === 'he' ? '0501234567' : '0501234567'}
+                    placeholder={language === 'he' ? 'הזן מספר טלפון' : 'Enter phone number'}
                     aria-label={language === 'he' ? 'מספר טלפון' : 'Phone number'}
                     className={`w-full rounded-xl border ${guestPhone && !isValidIsraeliPhone(guestPhone) ? 'border-amber-400 dark:border-amber-500' : 'border-slate-200 dark:border-slate-700'} bg-slate-50 py-3 pl-10 pr-4 rtl:pl-4 rtl:pr-10 text-sm font-semibold font-mono outline-none focus:border-brand-600 dark:focus:border-brand-400 dark:bg-slate-900`}
                     required

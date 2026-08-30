@@ -4,10 +4,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Camera, Upload, Flashlight, RefreshCw, X } from 'lucide-react';
 import { useLanguage } from './LanguageContext';
 import { createReceiptDraft, receiptScanUserMessage } from '../../lib/receiptScanClient';
+import { EasySplitLoadingScreen } from './EasySplitLoadingScreen';
 
 interface CameraViewfinderProps {
   onScanComplete: (receiptData: any) => void;
   onCancel: () => void;
+  onManualEntry?: () => void;
   parseOnly?: boolean;
   hostName?: string;
 }
@@ -15,6 +17,7 @@ interface CameraViewfinderProps {
 export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
   onScanComplete,
   onCancel,
+  onManualEntry,
   parseOnly = false,
   hostName = 'Host',
 }) => {
@@ -170,6 +173,10 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
     }
   };
 
+  if (isScanning) {
+    return <EasySplitLoadingScreen isOverlay={true} />;
+  }
+
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex flex-col justify-between p-5 animate-fadeIn text-white">
       {/* Hidden canvas for taking video snapshot */}
@@ -189,17 +196,28 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
           {t('receiptScannerTitle', undefined, 'Camera Receipt OCR')}
         </span>
 
-        {torchSupported ? (
-          <button
-            onClick={toggleTorch}
-            aria-label={flashOn ? 'Turn torch off' : 'Turn torch on'}
-            className={`p-2.5 rounded-full transition-all ${
-              flashOn ? 'bg-lime-400 text-slate-950 shadow-lime-glow' : 'bg-slate-800/80 text-white'
-            }`}
-          >
-            <Flashlight className="w-4 h-4" />
-          </button>
-        ) : <div className="w-9" aria-hidden="true" />}
+        <div className="flex items-center gap-2">
+          {onManualEntry && (
+            <button
+              onClick={onManualEntry}
+              className="py-1.5 px-3 rounded-full bg-slate-800/80 hover:bg-slate-700 text-xs font-bold text-slate-200 transition-colors"
+            >
+              {t('manualBtn', undefined, 'Manual')}
+            </button>
+          )}
+
+          {torchSupported ? (
+            <button
+              onClick={toggleTorch}
+              aria-label={flashOn ? 'Turn torch off' : 'Turn torch on'}
+              className={`p-2.5 rounded-full transition-all ${
+                flashOn ? 'bg-lime-400 text-slate-950 shadow-lime-glow' : 'bg-slate-800/80 text-white'
+              }`}
+            >
+              <Flashlight className="w-4 h-4" />
+            </button>
+          ) : <div className="w-9" aria-hidden="true" />}
+        </div>
       </div>
 
       {/* Center Camera Viewfinder Stream */}
@@ -215,9 +233,10 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
               </p>
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="py-2 px-4 rounded-full bg-white text-slate-950 text-xs font-extrabold hover:bg-slate-100"
+                className="py-2 px-4 rounded-full bg-white text-slate-950 text-xs font-extrabold hover:bg-slate-100 flex items-center gap-2 mx-auto"
               >
-                Upload Bill Photo
+                <Upload className="w-4 h-4" />
+                <span>{t('uploadPhoto', undefined, 'Upload from Gallery')}</span>
               </button>
             </div>
           ) : (
@@ -259,10 +278,11 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
         <div className="flex items-center justify-center gap-5">
           <button
             onClick={() => fileInputRef.current?.click()}
-            className="p-3.5 rounded-full bg-slate-800 text-white hover:bg-slate-700 transition-colors"
-            title="Upload Photo"
+            className="p-3.5 rounded-full bg-slate-800 text-white hover:bg-slate-700 hover:scale-105 active:scale-95 transition-all shadow-md flex items-center justify-center group"
+            title={t('uploadPhoto', undefined, 'Upload from Gallery')}
+            aria-label={t('uploadPhoto', undefined, 'Upload from Gallery')}
           >
-            <Upload className="w-5 h-5" />
+            <Upload className="w-5 h-5 text-brand-400 group-hover:text-brand-300" />
           </button>
 
           {/* Big Shutter Button */}

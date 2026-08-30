@@ -268,9 +268,11 @@ function SessionWorkspaceInner() {
           connectWebSocket(resolvedId, joined.accessToken);
           pollInterval = setInterval(() => fetchSessionData(resolvedId), 3000);
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error('Error initializing session:', err);
-        if (!disposed) setSessionNotFound(true);
+        if (!disposed && err?.status === 404) {
+          setSessionNotFound(true);
+        }
       }
     };
 
@@ -945,16 +947,6 @@ function SessionWorkspaceInner() {
           >
             {theme === 'dark' ? <Sun className="w-5 h-5 text-amber-400" /> : <Moon className="w-5 h-5 text-slate-700" />}
           </button>
-
-          {!isSessionClosed && (
-            <button
-              onClick={openShareModal}
-              className="brand-tap w-10 h-10 rounded-full bg-brand-600 dark:bg-brand-300 text-white dark:text-brand-950 flex items-center justify-center hover:bg-brand-700 dark:hover:bg-brand-200 transition-colors shadow-brand font-bold"
-              title="Share & Invite"
-            >
-              <Share2 className="w-5 h-5" />
-            </button>
-          )}
         </div>
       </header>
 
@@ -969,8 +961,8 @@ function SessionWorkspaceInner() {
         inviteToken={session.groupId ? '' : getSessionInviteToken(session.id)}
       />
 
-      {/* Real-Time Members List - Vibrant Modern Design */}
-      <div className="photo-card p-4 bg-white dark:bg-[#141B28] border border-slate-200/80 dark:border-white/10 shadow-md space-y-3.5 rounded-2xl">
+      {/* Real-Time Members List - Streamlined Modern Design */}
+      <div className="photo-card p-4 bg-white dark:bg-[#141B28] border border-slate-200/80 dark:border-white/10 shadow-md space-y-3 rounded-2xl">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-lg bg-brand-500/15 text-brand-600 dark:text-brand-400 flex items-center justify-center border border-brand-500/20">
@@ -982,101 +974,85 @@ function SessionWorkspaceInner() {
             </span>
           </div>
 
-          {!isSessionClosed && (
-            <button
-              onClick={openShareModal}
-              className="py-1.5 px-3.5 rounded-full bg-brand-600 hover:bg-brand-700 text-white text-xs font-black flex items-center gap-1.5 transition-all shadow-md shadow-brand-600/20 active:scale-95"
-            >
-              <UserPlus className="w-3.5 h-3.5" />
-              <span>{t('inviteBtn', undefined, 'Invite')}</span>
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {/* Small Side Icon Button for Attach to Group */}
+            {session.groupId ? (
+              <span className="px-2.5 py-1.5 rounded-xl bg-brand-500/10 dark:bg-brand-500/20 text-brand-600 dark:text-brand-400 text-xs font-extrabold border border-brand-500/25 flex items-center gap-1.5" title={t('billAttachedToGroup', undefined, 'Bill Attached to Group')}>
+                <Link2 className="w-3.5 h-3.5" />
+                <span className="text-[11px] font-bold">{t('linkedBadge', undefined, 'Linked')}</span>
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowAttachGroupModal(true)}
+                className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold transition-all shadow-xs active:scale-95 flex items-center justify-center border border-slate-200 dark:border-white/10"
+                title={t('attachBillTitle', undefined, 'Attach Bill to Group')}
+                aria-label={t('attachBillTitle', undefined, 'Attach Bill to Group')}
+              >
+                <Link2 className="w-4 h-4 text-brand-500" />
+              </button>
+            )}
+
+            {/* Bigger & Indicative Invite Button */}
+            {!isSessionClosed && (
+              <button
+                type="button"
+                onClick={openShareModal}
+                className="py-2 px-4 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs sm:text-sm font-black flex items-center gap-2 transition-all shadow-md shadow-brand-600/25 active:scale-95"
+              >
+                <UserPlus className="w-4 h-4" />
+                <span>{t('inviteBtn', undefined, 'Invite')}</span>
+              </button>
+            )}
+          </div>
         </div>
 
-        {/* Member Avatars Horizontal Scroll */}
-        <div className="flex items-center gap-2.5 overflow-x-auto pb-1 pt-0.5 scrollbar-none">
+        {/* Member Avatars - Clean User Icons Only */}
+        <div className="flex items-center gap-2.5 overflow-x-auto pb-1 pt-1 scrollbar-none">
           {validMembers.map((member: any, mIdx: number) => {
             const isMe = member?.id === currentMemberId;
             const validName = member?.name && member?.name.trim() !== '?' ? member.name.trim() : 'Guest';
             const MEMBER_PALETTES = [
-              { bg: 'bg-brand-500/15 dark:bg-brand-500/25 text-brand-700 dark:text-brand-300 border-brand-500/30', icon: 'bg-brand-500 text-white' },
-              { bg: 'bg-orange-500/15 dark:bg-orange-500/25 text-orange-700 dark:text-orange-300 border-orange-500/30', icon: 'bg-orange-500 text-white' },
-              { bg: 'bg-mint-500/15 dark:bg-mint-500/25 text-mint-700 dark:text-mint-300 border-mint-500/30', icon: 'bg-mint-500 text-white' },
-              { bg: 'bg-pink-500/15 dark:bg-pink-500/25 text-pink-700 dark:text-pink-300 border-pink-500/30', icon: 'bg-pink-500 text-white' },
-              { bg: 'bg-sky-500/15 dark:bg-sky-500/25 text-sky-700 dark:text-sky-300 border-sky-500/30', icon: 'bg-sky-500 text-white' },
-              { bg: 'bg-purple-500/15 dark:bg-purple-500/25 text-purple-700 dark:text-purple-300 border-purple-500/30', icon: 'bg-purple-500 text-white' },
+              { bg: 'bg-brand-500 text-white shadow-brand-500/30', border: 'border-brand-300' },
+              { bg: 'bg-orange-500 text-white shadow-orange-500/30', border: 'border-orange-300' },
+              { bg: 'bg-emerald-500 text-white shadow-emerald-500/30', border: 'border-emerald-300' },
+              { bg: 'bg-pink-500 text-white shadow-pink-500/30', border: 'border-pink-300' },
+              { bg: 'bg-sky-500 text-white shadow-sky-500/30', border: 'border-sky-300' },
+              { bg: 'bg-purple-500 text-white shadow-purple-500/30', border: 'border-purple-300' },
             ];
             const palette = MEMBER_PALETTES[mIdx % MEMBER_PALETTES.length];
 
             return (
               <div
                 key={member?.id}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-full ${palette.bg} border shrink-0 text-xs font-bold shadow-2xs transition-all hover:scale-105`}
+                title={`${validName}${isMe ? ` ${t('youSuffix', undefined, '(You)')}` : ''}${member?.isHost ? ' [HOST]' : ''}`}
+                className="relative group shrink-0"
               >
-                <div className={`w-5 h-5 rounded-full flex items-center justify-center ${palette.icon} text-[10px] font-black shrink-0 shadow-xs`}>
+                <div
+                  className={`w-10 h-10 rounded-full flex items-center justify-center ${palette.bg} text-sm font-black shrink-0 shadow-sm border-2 ${isMe ? 'border-brand-400 ring-2 ring-brand-500/40' : 'border-white dark:border-slate-800'} transition-transform group-hover:scale-105 select-none`}
+                >
                   {validName.charAt(0).toUpperCase()}
                 </div>
 
-                <span>{validName} {isMe ? t('youSuffix', undefined, '(You)') : ''}</span>
-
                 {member?.isHost && (
-                  <span className="px-1.5 py-0.5 rounded-md bg-gradient-to-r from-amber-500 to-orange-500 text-[9px] font-black text-white shadow-2xs uppercase tracking-wider">
-                    {t('hostBadge', undefined, 'HOST')}
+                  <span
+                    className="absolute -top-1 -right-1 px-1 py-0.5 rounded-full bg-amber-500 text-[8px] font-black text-white shadow-xs uppercase leading-none"
+                    title={t('hostBadge', undefined, 'HOST')}
+                  >
+                    👑
                   </span>
                 )}
                 {member?.settled && (
-                  <span className="w-4 h-4 rounded-full bg-mint-500 text-white flex items-center justify-center text-[10px] font-black shadow-xs">✓</span>
+                  <span
+                    className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-emerald-500 text-white flex items-center justify-center text-[10px] font-black shadow-xs border border-white dark:border-slate-800"
+                    title="Settled"
+                  >
+                    ✓
+                  </span>
                 )}
               </div>
             );
           })}
-        </div>
-
-        {/* Dedicated Clean Attach to Group Bar */}
-        {session.groupId ? (
-          <div className="flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-brand-500/10 dark:bg-brand-500/15 border border-brand-500/25 text-brand-900 dark:text-brand-200 text-xs font-extrabold">
-            <span className="flex items-center gap-2">
-              <Link2 className="w-4 h-4 text-brand-600 dark:text-brand-400" />
-              <span>{t('billAttachedToGroup', undefined, 'Bill Attached to Group')}</span>
-            </span>
-            <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-brand-600 text-white shadow-xs">
-              {t('linkedBadge', undefined, 'LINKED ✓')}
-            </span>
-          </div>
-        ) : (
-          <button
-            onClick={() => setShowAttachGroupModal(true)}
-            className="w-full py-2.5 px-3 rounded-xl bg-slate-50 dark:bg-[#1A2232] hover:bg-brand-50/50 dark:hover:bg-brand-950/30 text-slate-700 dark:text-slate-200 hover:text-brand-600 dark:hover:text-brand-300 text-xs font-extrabold flex items-center justify-center gap-2 transition-all border border-dashed border-slate-300 dark:border-white/10 hover:border-brand-400 dark:hover:border-brand-500/40 active:scale-95 shadow-2xs group"
-          >
-            <Link2 className="w-4 h-4 text-brand-500 group-hover:scale-110 transition-transform" />
-            <span>{t('attachBillTitle', undefined, 'Attach Bill to Group')} 🔗</span>
-          </button>
-        )}
-
-        {/* Dedicated "Who paid?" Selector Bar */}
-        <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-[#1A2232] border border-slate-200/80 dark:border-white/5 text-xs gap-2">
-          <div className="flex items-center gap-2 shrink-0">
-            <div className="w-6 h-6 rounded-md bg-purple-500/15 text-purple-600 dark:text-purple-400 flex items-center justify-center border border-purple-500/20">
-              <CreditCard className="w-3.5 h-3.5" />
-            </div>
-            <span className="font-extrabold text-slate-900 dark:text-white text-xs">
-              {t('whoPaidShort', undefined, isRtl ? 'אל מי להעביר?' : 'Transfer to?')}
-            </span>
-          </div>
-
-          <select
-            value={activePayerId}
-            onChange={(e) => sendAction('SET_PAYER', { payerId: e.target.value })}
-            disabled={!isCurrentUserHost || isAccountingLocked}
-            className="py-1.5 px-3 rounded-lg bg-white dark:bg-brand-900 text-xs font-bold border border-slate-200 dark:border-white/10 text-slate-900 dark:text-white shadow-2xs focus:ring-2 focus:ring-brand-500/30 cursor-pointer max-w-[220px] truncate"
-          >
-            <option value="each">👥 {t('eachPaidShareOption', undefined, 'Each paid their share')}</option>
-            {activeMembers.map((m: any) => (
-              <option key={m.id} value={m.id}>
-                👤 {m.name} {m.id === currentMemberId ? t('youSuffix', undefined, '(You)') : ''} {m.isHost ? `[${t('hostBadge', undefined, 'HOST')}]` : ''}
-              </option>
-            ))}
-          </select>
         </div>
       </div>
 

@@ -68,9 +68,6 @@ export async function triggerBitPayment(params: BitPaymentParams): Promise<boole
   if (typeof window === 'undefined') return false;
 
   const isAndroidBrowser = /Android/i.test(navigator.userAgent || '');
-  if (!Capacitor.isNativePlatform()) {
-    alert(`Opening Bit! 📲\nRecipient: ${cleanPhone}\nAmount: ${formattedAmount} ₪\nFor: ${displayText}\n\n(Copied to clipboard 📋)`);
-  }
 
   return openExternalApp({
     appUrl: deepLink,

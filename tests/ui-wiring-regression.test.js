@@ -61,7 +61,7 @@ test('invite races, QR layering, and destructive swipes are guarded in the UI co
   assert.doesNotMatch(homeSource, /handleOpenActiveSessionQr[^]*?finally\s*\{\s*setShowQrModal\(true\)/);
   assert.doesNotMatch(sessionSource, /openShareModal[^]*?finally\s*\{\s*setShowQrModal\(true\)/);
   assert.match(sessionSource, /if \(!session\?\.id \|\| session\.status === 'settled'\) return/);
-  assert.ok((sessionSource.match(/!isSessionClosed && \(/g) || []).length >= 2);
+  assert.ok((sessionSource.match(/!isSessionClosed && \(/g) || []).length >= 1);
   assert.match(sessionSource, /if \(session\?\.status === 'settled'\) \{\s+localStorage\.removeItem\('billsplit_active_session'\);\s+setShowQrModal\(false\)/);
   assert.match(homeSource, /code\.length === 5 \|\| code\.length === 4 \|\| code\.length === 8/);
   assert.match(sessionSource, /persistSessionHistoryLocally\(memberCalculations\.myShare\)/);
