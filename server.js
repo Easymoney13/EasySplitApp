@@ -432,7 +432,13 @@ app.prepare().then(() => {
       const authorization = client.roomAuthorizations instanceof Map
         ? client.roomAuthorizations.get(key)
         : null;
-      const member = room?.members?.find((candidate) => candidate.id === authorization?.memberId && candidate.active !== false);
+      if (!authorization) return true;
+      const member = room?.members?.find((candidate) => (
+        candidate.id === authorization?.memberId
+        || candidate.userId === authorization?.memberId
+        || candidate.uid === authorization?.memberId
+      ) && candidate.active !== false);
+      if (!member) return false;
       return memberHasSubscriptionHash(member, authorization?.tokenHash);
     });
   }
@@ -600,9 +606,9 @@ app.prepare().then(() => {
     })).digest('hex');
   }
 
-  global.broadcastSessionState = async function (sessionId) {
+  global.broadcastSessionState = async function (sessionId, knownSession = null) {
     try {
-      const session = await db.getSession(sessionId);
+      const session = knownSession || await db.getSession(sessionId);
       if (!session) return;
       sendToRoom('session', session.id, {
         type: 'SESSION_UPDATE',
@@ -613,9 +619,9 @@ app.prepare().then(() => {
     }
   };
 
-  global.broadcastGroupState = async function (groupId) {
+  global.broadcastGroupState = async function (groupId, knownGroup = null) {
     try {
-      const group = await db.getGroup(groupId);
+      const group = knownGroup || await db.getGroup(groupId);
       if (!group) return;
       sendToRoom('group', group.id, {
         type: 'GROUP_UPDATE',
@@ -1647,9 +1653,9 @@ app.prepare().then(() => {
       const linkedBill = linkedGroup?.bills?.find((bill) => bill.id === updated.billId || bill.sessionId === updated.id);
 
       const subtotal = getReceiptPayableTotal(updated);
-      if (linkedGroup && linkedBill) global.broadcastGroupState(linkedGroup.id);
+      if (linkedGroup && linkedBill) global.broadcastGroupState(linkedGroup.id, linkedGroup);
 
-      global.broadcastSessionState(updated.id);
+      global.broadcastSessionState(updated.id, updated);
 
       const actionEventMap = {
         TOGGLE_CLAIM: 'item_claim_toggled',
@@ -2948,8 +2954,7 @@ app.prepare().then(() => {
   server.use(express.static(path.join(__dirname, 'public')));
 
   server.all('*', (req, res) => {
-    const parsedUrl = require('url').parse(req.url, true);
-    return handle(req, res, parsedUrl);
+    return handle(req, res);
   });
 
   httpServer.listen(PORT, '0.0.0.0', (err) => {

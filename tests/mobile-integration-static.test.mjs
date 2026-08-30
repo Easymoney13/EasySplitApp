@@ -166,7 +166,8 @@ test('guest onboarding persists before native deep links can pause the app', asy
   const runtimeSmoke = await read('.github/validation/native-android-runtime.mjs');
   const languageContext = await read('src/components/LanguageContext.tsx');
 
-  assert.match(languageContext, /localStorage\.setItem\('billsplit_local_profile', JSON\.stringify\(completedProfile\)\);\s+localStorage\.setItem\('billsplit_phone', phoneNumber\);\s+setProfile\(completedProfile\)/);
+  assert.match(languageContext, /else \{\s+persistGuestProfile\(localStorage, sessionStorage, completedProfile\);\s+\}\s+setProfile\(completedProfile\)/);
+  assert.match(languageContext, /const recoveredProfile = readGuestProfile\(localStorage, sessionStorage\)/);
   assert.match(runtimeSmoke, /expectPersistedGuestProfile\(page, 'guest profile after live deep link'\)/);
   assert.match(runtimeSmoke, /expectPersistedGuestProfile\(page, 'guest profile after cold deep link'\)/);
 });

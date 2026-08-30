@@ -168,19 +168,37 @@ async function completeGuestOnboardingIfNeeded(page) {
 }
 
 async function expectPersistedGuestProfile(page, label) {
-  await waitFor(label, async () => cdpEvaluate(
-    page.webSocketDebuggerUrl,
-    `(() => {
-      try {
-        const profile = JSON.parse(localStorage.getItem('billsplit_local_profile') || 'null');
-        return profile?.displayName === 'Android Smoke'
-          && profile?.phoneNumber === '0501234567'
-          && !document.querySelector('[role="dialog"][aria-modal="true"]');
-      } catch (_) {
-        return false;
-      }
-    })()`,
-  ));
+  try {
+    await waitFor(label, async () => cdpEvaluate(
+      page.webSocketDebuggerUrl,
+      `(() => {
+        try {
+          const profile = JSON.parse(localStorage.getItem('billsplit_local_profile') || 'null');
+          return profile?.displayName === 'Android Smoke'
+            && profile?.phoneNumber === '0501234567'
+            && !document.querySelector('[role="dialog"][aria-modal="true"]');
+        } catch (_) {
+          return false;
+        }
+      })()`,
+    ));
+  } catch (error) {
+    const snapshot = await cdpEvaluate(
+      page.webSocketDebuggerUrl,
+      `(() => {
+        const dialog = document.querySelector('[role="dialog"][aria-modal="true"]');
+        return {
+          localProfile: localStorage.getItem('billsplit_local_profile'),
+          localPhone: localStorage.getItem('billsplit_phone'),
+          accountScope: localStorage.getItem('billsplit_account_scope'),
+          sessionBackup: sessionStorage.getItem('billsplit_guest_profile_backup'),
+          dialogLabel: dialog?.getAttribute('aria-label') || null,
+          dialogInputs: [...(dialog?.querySelectorAll('input') || [])].map((input) => input.value),
+        };
+      })()`,
+    ).catch((snapshotError) => ({ snapshotError: snapshotError.message }));
+    throw new Error(`${error.message}; guest profile snapshot=${JSON.stringify(snapshot)}`);
+  }
 }
 
 function assertEmulatorSystemHealthy() {
