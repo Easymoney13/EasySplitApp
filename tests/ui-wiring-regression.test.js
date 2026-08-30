@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -10,7 +11,28 @@ const sessionSource = read('src/app/session/[id]/page.tsx');
 const rollingNumberSource = read('src/components/AnimatedRollingNumber.tsx');
 const qrModalSource = read('src/components/QRCodeModal.tsx');
 const swipeableSource = read('src/components/SwipeableCard.tsx');
+const cameraSource = read('src/components/CameraViewfinder.tsx');
+const ocrProgressSource = read('src/components/OCRProgressOverlay.tsx');
 const serverSource = read('server.js');
+
+test('every receipt scan keeps the original phone video and result-bound progress bar', () => {
+  assert.match(homeSource, /<OCRProgressOverlay isVisible=\{isUploading\} \/>/);
+  assert.match(groupSource, /<OCRProgressOverlay isVisible=\{isUploading\} \/>/);
+  assert.match(cameraSource, /return <OCRProgressOverlay isVisible=\{true\} \/>/);
+  assert.doesNotMatch(cameraSource, /EasySplitLoadingScreen/);
+  assert.match(ocrProgressSource, /className="fixed inset-0[^"\n]*overflow-hidden/);
+  assert.match(ocrProgressSource, /src="\/easysplit-loading\.mp4"/);
+  assert.match(ocrProgressSource, /autoPlay\s+loop\s+muted\s+playsInline\s+preload="auto"/s);
+  assert.match(ocrProgressSource, /Math\.min\(92,/);
+  assert.match(ocrProgressSource, /if \(shouldRender\) \{\s+setProgress\(100\)/);
+  assert.match(ocrProgressSource, /role="progressbar"/);
+
+  const video = fs.readFileSync(path.join(__dirname, '..', 'public/easysplit-loading.mp4'));
+  assert.equal(
+    crypto.createHash('sha256').update(video).digest('hex'),
+    '037c9b824bfab47ebc7ee865efd3b58e20383b60c923bc4db49b70656f219bff',
+  );
+});
 
 test('the shared rolling-number component is wired into live session and group values', () => {
   assert.match(sessionSource, /import \{ AnimatedRollingNumber \}/);

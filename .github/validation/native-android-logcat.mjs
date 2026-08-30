@@ -8,6 +8,22 @@ const KILLED_RENDERER_EXIT_PATTERN = new RegExp(`^${ZYGOTE_LOG_PREFIX}\\s*Proces
 const SYSTEM_RENDERER_KILL_PATTERN = new RegExp(`^${ACTIVITY_MANAGER_LOG_PREFIX}\\s*Killing (\\d+):com\\.google\\.android\\.webview:sandboxed_process.*:\\s*isolated not needed\\s*$`, 'i');
 const APP_DESTROYED_PATTERN = new RegExp(`^${CAPACITOR_LOG_PREFIX}\\s*App destroyed\\s*$`, 'i');
 
+export function readLogcatWithRetries(readLogcat, { attempts = 3 } = {}) {
+  if (!Number.isSafeInteger(attempts) || attempts < 1) {
+    throw new Error('Logcat retry attempts must be a positive integer');
+  }
+
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return String(readLogcat());
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
 export function rendererTerminationLines(logcat = '') {
   return String(logcat)
     .split('\n')
@@ -72,23 +88,28 @@ function rootBackTerminationLines(beforeLogcat, afterLogcat, appProcessIds) {
     const emitterPid = logEmitterProcessId(crashLine);
     if (!rendererPid || !emitterPid || !allowedAppProcessIds.has(emitterPid)) continue;
 
-    const appDestroyed = newLines
+    const appDestroyedIndex = newLines
       .slice(0, crashIndex)
-      .some((line) => (
+      .findLastIndex((line) => (
         APP_DESTROYED_PATTERN.test(line)
         && allowedAppProcessIds.has(logEmitterProcessId(line))
       ));
-    if (!appDestroyed) continue;
+    if (appDestroyedIndex < 0) continue;
 
-    const systemKill = newLines.some((line, index) => (
-      index > crashIndex
+    // Android may report ActivityManager's intentional isolated-process kill
+    // immediately before or after Chromium observes that same renderer exit.
+    // In both cases it must follow the app's root-Back destruction evidence.
+    const systemKillIndex = newLines.findIndex((line, index) => (
+      index > appDestroyedIndex
       && line.match(SYSTEM_RENDERER_KILL_PATTERN)?.[1] === rendererPid
     ));
-    if (!systemKill) continue;
+    if (systemKillIndex < 0) continue;
 
     const systemDisposition = newLines
       .some((line, index) => (
-        index > crashIndex
+        // ActivityManager, Chromium, and Zygote write from different threads,
+        // so their three matching lines are not guaranteed to be interleaved.
+        index > appDestroyedIndex
         && (
           line.match(CLEAN_RENDERER_EXIT_PATTERN)?.[1] === rendererPid
           || line.match(KILLED_RENDERER_EXIT_PATTERN)?.[1] === rendererPid
