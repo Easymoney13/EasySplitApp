@@ -10,7 +10,6 @@ import { NAV_EVENT, routeFromSearch } from './router-core.mjs';
 import { installMobileRuntime } from './runtime/mobileRuntime';
 
 window.__EASYSPLIT_MOBILE_SHELL__ = true;
-window.__EASYSPLIT_MOBILE_RUNTIME_READY__ = false;
 document.documentElement.classList.add('easysplit-mobile');
 document.body.className = 'app-viewport bg-brand-950 text-brand-950 min-h-0 overflow-hidden antialiased';
 
@@ -41,12 +40,10 @@ function MobileApp() {
         void remove();
       } else {
         cleanup = remove;
-        window.__EASYSPLIT_MOBILE_RUNTIME_READY__ = true;
       }
     });
     return () => {
       disposed = true;
-      window.__EASYSPLIT_MOBILE_RUNTIME_READY__ = false;
       void cleanup?.();
     };
   }, []);

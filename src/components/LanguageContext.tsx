@@ -16,11 +16,6 @@ import { isProtectedApi } from '../../lib/authFetch';
 import { cleanIsraeliPhone, isValidIsraeliPhone } from '../../lib/bitDeepLink';
 import { apiUrl, getApiOrigin } from '../../lib/platformTransport';
 import {
-  clearGuestProfileBackup,
-  persistGuestProfile,
-  readGuestProfile,
-} from '../../lib/guestProfile.mjs';
-import {
   isNativeGoogleAuthPlatform,
   isNativeGoogleSignInCancellation,
   signInNativeGoogle,
@@ -196,9 +191,18 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setThemeState(savedTheme);
     }
 
-    let savedLocalProfile: UserProfile | null = readGuestProfile(localStorage, sessionStorage);
+    let savedLocalProfile: UserProfile | null = null;
     try {
-      if (savedLocalProfile?.displayName) {
+      const rawProfile = localStorage.getItem('billsplit_local_profile');
+      const parsedProfile = rawProfile ? JSON.parse(rawProfile) : null;
+      const localPhone = localStorage.getItem('billsplit_phone') || undefined;
+      if (parsedProfile?.displayName) {
+        savedLocalProfile = {
+          displayName: String(parsedProfile.displayName),
+          avatarColor: String(parsedProfile.avatarColor || '#4DE1A1'),
+          avatarUrl: typeof parsedProfile.avatarUrl === 'string' ? parsedProfile.avatarUrl : undefined,
+          phoneNumber: typeof parsedProfile.phoneNumber === 'string' ? parsedProfile.phoneNumber : localPhone,
+        };
         setProfile(savedLocalProfile);
         setGuestName(savedLocalProfile.displayName);
         setGuestPhone(savedLocalProfile.phoneNumber || '');
@@ -290,10 +294,15 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               });
             }
           } else {
-            const guestProfile = readGuestProfile(localStorage, sessionStorage);
-            if (guestProfile?.displayName) {
-              persistGuestProfile(localStorage, sessionStorage, guestProfile);
-              setProfile(guestProfile);
+            const rawProfile = typeof window !== 'undefined' ? localStorage.getItem('billsplit_local_profile') : null;
+            const parsedProfile = rawProfile ? JSON.parse(rawProfile) : null;
+            if (parsedProfile?.displayName) {
+              setProfile({
+                displayName: String(parsedProfile.displayName),
+                avatarColor: String(parsedProfile.avatarColor || '#4DE1A1'),
+                avatarUrl: typeof parsedProfile.avatarUrl === 'string' ? parsedProfile.avatarUrl : undefined,
+                phoneNumber: typeof parsedProfile.phoneNumber === 'string' ? parsedProfile.phoneNumber : undefined,
+              });
             } else {
               setProfile({ displayName: '', avatarColor: '#4DE1A1' });
             }
@@ -316,23 +325,6 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     if (!isInitialized || !profile.displayName) return;
     localStorage.setItem('billsplit_local_profile', JSON.stringify(profile));
   }, [profile, isInitialized]);
-
-  useEffect(() => {
-    if (!isInitialized || authLoading || firebaseUser) return;
-    if (profile.displayName.trim()
-      && profile.phoneNumber
-      && isValidIsraeliPhone(profile.phoneNumber)) return;
-
-    const recoveredProfile = readGuestProfile(localStorage, sessionStorage);
-    if (!recoveredProfile?.displayName
-      || !recoveredProfile.phoneNumber
-      || !isValidIsraeliPhone(recoveredProfile.phoneNumber)) return;
-
-    persistGuestProfile(localStorage, sessionStorage, recoveredProfile);
-    setGuestName(recoveredProfile.displayName);
-    setGuestPhone(recoveredProfile.phoneNumber);
-    setProfile(recoveredProfile);
-  }, [profile.displayName, profile.phoneNumber, isInitialized, authLoading, firebaseUser]);
 
   useEffect(() => {
     if (!firebaseUser) return;
@@ -485,7 +477,6 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const logout = async () => {
     try {
       if (typeof window !== 'undefined') {
-        clearGuestProfileBackup(sessionStorage);
         clearAccountScopedStorage(localStorage);
         clearCreatorIntent(localStorage);
         clearCreatorIntent(sessionStorage);
@@ -506,7 +497,6 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const { signOut } = await import('firebase/auth');
       await signOut(auth);
       if (typeof window !== 'undefined') {
-        clearGuestProfileBackup(sessionStorage);
         clearAccountScopedStorage(localStorage);
         clearCreatorIntent(localStorage);
         clearCreatorIntent(sessionStorage);
@@ -519,7 +509,6 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setGuestName('');
       setGuestPhone('');
       if (typeof window !== 'undefined') {
-        clearGuestProfileBackup(sessionStorage);
         clearAccountScopedStorage(localStorage);
         clearCreatorIntent(localStorage);
         clearCreatorIntent(sessionStorage);
@@ -721,21 +710,14 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 const displayName = guestName.trim();
                 const phoneNumber = cleanIsraeliPhone(guestPhone);
                 if (!displayName || !isValidIsraeliPhone(phoneNumber)) return;
-                const completedProfile = {
-                  ...profile,
+                setProfile((current) => ({
+                  ...current,
                   displayName,
                   phoneNumber,
-                  avatarColor: profile.avatarColor || '#4DE1A1',
-                  avatarUrl: profile.avatarUrl || firebaseUser?.photoURL || undefined,
-                };
-                if (firebaseUser) {
-                  clearGuestProfileBackup(sessionStorage);
-                  localStorage.setItem('billsplit_local_profile', JSON.stringify(completedProfile));
-                  localStorage.setItem('billsplit_phone', phoneNumber);
-                } else {
-                  persistGuestProfile(localStorage, sessionStorage, completedProfile);
-                }
-                setProfile(completedProfile);
+                  avatarColor: current.avatarColor || '#4DE1A1',
+                  avatarUrl: current.avatarUrl || firebaseUser?.photoURL || undefined,
+                }));
+                localStorage.setItem('billsplit_phone', phoneNumber);
               }}
             >
               <div>

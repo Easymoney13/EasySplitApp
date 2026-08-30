@@ -126,17 +126,6 @@ test('Android back gives an open Start Split sheet first refusal before shell na
   assert.doesNotMatch(config, /disableBackButtonHandler:\s*true/);
 });
 
-test('Android runtime smoke completes first-run onboarding before testing Back', async () => {
-  const runtimeSmoke = await read('.github/validation/native-android-runtime.mjs');
-  const onboardingSetup = runtimeSmoke.indexOf('await completeGuestOnboardingIfNeeded(page)');
-  const sheetClick = runtimeSmoke.indexOf("document.querySelector('[data-testid=\"start-split-button\"]');");
-
-  assert.notEqual(onboardingSetup, -1);
-  assert.notEqual(sheetClick, -1);
-  assert.ok(onboardingSetup < sheetClick);
-  assert.match(runtimeSmoke, /waitFor\('guest onboarding dismissal'/);
-});
-
 test('Android runtime smoke pins CTS gesture navigation and verifies exactly-once committed Back', async () => {
   const runtimeSmoke = await read('.github/validation/native-android-runtime.mjs');
 
@@ -160,7 +149,7 @@ test('Android runtime smoke binds the exact EasySplit WebView and isolates failu
   assert.doesNotMatch(runtimeSmoke, /reverse\(\)\.find\(\(line\) => line\.includes\('webview_devtools_remote'\)\)/);
   assert.match(runtimeSmoke, /page\.url\.startsWith\('https:\/\/localhost\/'\)/);
   assert.doesNotMatch(runtimeSmoke, /pages\.find\(\(page\) => page\.type === 'page'\)\s*\|\|/);
-  assert.match(runtimeSmoke, /__EASYSPLIT_MOBILE_RUNTIME_READY__ === true/);
+  assert.match(runtimeSmoke, /window\.__EASYSPLIT_MOBILE_SHELL__ === true/);
   assert.match(runtimeSmoke, /'pm', 'clear', PACKAGE/);
   assert.match(runtimeSmoke, /await resetAppData\(label\)/);
   for (const scenario of [
@@ -189,12 +178,14 @@ test('Android runtime allows full logcat output for crash scanning', async () =>
   assert.match(runtimeSmoke, /maxBuffer: 16 \* 1024 \* 1024/);
 });
 
-test('guest onboarding persists before native deep links can pause the app', async () => {
-  const runtimeSmoke = await read('.github/validation/native-android-runtime.mjs');
-  const languageContext = await read('src/components/LanguageContext.tsx');
+test('Android emulator runner delegates validation and diagnostics to one shell wrapper', async () => {
+  const workflow = await read('.github/workflows/capacitor-native-builds.yml');
 
-  assert.match(languageContext, /else \{\s+persistGuestProfile\(localStorage, sessionStorage, completedProfile\);\s+\}\s+setProfile\(completedProfile\)/);
-  assert.match(languageContext, /const recoveredProfile = readGuestProfile\(localStorage, sessionStorage\)/);
-  assert.match(runtimeSmoke, /expectPersistedGuestProfile\(page, 'guest profile after live deep link'\)/);
-  assert.match(runtimeSmoke, /expectPersistedGuestProfile\(page, 'guest profile after cold deep link'\)/);
+  assert.match(
+    workflow,
+    /script: bash \.github\/validation\/run-native-android-runtime\.sh "\$RUNNER_TEMP\/easysplit-android-smoke" android-runtime\/app-debug\.apk/,
+  );
+  assert.doesNotMatch(workflow, /set \+e|RUNTIME_STATUS=\$\?/);
+  assert.match(workflow, /test -s "\$SCREENSHOT"/);
+  assert.match(workflow, /test -s "\$LOGCAT"/);
 });

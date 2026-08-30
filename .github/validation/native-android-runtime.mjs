@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import WebSocket from 'ws';
+import { synchronizeGuestOnboarding } from './native-android-onboarding.mjs';
 
 const ADB = process.env.ADB || 'adb';
 const PACKAGE = 'com.easysplit.app';
@@ -113,92 +114,80 @@ async function waitForEasySplitFocused(label = 'EasySplit foreground activity') 
   return waitFor(label, async () => isEasySplitFocused(), RUNTIME_TIMEOUT_MS, 750);
 }
 
-async function completeGuestOnboardingIfNeeded(page) {
-  const onboardingVisible = await cdpEvaluate(
-    page.webSocketDebuggerUrl,
-    `Boolean(document.querySelector('[role="dialog"][aria-modal="true"]'))`,
-  );
-  if (!onboardingVisible) return;
-
-  const fieldsFilled = await cdpEvaluate(
-    page.webSocketDebuggerUrl,
-    `(() => {
-      const dialog = document.querySelector('[role="dialog"][aria-modal="true"]');
-      const fields = dialog?.querySelectorAll('input');
-      if (!fields || fields.length < 2) return false;
-      const setValue = (field, value) => {
-        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-        if (!setter) return false;
-        setter.call(field, value);
-        field.dispatchEvent(new Event('input', { bubbles: true }));
-        field.dispatchEvent(new Event('change', { bubbles: true }));
-        return true;
-      };
-      return setValue(fields[0], 'Android Smoke') && setValue(fields[1], '0501234567');
-    })()`,
-  );
-  if (!fieldsFilled) throw new Error('Guest onboarding fields could not be filled');
-
-  await waitFor('enabled guest onboarding submit', async () => cdpEvaluate(
-    page.webSocketDebuggerUrl,
-    `(() => {
-      const dialog = document.querySelector('[role="dialog"][aria-modal="true"]');
-      const submit = dialog?.querySelector('button[type="submit"]');
-      return Boolean(submit && !submit.disabled);
-    })()`,
-  ));
-
-  const submitted = await cdpEvaluate(
-    page.webSocketDebuggerUrl,
-    `(() => {
-      const dialog = document.querySelector('[role="dialog"][aria-modal="true"]');
-      const submit = dialog?.querySelector('button[type="submit"]');
-      if (!submit || submit.disabled) return false;
-      submit.click();
-      return true;
-    })()`,
-  );
-  if (!submitted) throw new Error('Guest onboarding could not be submitted');
-
-  await waitFor('guest onboarding dismissal', async () => cdpEvaluate(
-    page.webSocketDebuggerUrl,
-    `!document.querySelector('[role="dialog"][aria-modal="true"]')`,
-  ));
-
-  await expectPersistedGuestProfile(page, 'guest onboarding persistence');
-}
-
-async function expectPersistedGuestProfile(page, label) {
-  try {
-    await waitFor(label, async () => cdpEvaluate(
-      page.webSocketDebuggerUrl,
-      `(() => {
-        try {
-          const profile = JSON.parse(localStorage.getItem('billsplit_local_profile') || 'null');
-          return profile?.displayName === 'Android Smoke'
-            && profile?.phoneNumber === '0501234567'
-            && localStorage.getItem('billsplit_account_scope') === 'guest'
-            && !document.querySelector('[role="dialog"][aria-modal="true"]');
-        } catch (_) {
-          return false;
-        }
-      })()`,
-    ));
-  } catch (error) {
-    const snapshot = await cdpEvaluate(
+function guestOnboardingController(page) {
+  return {
+    readState: () => cdpEvaluate(
       page.webSocketDebuggerUrl,
       `(() => {
         const dialog = document.querySelector('[role="dialog"][aria-modal="true"]');
+        const inputs = [...(dialog?.querySelectorAll('input') || [])];
+        const submit = dialog?.querySelector('button[type="submit"]');
+        let profile = null;
+        try {
+          profile = JSON.parse(localStorage.getItem('billsplit_local_profile') || 'null');
+        } catch (_) {}
         return {
+          dialogVisible: Boolean(dialog),
+          dialogLabel: dialog?.getAttribute('aria-label') || null,
+          inputValues: inputs.map((input) => input.value),
+          submitEnabled: Boolean(submit && !submit.disabled),
           localProfile: localStorage.getItem('billsplit_local_profile'),
           localPhone: localStorage.getItem('billsplit_phone'),
           accountScope: localStorage.getItem('billsplit_account_scope'),
-          sessionBackup: sessionStorage.getItem('billsplit_guest_profile_backup'),
-          dialogLabel: dialog?.getAttribute('aria-label') || null,
-          dialogInputs: [...(dialog?.querySelectorAll('input') || [])].map((input) => input.value),
+          profileReady: profile?.displayName === 'Android Smoke'
+            && profile?.phoneNumber === '0501234567'
+            && localStorage.getItem('billsplit_account_scope') === 'guest',
         };
       })()`,
-    ).catch((snapshotError) => ({ snapshotError: snapshotError.message }));
+    ),
+    fillFields: (displayName, phoneNumber) => cdpEvaluate(
+      page.webSocketDebuggerUrl,
+      `(() => {
+        const dialog = document.querySelector('[role="dialog"][aria-modal="true"]');
+        const fields = dialog?.querySelectorAll('input');
+        if (!fields || fields.length < 2) return false;
+        const setValue = (field, value) => {
+          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+          if (!setter) return false;
+          setter.call(field, value);
+          field.dispatchEvent(new Event('input', { bubbles: true }));
+          field.dispatchEvent(new Event('change', { bubbles: true }));
+          return true;
+        };
+        return setValue(fields[0], ${JSON.stringify(displayName)})
+          && setValue(fields[1], ${JSON.stringify(phoneNumber)});
+      })()`,
+    ),
+    submit: () => cdpEvaluate(
+      page.webSocketDebuggerUrl,
+      `(() => {
+        const dialog = document.querySelector('[role="dialog"][aria-modal="true"]');
+        const submit = dialog?.querySelector('button[type="submit"]');
+        if (!submit || submit.disabled) return false;
+        submit.click();
+        return true;
+      })()`,
+    ),
+  };
+}
+
+async function completeGuestOnboarding(page) {
+  return synchronizeGuestOnboarding(guestOnboardingController(page), {
+    timeoutMs: RUNTIME_TIMEOUT_MS,
+    intervalMs: 250,
+  });
+}
+
+async function expectPersistedGuestProfile(page, label) {
+  const controller = guestOnboardingController(page);
+  try {
+    await waitFor(label, async () => {
+      const state = await controller.readState();
+      return state.profileReady && !state.dialogVisible;
+    });
+  } catch (error) {
+    const snapshot = await controller.readState()
+      .catch((snapshotError) => ({ snapshotError: snapshotError.message }));
     throw new Error(`${error.message}; guest profile snapshot=${JSON.stringify(snapshot)}`);
   }
 }
@@ -302,11 +291,18 @@ function androidBackGesture() {
   );
 }
 
-async function waitForMobileRuntimeReady(page, label = 'EasySplit mobile runtime') {
-  return waitFor(label, async () => cdpEvaluate(
-    page.webSocketDebuggerUrl,
-    'window.__EASYSPLIT_MOBILE_RUNTIME_READY__ === true',
-  ), RUNTIME_TIMEOUT_MS, 250);
+async function waitForMobileShellStable(page, label = 'EasySplit mobile shell') {
+  let consecutiveReadyChecks = 0;
+  return waitFor(label, async () => {
+    const ready = await cdpEvaluate(
+      page.webSocketDebuggerUrl,
+      `window.__EASYSPLIT_MOBILE_SHELL__ === true
+        && document.readyState === 'complete'
+        && typeof window.history.state?.esDepth === 'number'`,
+    );
+    consecutiveReadyChecks = ready ? consecutiveReadyChecks + 1 : 0;
+    return consecutiveReadyChecks >= 3;
+  }, RUNTIME_TIMEOUT_MS, 250);
 }
 
 async function performAndroidBack(label, completionCheck) {
@@ -401,12 +397,12 @@ async function launchHomeWithGuest(label) {
 
   const page = await connectWebView();
   await waitForEasySplitFocused(`${label} foreground`);
-  await waitForMobileRuntimeReady(page, `${label} mobile runtime Back listener`);
+  await waitForMobileShellStable(page, `${label} stable mobile shell`);
   await waitFor(`${label} hydrated home`, async () => cdpEvaluate(
     page.webSocketDebuggerUrl,
     `Boolean(document.querySelector('[data-testid="start-split-button"]'))`,
   ), RUNTIME_TIMEOUT_MS);
-  await completeGuestOnboardingIfNeeded(page);
+  await completeGuestOnboarding(page);
   await expectRoute(page, '/');
   await expectPersistedGuestProfile(page, `${label} guest profile`);
   assertEmulatorSystemHealthy();
@@ -418,7 +414,7 @@ async function openLiveSession(pageLabel) {
   if (!launchAccepted(liveDeepLink)) throw new Error(`${pageLabel} dispatch failed:\n${liveDeepLink}`);
   const page = await connectWebView();
   await waitForEasySplitFocused(`${pageLabel} foreground`);
-  await waitForMobileRuntimeReady(page, `${pageLabel} mobile runtime Back listener`);
+  await waitForMobileShellStable(page, `${pageLabel} stable mobile shell`);
   await expectRoute(page, '/session/smoke-session', {
     paramName: 'groupId',
     paramValue: 'smoke-group',
@@ -433,7 +429,7 @@ async function openColdGroup(pageLabel) {
   if (!launchAccepted(coldDeepLink)) throw new Error(`${pageLabel} dispatch failed:\n${coldDeepLink}`);
   const page = await connectWebView();
   await waitForEasySplitFocused(`${pageLabel} foreground`);
-  await waitForMobileRuntimeReady(page, `${pageLabel} mobile runtime Back listener`);
+  await waitForMobileShellStable(page, `${pageLabel} stable mobile shell`);
   await expectRoute(page, '/group/smoke-group');
   return page;
 }
@@ -518,7 +514,7 @@ async function testRootBackAndResume() {
   if (!launchAccepted(warmLaunch)) throw new Error(`Warm resume dispatch failed:\n${warmLaunch}`);
   await waitForEasySplitFocused('EasySplit foreground after warm resume');
   page = await connectWebView();
-  await waitForMobileRuntimeReady(page, 'warm resume mobile runtime Back listener');
+  await waitForMobileShellStable(page, 'warm resume stable mobile shell');
   await waitFor('hydrated EasySplit home after warm resume', async () => cdpEvaluate(
     page.webSocketDebuggerUrl,
     `Boolean(document.querySelector('[data-testid="start-split-button"]'))`,
