@@ -42,8 +42,9 @@ test('Gate 4 runner stays test-only and uses real session UI, transport, and cre
   assert.match(viteConfig, /EASYSPLIT_GATE4_E2E === 'true'/);
   assert.match(viteConfig, /injectTo: 'head-pre'/);
   assert.match(viteConfig, /VITE_GATE4_RUN_ID is required/);
-  for (const selector of ['session-workspace', 'split-everyone', 'payer-select', 'settle-and-pay', 'mark-payment-complete', 'settlement-complete']) {
-    assert.equal(session.includes(`data-testid="${selector}"`), true, `missing ${selector}`);
+  assert.doesNotMatch(session, /data-testid="(?:session-workspace|split-everyone|payer-select|settle-and-pay|mark-payment-complete|settlement-complete)"/);
+  for (const label of ['Room Members', 'Receipt Items', 'Split All', 'Settle & Pay', 'Each paid their share', 'Finish and Pay', 'Bill Split Settled!']) {
+    assert.equal(runner.includes(label), true, `Gate 4 runner is missing UI anchor: ${label}`);
   }
   assert.match(runner, /request\('\/api\/receipt\/scan'/);
   assert.match(runner, /saveRoomCredentials\('session'/);

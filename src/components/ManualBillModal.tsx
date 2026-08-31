@@ -195,43 +195,43 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
 
   return (
     <div 
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-950/75 dark:bg-black/80 backdrop-blur-md animate-fadeIn"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 dark:bg-black/80 backdrop-blur-sm animate-fadeIn"
       dir={isRtl ? 'rtl' : 'ltr'}
     >
       <div 
         role="dialog" 
         aria-modal="true"
-        className="w-full max-w-md rounded-[32px] bg-[#F4F6FA] dark:bg-[#0B101D] text-slate-900 dark:text-slate-100 shadow-2xl max-h-[92vh] flex flex-col overflow-hidden border border-slate-200/80 dark:border-slate-800 animate-slideUp"
+        className="w-full max-w-sm sm:max-w-md rounded-[28px] bg-white dark:bg-[#0E1524] text-slate-900 dark:text-slate-100 shadow-2xl max-h-[88vh] flex flex-col overflow-hidden border border-slate-200/80 dark:border-slate-800 animate-slideUp"
       >
         {/* Header Bar */}
-        <div className="flex items-center justify-between px-5 pt-4 pb-3 bg-white dark:bg-[#101728] border-b border-slate-100 dark:border-slate-800/80">
+        <div className="flex items-center justify-between px-4 pt-3.5 pb-2.5 border-b border-slate-100 dark:border-slate-800/80 shrink-0">
           <button
             type="button"
             disabled={submittingNow}
             onClick={onClose}
             aria-label="Back"
-            className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center justify-center transition-colors active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100"
+            className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center justify-center transition-colors active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            <ChevronLeft className={`w-5 h-5 ${isRtl ? 'rotate-180' : ''}`} />
+            <ChevronLeft className={`w-4 h-4 ${isRtl ? 'rotate-180' : ''}`} />
           </button>
 
-          <h3 className="font-extrabold text-sm text-slate-900 dark:text-white tracking-tight">
+          <h3 className="font-extrabold text-sm sm:text-base text-slate-900 dark:text-white tracking-tight">
             {t('recognizedItemsTitle', undefined, isRtl ? 'פריטי החשבונית' : 'Recognized Items')}
           </h3>
 
-          <div className="w-9 h-9 flex items-center justify-center text-slate-400">
+          <div className="w-8 h-8 flex items-center justify-center text-slate-400">
             <Info className="w-4 h-4" />
           </div>
         </div>
 
-        {/* Scrollable Receipt Body */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin">
+        {/* Form Container with Scrollable Body and Pinned Footer */}
+        <form onSubmit={handleSubmit} className="flex-1 flex flex-col min-h-0 overflow-hidden">
           
-          {/* TOP CARD: The Authentic Receipt Paper Card */}
-          <div className="rounded-[24px] bg-white dark:bg-[#121B2F] border border-slate-200/90 dark:border-slate-800 shadow-sm p-5 space-y-4 relative overflow-hidden">
+          {/* Scrollable Receipt Area */}
+          <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3 no-scrollbar">
             
-            {/* Store Name & Date */}
-            <div className="text-center space-y-1 pb-3 border-b border-dashed border-slate-200 dark:border-slate-700/80">
+            {/* Store Name & Inline Settings Header */}
+            <div className="text-center space-y-2 pb-3 border-b border-dashed border-slate-200/80 dark:border-slate-800">
               <input
                 type="text"
                 value={storeName}
@@ -240,16 +240,34 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
                   if (!billNickName || billNickName === storeName) setBillNickName(e.target.value);
                 }}
                 placeholder={t('storeNamePlaceholder', undefined, isRtl ? 'שם העסק / מסעדה' : 'Store / Restaurant Name')}
-                className="w-full text-center font-black text-base text-slate-900 dark:text-white bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-brand-500/40 rounded-lg py-0.5"
+                className="w-full text-center font-black text-lg sm:text-xl text-slate-900 dark:text-white bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-brand-500/30 rounded-lg py-0.5"
                 required
               />
-              <p className="text-[11px] font-mono font-medium text-slate-400 dark:text-slate-400">
-                {displayDate}
-              </p>
+              
+              {/* Date & Category Inline Row */}
+              <div className="flex items-center justify-center gap-2 flex-wrap">
+                <span className="text-[11px] font-mono font-medium text-slate-400 dark:text-slate-500 px-2 py-0.5">
+                  {displayDate}
+                </span>
+
+                <span className="text-slate-300 dark:text-slate-700">•</span>
+
+                <select
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className="py-0.5 px-2.5 rounded-full text-xs font-bold bg-brand-50 dark:bg-brand-950/50 border border-brand-200/60 dark:border-brand-800/60 text-brand-700 dark:text-brand-300 focus:outline-none focus:border-brand-500 cursor-pointer transition-colors"
+                >
+                  {categories.map((cat) => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
-            {/* Itemized Receipt List */}
-            <div className="space-y-2 pt-1">
+            {/* Itemized Receipt List with Clean, Lightweight Rows */}
+            <div className="space-y-1 max-h-[36vh] overflow-y-auto no-scrollbar py-0.5">
               {items.map((item) => {
                 const isEditing = editingItemId === item.id;
 
@@ -265,7 +283,7 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
                           value={item.name}
                           onChange={(e) => handleItemChange(item.id, 'name', e.target.value)}
                           placeholder={t('itemNameLabel', undefined, isRtl ? 'שם הפריט' : 'Item Name')}
-                          className="flex-1 py-1.5 px-2.5 rounded-lg text-xs font-bold bg-white dark:bg-[#0E1524] border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-brand-500"
+                          className="flex-1 py-1.5 px-2.5 rounded-lg text-sm font-bold bg-white dark:bg-[#0E1524] border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-brand-500"
                           autoFocus
                           required
                         />
@@ -276,17 +294,17 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
                             value={item.price}
                             onChange={(e) => handleItemChange(item.id, 'price', e.target.value === '' ? '' : parseFloat(e.target.value))}
                             placeholder={t('priceLabel', undefined, isRtl ? 'מחיר' : 'Price')}
-                            className="w-full py-1.5 px-2 rounded-lg text-xs font-mono font-black bg-white dark:bg-[#0E1524] border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-brand-500"
+                            className="w-full py-1.5 px-2 rounded-lg text-sm font-mono font-black bg-white dark:bg-[#0E1524] border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-brand-500"
                             required
                           />
                         </div>
                         <button
                           type="button"
                           onClick={() => setEditingItemId(null)}
-                          className="p-1.5 rounded-lg bg-mint-500 text-white shadow-xs hover:bg-mint-600 active:scale-95"
+                          className="p-1.5 rounded-lg bg-mint-500 text-white shadow-xs hover:bg-mint-600 active:scale-95 cursor-pointer"
                           title="Done"
                         >
-                          <Check className="w-3.5 h-3.5" />
+                          <Check className="w-4 h-4 stroke-[3]" />
                         </button>
                       </div>
                     </div>
@@ -297,19 +315,19 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
                   <div
                     key={item.id}
                     onClick={() => setEditingItemId(item.id)}
-                    className="flex items-center justify-between text-xs py-1.5 px-2 rounded-xl hover:bg-slate-50 dark:hover:bg-[#18233A]/60 cursor-pointer transition-colors group"
+                    className="flex items-center justify-between py-2 px-2.5 rounded-xl hover:bg-slate-50 dark:hover:bg-[#18233A]/60 cursor-pointer transition-colors group border border-transparent hover:border-slate-100 dark:hover:border-slate-800"
                   >
                     <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                      <span className="text-[11px] font-bold text-slate-400 font-mono shrink-0">
+                      <span className="text-xs font-bold text-slate-400 font-mono shrink-0">
                         {item.quantity || 1}x
                       </span>
-                      <span className="font-bold text-slate-800 dark:text-slate-100 truncate">
-                        {item.name || <span className="text-slate-400 italic">{t('tapToNameItem', undefined, isRtl ? 'לחץ להזנת שם' : 'Tap to enter name')}</span>}
+                      <span className="font-semibold text-sm text-slate-800 dark:text-slate-100 truncate">
+                        {item.name || <span className="text-slate-400 italic font-normal text-xs">{t('tapToNameItem', undefined, isRtl ? 'לחץ להזנת שם' : 'Tap to enter name')}</span>}
                       </span>
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0">
-                      <span className="font-mono font-black text-slate-900 dark:text-white">
+                      <span className="font-mono font-bold text-sm text-slate-900 dark:text-white">
                         {formatPrice(Number(item.price) || 0, selectedCurrency)}
                       </span>
                       <button
@@ -317,7 +335,7 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
                         onClick={(e) => handleRemoveItem(item.id, e)}
                         className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-rose-500 transition-opacity"
                       >
-                        <Trash2 className="w-3 h-3" />
+                        <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </div>
@@ -329,20 +347,22 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
             <button
               type="button"
               onClick={handleAddItem}
-              className="w-full py-2 rounded-xl border border-dashed border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-brand-500 hover:text-brand-600 dark:hover:text-brand-400 text-xs font-bold flex items-center justify-center gap-1.5 transition-all"
+              className="w-full py-2 rounded-xl text-xs font-bold text-brand-600 dark:text-brand-400 hover:bg-brand-50/70 dark:hover:bg-brand-950/40 border border-dashed border-brand-200 dark:border-brand-800/60 flex items-center justify-center gap-1.5 transition-all cursor-pointer my-1"
             >
-              <Plus className="w-3.5 h-3.5" />
+              <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
               <span>{t('addItemBtn', undefined, isRtl ? 'הוסף פריט +' : '+ Add Another Item')}</span>
             </button>
 
             {/* Totals Breakdown */}
-            <div className="pt-3 border-t border-dashed border-slate-200 dark:border-slate-700/80 space-y-1.5 text-xs">
-              <div className="flex justify-between text-slate-500 dark:text-slate-400 font-medium">
-                <span>{t('subtotalLabel', undefined, isRtl ? 'סכום ביניים' : 'Subtotal')}</span>
-                <span className="font-mono font-bold text-slate-700 dark:text-slate-300">
-                  {formatPrice(calculateSubtotal(), selectedCurrency)}
-                </span>
-              </div>
+            <div className="pt-2.5 border-t border-dashed border-slate-200/80 dark:border-slate-800 space-y-1 text-xs">
+              {(serviceFee > 0 || taxFee > 0) && (
+                <div className="flex justify-between text-slate-500 dark:text-slate-400 font-medium">
+                  <span>{t('subtotalLabel', undefined, isRtl ? 'סכום ביניים' : 'Subtotal')}</span>
+                  <span className="font-mono font-bold text-slate-700 dark:text-slate-300">
+                    {formatPrice(calculateSubtotal(), selectedCurrency)}
+                  </span>
+                </div>
+              )}
 
               {serviceFee > 0 && (
                 <div className="flex justify-between text-slate-500 dark:text-slate-400 font-medium">
@@ -362,57 +382,22 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
                 </div>
               )}
 
-              <div className="flex justify-between text-sm font-black text-slate-900 dark:text-white pt-1.5 border-t border-slate-100 dark:border-slate-800">
+              <div className="flex justify-between items-center text-sm sm:text-base font-black text-slate-900 dark:text-white pt-1.5 border-t border-slate-100 dark:border-slate-800">
                 <span>{t('totalBillLabel', undefined, isRtl ? 'סה״כ לתשלום' : 'Total Bill')}</span>
-                <span className="font-mono font-black text-base text-slate-900 dark:text-white">
+                <span className="font-mono font-black text-base sm:text-lg text-slate-900 dark:text-white">
                   {formatPrice(calculateGrandTotal(), selectedCurrency)}
                 </span>
               </div>
             </div>
           </div>
 
-          {/* BOTTOM CARD: Split Name & Category */}
-          <div className="rounded-[24px] bg-white dark:bg-[#121B2F] border border-slate-200/90 dark:border-slate-800 shadow-sm p-5 space-y-3.5">
-            {/* Bill Nickname */}
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-extrabold text-slate-700 dark:text-slate-300">
-                {t('billNickNameLabel', undefined, isRtl ? 'שם החשבון' : "Bill's Name")}
-              </label>
-              <input
-                type="text"
-                value={billNickName}
-                onChange={(e) => setBillNickName(e.target.value)}
-                placeholder={t('billNamePlaceholder', undefined, isRtl ? 'למשל: ארוחת צהריים או שולחן שישי' : 'e.g. Chill Brekkie or Friday Dinner')}
-                className="w-full py-2.5 px-3.5 rounded-xl text-xs font-bold bg-slate-50 dark:bg-[#18233A] border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-brand-500 transition-all"
-              />
-            </div>
-
-            {/* Category Dropdown */}
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-extrabold text-slate-700 dark:text-slate-300">
-                {t('categoryLabel', undefined, isRtl ? 'קטגוריה' : 'Category')}
-              </label>
-              <select
-                value={selectedCategory}
-                onChange={(e) => setSelectedCategory(e.target.value)}
-                className="w-full py-2.5 px-3 rounded-xl text-xs font-bold bg-slate-50 dark:bg-[#18233A] border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-brand-500"
-              >
-                {categories.map((cat) => (
-                  <option key={cat.id} value={cat.id}>
-                    {cat.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Action Buttons */}
-          <div className="pt-2 flex items-center gap-3">
+          {/* Fixed Action Buttons Footer */}
+          <div className="p-3.5 bg-white dark:bg-[#0E1524] border-t border-slate-100 dark:border-slate-800/90 flex items-center gap-2.5 shrink-0">
             <button
               type="button"
               onClick={onClose}
               disabled={submittingNow}
-              className="flex-1 py-3.5 px-4 rounded-full border border-rose-200 dark:border-rose-900/50 bg-rose-50/50 dark:bg-rose-950/20 text-rose-600 dark:text-rose-400 hover:bg-rose-100 font-extrabold text-xs transition-colors"
+              className="flex-1 py-3 px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 font-bold text-xs sm:text-sm transition-colors cursor-pointer"
             >
               {t('cancelBtn', undefined, isRtl ? 'ביטול' : 'Cancel')}
             </button>
@@ -420,7 +405,7 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
             <button
               type="submit"
               disabled={submittingNow}
-              className="brand-tap flex-[2] py-3.5 px-6 rounded-full bg-brand-600 hover:bg-brand-700 text-white font-black text-xs shadow-lg shadow-brand-500/25 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              className="brand-tap flex-[2] py-3 px-5 rounded-xl bg-brand-600 hover:bg-brand-700 active:scale-95 text-white font-black text-xs sm:text-sm shadow-md shadow-brand-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
             >
               {submittingNow ? (
                 <>

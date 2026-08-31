@@ -1200,12 +1200,12 @@ export default function HomePage() {
                 <button
                   type="button"
                   onClick={() => setShowCreateGroupModal(true)}
-                  className="brand-tap w-full p-5 sm:p-6 rounded-3xl brand-card border-dashed text-center space-y-3 cursor-pointer hover:bg-brand-50/70 dark:hover:bg-brand-900 transition-all group shadow-xs"
+                  className="brand-tap w-full p-6 sm:p-7 rounded-[28px] brand-card text-center space-y-2.5 cursor-pointer hover:bg-brand-50/50 dark:hover:bg-brand-900/40 transition-all group shadow-xs border border-brand-100/60 dark:border-brand-900/60"
                 >
                   <div className="flex items-center justify-center py-1 group-hover:scale-105 transition-transform duration-300">
-                    <SleepingPandaIllustration className="w-44 h-28" />
+                    <SleepingPandaIllustration className="w-28 h-20 sm:w-32 sm:h-22" />
                   </div>
-                  <p className="text-sm font-bold text-slate-800 dark:text-slate-200">
+                  <p className="text-base font-extrabold text-slate-900 dark:text-white">
                     {t('noActiveGroupsYet', undefined, 'No active groups yet')}
                   </p>
                   <p className="text-xs text-slate-400 dark:text-slate-400 max-w-xs mx-auto">
@@ -2232,7 +2232,10 @@ export default function HomePage() {
                 <button
                   type="button"
                   onClick={async () => {
-                    if (confirm(`Are you sure you want to leave group "${selectedGroupForModal.name}"?`)) {
+                    const confirmLeaveMsg = isRtl
+                      ? `האם אתה בטוח שברצונך לעזוב את הקבוצה "${selectedGroupForModal.name}"?`
+                      : `Are you sure you want to leave group "${selectedGroupForModal.name}"?`;
+                    if (confirm(confirmLeaveMsg)) {
                       try {
                         const groupId = selectedGroupForModal.id;
                         const res = await fetch(apiUrl(`/api/groups/${groupId}/leave`), {
@@ -2283,7 +2286,10 @@ export default function HomePage() {
                 <button
                   type="button"
                   onClick={async () => {
-                    if (confirm(`Are you sure you want to delete group "${selectedGroupForModal.name}"? This cannot be undone.`)) {
+                    const confirmDelMsg = isRtl
+                      ? `האם אתה בטוח שברצונך למחוק את הקבוצה "${selectedGroupForModal.name}"? לא ניתן לשחזר פעולה זו.`
+                      : `Are you sure you want to delete group "${selectedGroupForModal.name}"? This cannot be undone.`;
+                    if (confirm(confirmDelMsg)) {
                       try {
                         const groupId = selectedGroupForModal.id;
                         const res = await fetch(apiUrl(`/api/groups/${groupId}`), {
@@ -2292,7 +2298,10 @@ export default function HomePage() {
                         });
                         const data = await res.json().catch(() => ({}));
                         if (res.status === 403) {
-                          if (confirm(`Only the host can delete this group for everyone. Do you want to remove it from your device?`)) {
+                          const confirmFallbackMsg = isRtl
+                            ? `רק מנהל הקבוצה יכול למחוק אותה עבור כולם. האם ברצונך להסיר אותה מהמכשיר שלך?`
+                            : `Only the host can delete this group for everyone. Do you want to remove it from your device?`;
+                          if (confirm(confirmFallbackMsg)) {
                             await fetch(apiUrl(`/api/groups/${groupId}/leave`), {
                               method: 'POST',
                               headers: {

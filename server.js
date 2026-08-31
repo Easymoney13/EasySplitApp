@@ -215,7 +215,7 @@ function requireValidCreatorProfile(req, res, nextMiddleware) {
 }
 
 const dev = process.env.NODE_ENV !== 'production';
-const app = next({ dev });
+const app = next({ dev, dir: __dirname });
 const handle = app.getRequestHandler();
 const PORT = process.env.PORT || 3000;
 const allowedMobileOrigins = resolveAllowedMobileOrigins(process.env.EASYSPLIT_ALLOWED_MOBILE_ORIGINS || '');
@@ -2951,6 +2951,7 @@ app.prepare().then(() => {
     res.json({ ip: getLocalNetworkIp(), port: PORT });
   });
 
+  server.use('/_next/static', express.static(path.join(__dirname, '.next/static')));
   server.use(express.static(path.join(__dirname, 'public')));
 
   server.all('*', (req, res) => {

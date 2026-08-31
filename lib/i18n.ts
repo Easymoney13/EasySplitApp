@@ -316,7 +316,7 @@ export const translations: Record<string, Record<string, string>> = {
     startSplitCard: "פיצול חשבון",
     letTryItNow: "סרקו או העלו קבלה",
     joinSessionViaCode: "הצטרפות לפי קוד",
-    joinSessionSubtitle: "הצטרפו לחשבון חברים",
+    joinSessionSubtitle: "הצטרפו לחשבון של חברים",
     createAGroupCard: "קופה משותפת",
     createGroupSubtitle: "פתחו קבוצה עם חברים",
     seeAll: "הצג הכל",

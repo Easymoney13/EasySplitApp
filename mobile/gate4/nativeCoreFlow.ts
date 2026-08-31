@@ -46,6 +46,36 @@ function query<T extends Element>(selector: string): T | null {
   return document.querySelector<T>(selector);
 }
 
+function normalizedText(element: Element | null) {
+  return String(element?.textContent || '').replace(/\s+/g, ' ').trim();
+}
+
+function buttonByText(label: string, exact = false) {
+  return Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find((button) => {
+    const text = normalizedText(button);
+    return exact ? text === label : text.includes(label);
+  }) || null;
+}
+
+function sessionWorkspace() {
+  return Array.from(document.querySelectorAll<HTMLElement>('.app-surface')).find((candidate) => {
+    const text = normalizedText(candidate);
+    return text.includes('Room Members') && text.includes('Receipt Items');
+  }) || null;
+}
+
+function payerSelector() {
+  return Array.from(document.querySelectorAll<HTMLSelectElement>('select')).find((select) =>
+    Array.from(select.options).some((option) => normalizedText(option).includes('Each paid their share'))
+  ) || null;
+}
+
+function completionState() {
+  return Array.from(document.querySelectorAll<HTMLElement>('h1,h2,h3')).find((heading) =>
+    normalizedText(heading).includes('Bill Split Settled!')
+  ) || null;
+}
+
 function click(selector: string) {
   const element = query<HTMLElement>(selector);
   if (!element) throw new Error(`Missing control: ${selector}`);
@@ -75,7 +105,7 @@ function diagnostics() {
     hasLocalPhone: Boolean(localStorage.getItem('billsplit_phone')),
     hasOnboarding: Boolean(query('[role="dialog"][aria-label*="EasySplit"]')),
     hasStartButton: Boolean(query('[data-testid="start-split-button"]')),
-    hasSessionWorkspace: Boolean(query('[data-testid="session-workspace"]')),
+    hasSessionWorkspace: Boolean(sessionWorkspace()),
     roomMembers: readRoomMemberEvidence(document),
     auth: window.__EASYSPLIT_GATE4_AUTH_DIAGNOSTICS__ || { stage: 'NOT_OBSERVED' },
   };
@@ -263,8 +293,8 @@ function createDriver() {
       }));
       pushShellRoute(window, `/session/${encodeURIComponent(sessionId)}`);
 
-      const workspace = await waitFor(() => query<HTMLElement>('[data-testid="session-workspace"]'), 'created session workspace');
-      const splitButton = query<HTMLButtonElement>('[data-testid="split-everyone"]');
+      const workspace = await waitFor(() => sessionWorkspace(), 'created session workspace');
+      const splitButton = buttonByText('Split All', true);
       if (!splitButton || splitButton.disabled) throw new Error('Host split control is unavailable');
       const text = workspace.textContent || '';
       if (!text.includes('Gate Four Dinner') || !text.includes('Shared Dinner')) {
@@ -310,7 +340,9 @@ function createDriver() {
     },
 
     async allocateAndReconcile(context: any) {
-      click('[data-testid="split-everyone"]');
+      const splitButton = buttonByText('Split All', true);
+      if (!splitButton || splitButton.disabled) throw new Error('Host split control is unavailable');
+      splitButton.click();
       const allocated = await context.realtime.waitUntil(
         (session: any) => session.items?.length === 1 && session.items.every((item: any) => item.claimedBy?.length === 2),
         'shared allocation',
@@ -320,9 +352,11 @@ function createDriver() {
         return text.includes(HOST_NAME) && text.includes(GUEST_NAME) && text.toLowerCase().includes('each');
       }, 'shared allocation in native UI');
 
-      click('[data-testid="settle-and-pay"]');
-      const payerSelect = await waitFor(() => query<HTMLSelectElement>('[data-testid="payer-select"]'), 'payer selector');
-      const tipButton = query<HTMLButtonElement>('[data-testid="tip-10"]');
+      const settleButton = buttonByText('Settle & Pay', true);
+      if (!settleButton || settleButton.disabled) throw new Error('Settle control is unavailable');
+      settleButton.click();
+      const payerSelect = await waitFor(() => payerSelector(), 'payer selector');
+      const tipButton = buttonByText('10%', true);
       if (!tipButton || tipButton.disabled) throw new Error('Tip control is unavailable');
       setControlValue(payerSelect, context.hostId);
       tipButton.click();
@@ -369,12 +403,12 @@ function createDriver() {
         'guest settlement',
       );
       const completeButton = await waitFor(
-        () => query<HTMLButtonElement>('[data-testid="mark-payment-complete"]'),
+        () => buttonByText('Finish and Pay', true),
         'host payment completion control',
       );
       if (completeButton.disabled) throw new Error('Host payment completion control is disabled');
       completeButton.click();
-      await waitFor(() => query('[data-testid="settlement-complete"]'), 'native completion state');
+      await waitFor(() => completionState(), 'native completion state');
       const finalSession = await context.realtime.waitUntil(
         (session: any) => session.status === 'settled' && session.members?.every((member: any) => member.settled === true),
         'closed session',
