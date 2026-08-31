@@ -106,7 +106,8 @@ test('native projects wire sharing, external payment apps, and inbound app links
     assert.match(source, /openPayBoxPayment/);
   }
   assert.match(bit, /webAppUrl: isAndroidBrowser \? intentUrl : deepLink/);
-  assert.match(bit, /if \(!Capacitor\.isNativePlatform\(\)\)/);
+  assert.doesNotMatch(bit, /\balert\s*\(/);
+  assert.doesNotMatch(bit, /Capacitor\.isNativePlatform/);
 });
 
 test('Android back gives an open Start Split sheet first refusal before shell navigation', async () => {

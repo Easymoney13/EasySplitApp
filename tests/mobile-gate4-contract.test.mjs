@@ -45,6 +45,10 @@ test('Gate 4 native runner is test-only and drives shared UI plus realtime/payme
   assert.match(runner, /Capacitor\.getPlatform\(\)/);
   assert.match(runner, /App\.getLaunchUrl\(\)/);
   assert.match(runner, /easysplit:\\\/\\\/gate4/);
+  assert.ok(
+    runner.indexOf("click('[data-testid=\"settle-and-pay\"]')") < runner.indexOf("query<HTMLSelectElement>('[data-testid=\"payer-select\"]')"),
+    'the settlement dialog must open before the runner queries its payer selector',
+  );
   assert.match(workflow, /EASYSPLIT_GATE4_E2E: 'true'/);
   assert.match(workflow, /GATE4_NATIVE_CORE_FLOW=PASS/);
   assert.match(workflow, /run-native-ios-gate4\.sh/);

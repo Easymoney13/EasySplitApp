@@ -199,11 +199,11 @@ async function run() {
     'shared allocation',
   );
 
+  click('[data-testid="settle-and-pay"]');
+  await waitFor(() => query('[data-testid="tip-10"]'), 'settlement dialog');
   const payerSelect = query<HTMLSelectElement>('[data-testid="payer-select"]');
   if (!payerSelect) throw new Error('Payer selector is missing');
   setControlValue(payerSelect, hostId);
-  click('[data-testid="settle-and-pay"]');
-  await waitFor(() => query('[data-testid="tip-10"]'), 'settlement dialog');
   click('[data-testid="tip-10"]');
   await realtime.waitUntil((session) => session.payerId === hostId && session.tipPercentage === 10, 'payer and tip');
 

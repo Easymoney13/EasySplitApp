@@ -306,13 +306,14 @@ export default function HomePage() {
         return;
       }
     }
-    const isMobile = typeof window !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-    const hasMediaDevices = typeof navigator !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
-    if (isMobile || !hasMediaDevices) {
-      if (cameraInputRef.current) {
-        cameraInputRef.current.click();
-        return;
-      }
+    const hasMediaDevices = typeof navigator !== 'undefined' && navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function';
+    if (hasMediaDevices) {
+      setShowCamera(true);
+      return;
+    }
+    if (cameraInputRef.current) {
+      cameraInputRef.current.click();
+      return;
     }
     setShowCamera(true);
   };
@@ -985,6 +986,13 @@ export default function HomePage() {
         <CameraViewfinder
           onScanComplete={handleScanComplete}
           onCancel={() => setShowCamera(false)}
+          onManualEntry={() => {
+            setShowCamera(false);
+            setPendingReceiptDraft(null);
+            setPendingScanId('');
+            setPendingRecoveryToken('');
+            setShowManualModal(true);
+          }}
           hostName={profile.displayName || 'Host'}
         />
       )}
@@ -1110,7 +1118,7 @@ export default function HomePage() {
                 type="button"
                 data-testid="start-split-button"
                 onClick={() => {
-                  setShowStartSplitModal(true);
+                  handleScanCamera();
                   triggerHaptic('medium');
                 }}
                 className="home-start-card brand-tap relative rounded-[24px] p-5 flex flex-col justify-between overflow-hidden cursor-pointer group min-h-[256px] select-none text-left rtl:text-right"
@@ -1169,7 +1177,7 @@ export default function HomePage() {
                       <Users className="w-5 h-5" />
                     </div>
                     <h3 className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white leading-tight">
-                      {t('createAGroupCard', undefined, 'Create a group')}
+                      {t('createAGroupCard', undefined, 'Shared budget')}
                     </h3>
                   </div>
 
