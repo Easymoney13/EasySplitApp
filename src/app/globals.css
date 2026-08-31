@@ -574,3 +574,12 @@ select:focus-visible {
     transition-duration: 0.01ms !important;
   }
 }
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+

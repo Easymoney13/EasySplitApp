@@ -1209,16 +1209,13 @@ function SessionWorkspaceInner() {
                           {claimantDetails.map(({ id, fullName, isMe }: any) => (
                             <span
                               key={id}
-                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black border ${
+                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black border ${
                                 isMe
                                   ? 'bg-brand-600 text-white border-brand-600'
                                   : 'bg-slate-100 dark:bg-[#1A2232] text-slate-700 dark:text-slate-300 border-slate-200 dark:border-white/10'
                               }`}
                             >
-                              <span className="w-3.5 h-3.5 rounded-full bg-slate-300/50 dark:bg-white/10 flex items-center justify-center text-[8px]">
-                                {fullName.charAt(0).toUpperCase()}
-                              </span>
-                              {fullName}
+                              <span>{fullName}</span>
                               {isMe && <Check className="w-2.5 h-2.5 stroke-[3]" />}
                             </span>
                           ))}

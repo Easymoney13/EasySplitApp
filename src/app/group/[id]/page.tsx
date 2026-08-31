@@ -614,16 +614,14 @@ export default function GroupWorkspacePage() {
       );
       const data = await response.json().catch(() => ({}));
       const phone = cleanIsraeliPhone(data.phone || '');
-      const amount = Number(data.amount);
-      if (!response.ok || !isValidIsraeliPhone(phone) || !Number.isFinite(amount) || amount <= 0) {
-        alert(isRtl ? 'למקבל עדיין אין מספר טלפון תקין לתשלום.' : 'The recipient does not have a valid payment phone number yet.');
-        return;
-      }
+      const amount = Number(data.amount) || Number(tx.amount) || 0;
       if (method === 'bit') {
         await triggerBitPayment({ phone, amount, title: `${group.name} settlement` });
         return;
       }
       await openPayBoxPayment(phone, amount);
+    } catch (err) {
+      console.error('Payment transfer error:', err);
     } finally {
       paymentLookupRef.current = false;
       setPaymentLookupKey('');
@@ -683,6 +681,10 @@ export default function GroupWorkspacePage() {
         <CameraViewfinder
           onScanComplete={handleCameraScanComplete}
           onCancel={() => setShowCamera(false)}
+          onManualEntry={() => {
+            setShowCamera(false);
+            setShowCreateBillModal(true);
+          }}
           parseOnly
           hostName={profile.displayName || 'Member'}
         />

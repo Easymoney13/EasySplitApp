@@ -33,16 +33,26 @@ export function generateBitUrl(params: BitPaymentParams): {
   cleanPhone: string;
   displayText: string;
 } {
-  const cleanPhone = cleanIsraeliPhone(params.phone);
+  const cleanPhone = cleanIsraeliPhone(params.phone || '');
   const numericAmount = typeof params.amount === 'number' ? params.amount : parseFloat(params.amount as string) || 0;
-  const formattedAmount = numericAmount.toFixed(2);
+  const formattedAmount = numericAmount > 0 ? numericAmount.toFixed(2) : '';
   const contentText = params.title || params.storeName || 'BillSplit Payment';
   const encodedText = encodeURIComponent(contentText);
 
-  const meUrl = `https://www.bitpay.co.il/app/me?phone=${cleanPhone}&amount=${formattedAmount}&text=${encodedText}`;
-  const webUrl = `https://bitpay.co.il/app/pay?phone=${cleanPhone}&amount=${formattedAmount}&text=${encodedText}`;
-  const deepLink = `bit://pay?phone=${cleanPhone}&amount=${formattedAmount}&text=${encodedText}`;
-  const intentUrl = `intent://pay?phone=${cleanPhone}&amount=${formattedAmount}&text=${encodedText}#Intent;scheme=bit;package=com.poalim.bit;end`;
+  const queryParts: string[] = [];
+  if (cleanPhone) queryParts.push(`phone=${cleanPhone}`);
+  if (formattedAmount) queryParts.push(`amount=${formattedAmount}`);
+  if (encodedText) queryParts.push(`text=${encodedText}`);
+  const query = queryParts.join('&');
+
+  const meUrl = cleanPhone && formattedAmount
+    ? `https://www.bitpay.co.il/app/me?${query}`
+    : `https://www.bitpay.co.il/app`;
+  const webUrl = query ? `https://bitpay.co.il/app/pay?${query}` : `https://bitpay.co.il/app`;
+  const deepLink = query ? `bit://pay?${query}` : `bit://`;
+  const intentUrl = query
+    ? `intent://pay?${query}#Intent;scheme=bit;package=com.poalim.bit;end`
+    : `intent:#Intent;scheme=bit;package=com.poalim.bit;end`;
 
   return {
     webUrl,
@@ -56,12 +66,17 @@ export function generateBitUrl(params: BitPaymentParams): {
 }
 
 export async function triggerBitPayment(params: BitPaymentParams): Promise<boolean> {
-  if (!isValidIsraeliPhone(params.phone)) return false;
   const { meUrl, deepLink, intentUrl, formattedAmount, cleanPhone, displayText } = generateBitUrl(params);
 
   try {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      await copyText(`${cleanPhone} ${formattedAmount}`);
+      if (cleanPhone && formattedAmount) {
+        await copyText(`${cleanPhone} ${formattedAmount}`);
+      } else if (cleanPhone) {
+        await copyText(cleanPhone);
+      } else if (formattedAmount) {
+        await copyText(formattedAmount);
+      }
     }
   } catch (e) {}
 

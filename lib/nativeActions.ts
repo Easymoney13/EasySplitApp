@@ -76,7 +76,14 @@ export async function openExternalApp({
         if (completed) return true;
       }
     } catch (error) {
-      console.warn('Could not open the installed payment app:', error);
+      console.warn('Could not check installed app with AppLauncher:', error);
+    }
+
+    try {
+      const { completed } = await AppLauncher.openUrl({ url: appUrl });
+      if (completed) return true;
+    } catch (error) {
+      console.warn('Direct AppLauncher openUrl failed:', error);
     }
 
     try {
@@ -92,7 +99,11 @@ export async function openExternalApp({
   const isMobileBrowser = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '');
   if (isMobileBrowser) {
     window.location.href = webAppUrl;
-    window.setTimeout(() => window.open(fallbackUrl, '_blank', 'noopener,noreferrer'), browserFallbackDelayMs);
+    window.setTimeout(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        window.open(fallbackUrl, '_blank', 'noopener,noreferrer');
+      }
+    }, browserFallbackDelayMs);
     return true;
   }
 
@@ -100,12 +111,32 @@ export async function openExternalApp({
 }
 
 export async function openPayBoxPayment(phone: string, amount: number): Promise<boolean> {
-  const formattedAmount = amount.toFixed(2);
-  await copyText(`${phone} ${formattedAmount}`);
-  const query = `phone=${encodeURIComponent(phone)}&amount=${encodeURIComponent(formattedAmount)}`;
+  const cleanPhone = phone ? phone.replace(/\D/g, '') : '';
+  const formattedAmount = (amount || 0).toFixed(2);
+  const textToCopy = cleanPhone ? `${cleanPhone} ${formattedAmount}` : (amount > 0 ? formattedAmount : '');
+  if (textToCopy) {
+    await copyText(textToCopy);
+  }
+
+  const queryParts: string[] = [];
+  if (cleanPhone) queryParts.push(`phone=${encodeURIComponent(cleanPhone)}`);
+  if (amount > 0) queryParts.push(`amount=${encodeURIComponent(formattedAmount)}`);
+  const query = queryParts.join('&');
+
+  const appUrl = query ? `paybox://pay?${query}` : `paybox://`;
+  const intentUrl = query
+    ? `intent://pay?${query}#Intent;scheme=paybox;package=com.payboxapp;end`
+    : `intent:#Intent;scheme=paybox;package=com.payboxapp;end`;
+  const fallbackUrl = query
+    ? `https://payboxapp.page.link/pay?${query}`
+    : `https://payboxapp.page.link`;
+
+  const isAndroidBrowser = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent || '');
+
   return openExternalApp({
-    appUrl: `paybox://pay?${query}`,
-    fallbackUrl: `https://payboxapp.page.link/pay?${query}`,
+    appUrl,
+    webAppUrl: isAndroidBrowser ? intentUrl : appUrl,
+    fallbackUrl,
     browserFallbackDelayMs: 800,
   });
 }

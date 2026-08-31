@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Trash2 } from 'lucide-react';
+import { useLanguage } from './LanguageContext';
 
 interface SwipeableCardProps {
   children: React.ReactNode;
@@ -10,6 +11,9 @@ interface SwipeableCardProps {
   className?: string;
   confirmationTitle?: string;
   confirmationDescription?: string;
+  cancelText?: string;
+  deleteText?: string;
+  deletingText?: string;
 }
 
 export function SwipeableCard({
@@ -18,7 +22,30 @@ export function SwipeableCard({
   className = '',
   confirmationTitle = 'Are you sure?',
   confirmationDescription = 'This item will be removed from your list.',
+  cancelText,
+  deleteText,
+  deletingText,
 }: SwipeableCardProps) {
+  let isRtl = false;
+  let t = (_key: string, _params?: any, fallback?: string) => fallback || '';
+  try {
+    const lang = useLanguage();
+    isRtl = lang.isRtl;
+    t = lang.t;
+  } catch (_) {}
+
+  const cancelLabel = cancelText || (isRtl ? 'ביטול' : t('cancelBtn', undefined, 'Cancel'));
+  const deleteLabel = deleteText || (isRtl ? 'מחק' : t('deleteBtn', undefined, 'Delete'));
+  const deletingLabel = deletingText || (isRtl ? 'מוחק...' : 'Deleting…');
+
+  const resolvedConfirmationTitle = confirmationTitle !== 'Are you sure?'
+    ? confirmationTitle
+    : (isRtl ? 'האם אתה בטוח?' : 'Are you sure?');
+
+  const resolvedConfirmationDescription = confirmationDescription !== 'This item will be removed from your list.'
+    ? confirmationDescription
+    : (isRtl ? 'הפריט יוסר מהרשימה שלך.' : 'This item will be removed from your list.');
+
   const [translateX, setTranslateX] = useState(0);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isSwiping, setIsSwiping] = useState(false);
@@ -148,7 +175,7 @@ export function SwipeableCard({
       </div>
     </div>
     {showDeleteConfirmation && typeof document !== 'undefined' && createPortal(
-      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm" onClick={cancelDelete}>
+      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm" onClick={cancelDelete} dir={isRtl ? 'rtl' : 'ltr'}>
         <div
           role="alertdialog"
           aria-modal="true"
@@ -159,11 +186,11 @@ export function SwipeableCard({
           <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-400">
             <Trash2 className="h-5 w-5" />
           </div>
-          <h3 id="delete-confirmation-title" className="text-base font-black text-slate-950 dark:text-white">{confirmationTitle}</h3>
-          <p className="mt-1 text-xs font-medium text-slate-500 dark:text-slate-400">{confirmationDescription}</p>
+          <h3 id="delete-confirmation-title" className="text-base font-black text-slate-950 dark:text-white">{resolvedConfirmationTitle}</h3>
+          <p className="mt-1 text-xs font-medium text-slate-500 dark:text-slate-400">{resolvedConfirmationDescription}</p>
           <div className="mt-5 grid grid-cols-2 gap-2">
-            <button type="button" disabled={isConfirming} onClick={cancelDelete} className="rounded-xl border border-slate-200 px-4 py-3 text-xs font-extrabold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200">Cancel</button>
-            <button type="button" disabled={isConfirming} onClick={() => void confirmDelete()} className="rounded-xl bg-red-600 px-4 py-3 text-xs font-extrabold text-white hover:bg-red-700 disabled:opacity-50">{isConfirming ? 'Deleting…' : 'Delete'}</button>
+            <button type="button" disabled={isConfirming} onClick={cancelDelete} className="rounded-xl border border-slate-200 px-4 py-3 text-xs font-extrabold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 cursor-pointer">{cancelLabel}</button>
+            <button type="button" disabled={isConfirming} onClick={() => void confirmDelete()} className="rounded-xl bg-red-600 px-4 py-3 text-xs font-extrabold text-white hover:bg-red-700 disabled:opacity-50 cursor-pointer">{isConfirming ? deletingLabel : deleteLabel}</button>
           </div>
         </div>
       </div>,
