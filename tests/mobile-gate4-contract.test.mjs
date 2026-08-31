@@ -58,6 +58,9 @@ test('Gate 4 runner stays test-only and uses real session UI, transport, and cre
   assert.match(workflow, /android-native:[\s\S]*needs: shared-verification/);
   assert.doesNotMatch(workflow, /android-native:[\s\S]*needs: ios-native/);
   assert.match(workflow, /run-native-android-validation\.sh/);
+  assert.match(workflow, /gate3-app-debug\.apk/);
+  assert.match(workflow, /gate4-app-debug\.apk/);
+  assert.match(workflow, /Gate 3 and Gate 4 APKs are unexpectedly identical/);
   assert.match(workflow, /Run iOS launch and deep-link smoke independently\n\s+if: always\(\)/);
   assert.match(workflow, /Require complete iOS runtime evidence\n\s+if: always\(\)/);
   assert.match(workflow, /Require complete Android Gate 4 and Gate 3 evidence\n\s+if: always\(\)/);

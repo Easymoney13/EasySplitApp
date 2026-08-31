@@ -22,8 +22,8 @@ export function instrumentGate4AuthSource(source, id) {
   if (normalized.endsWith('/lib/firebase.ts')) {
     let transformed = replaceOnce(
       source,
-      'const auth = getAuth(app);',
-      `const auth = getAuth(app);\n${DIAGNOSTIC_SNIPPET('AUTH_CREATED')}`,
+      'const googleProvider = new GoogleAuthProvider();',
+      `${DIAGNOSTIC_SNIPPET('AUTH_CREATED', ", native: nativeAuthPlatform")}\nconst googleProvider = new GoogleAuthProvider();`,
       'Firebase auth creation',
     );
     transformed = replaceOnce(
@@ -50,8 +50,8 @@ export function instrumentGate4AuthSource(source, id) {
     );
     transformed = replaceOnce(
       transformed,
-      "        const { onAuthStateChanged } = await import('firebase/auth');\n\n        onAuthStateChanged(auth, async (user) => {",
-      `        const { onAuthStateChanged } = await import('firebase/auth');\n        ${DIAGNOSTIC_SNIPPET('LISTENER_REGISTERED')}\n\n        onAuthStateChanged(auth, async (user) => {\n          ${DIAGNOSTIC_SNIPPET('CALLBACK_FIRED', ", user: user?.uid ? 'authenticated' : 'guest'")}`,
+      "        const unsubscribe = onAuthStateChanged(auth, async (user) => {",
+      `        ${DIAGNOSTIC_SNIPPET('LISTENER_REGISTERED')}\n        const unsubscribe = onAuthStateChanged(auth, async (user) => {\n          ${DIAGNOSTIC_SNIPPET('CALLBACK_FIRED', ", user: user?.uid ? 'authenticated' : 'guest'")}`,
       'auth listener registration',
     );
     transformed = replaceOnce(

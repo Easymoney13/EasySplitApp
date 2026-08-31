@@ -13,6 +13,7 @@ import {
 import { pushShellRoute } from '../router-core.mjs';
 import { runGate4Core } from './core-flow.mjs';
 import { runGate4Once } from './run-once.mjs';
+import { hasRoomMemberEvidence, readRoomMemberEvidence } from './member-ui-evidence.mjs';
 
 const REPORT_ORIGIN = String(import.meta.env.VITE_GATE4_REPORT_ORIGIN || '').replace(/\/+$/, '');
 const RUN_ID = String(import.meta.env.VITE_GATE4_RUN_ID || '');
@@ -75,6 +76,7 @@ function diagnostics() {
     hasOnboarding: Boolean(query('[role="dialog"][aria-label*="EasySplit"]')),
     hasStartButton: Boolean(query('[data-testid="start-split-button"]')),
     hasSessionWorkspace: Boolean(query('[data-testid="session-workspace"]')),
+    roomMembers: readRoomMemberEvidence(document),
     auth: window.__EASYSPLIT_GATE4_AUTH_DIAGNOSTICS__ || { stage: 'NOT_OBSERVED' },
   };
 }
@@ -298,8 +300,8 @@ function createDriver() {
         'participant join',
       );
       await waitFor(
-        () => query<HTMLElement>('[data-testid="session-workspace"]')?.textContent?.includes(GUEST_NAME),
-        'participant in native UI',
+        () => hasRoomMemberEvidence(document, GUEST_NAME, 2),
+        'participant identity and count in native UI',
       );
       if (!joinedState.members.some((member: any) => member.name === GUEST_NAME)) {
         throw new Error('Realtime participant identity is incorrect');

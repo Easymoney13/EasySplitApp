@@ -109,6 +109,10 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const preload = async () => {
       try {
         const { auth, googleProvider, getGoogleProvider, ensureAuthPersistence } = await import('../../lib/firebase');
+        if (isNativeGoogleAuthPlatform()) {
+          setAuthModules({ auth, googleProvider, getGoogleProvider });
+          return;
+        }
         await ensureAuthPersistence();
         if (typeof auth.authStateReady === 'function') {
           await auth.authStateReady();
@@ -212,13 +216,30 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
 
     // Auth subscription
+    let authUnsubscribe: (() => void) | null = null;
+    let nativeHydrationWarning: ReturnType<typeof globalThis.setTimeout> | null = null;
+    let disposed = false;
+    const clearNativeHydrationWarning = () => {
+      if (nativeHydrationWarning !== null) {
+        globalThis.clearTimeout(nativeHydrationWarning);
+        nativeHydrationWarning = null;
+      }
+    };
     const initAuth = async () => {
       try {
         const { auth, ensureAuthPersistence } = await import('../../lib/firebase');
-        await ensureAuthPersistence();
         const { onAuthStateChanged } = await import('firebase/auth');
+        if (disposed) return;
+        const nativeAuthPlatform = isNativeGoogleAuthPlatform();
+        if (nativeAuthPlatform) {
+          nativeHydrationWarning = globalThis.setTimeout(() => {
+            console.warn('Firebase Auth state has not hydrated in the native WebView after 3 seconds.');
+          }, 3000);
+        }
 
-        onAuthStateChanged(auth, async (user) => {
+        const unsubscribe = onAuthStateChanged(auth, async (user) => {
+          clearNativeHydrationWarning();
+          if (disposed) return;
           setIsAuthenticating(false);
           const pendingCreatorIntent = readCreatorIntent(localStorage);
           const accountTransition = transitionAccountScope(localStorage, user?.uid || '');
@@ -310,15 +331,31 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           setAuthLoading(false);
           setIsInitialized(true);
         });
+        if (disposed) {
+          clearNativeHydrationWarning();
+          unsubscribe();
+          return;
+        }
+        authUnsubscribe = unsubscribe;
+        if (!nativeAuthPlatform) {
+          void ensureAuthPersistence();
+        }
       } catch (e) {
+        clearNativeHydrationWarning();
         console.error('Failed to initialize Firebase Auth listener:', e);
+        if (disposed) return;
         setAuthLoading(false);
         setIsInitialized(true);
         setIsAuthenticating(false);
       }
     };
 
-    initAuth();
+    void initAuth();
+    return () => {
+      disposed = true;
+      clearNativeHydrationWarning();
+      authUnsubscribe?.();
+    };
   }, []);
 
   useEffect(() => {
@@ -393,6 +430,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     let guestMigrationPrepared = false;
     let signInCompleted = false;
     try {
+      const nativeAuthPlatform = isNativeGoogleAuthPlatform();
       let firebaseModule: any = null;
       let activeAuth = authModules?.auth;
       let activeGetProvider = authModules?.getGoogleProvider;
@@ -400,10 +438,12 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
       if (!activeAuth) {
         firebaseModule = await import('../../lib/firebase');
-        await firebaseModule.ensureAuthPersistence();
         activeAuth = firebaseModule.auth;
-        if (typeof activeAuth.authStateReady === 'function') {
-          await activeAuth.authStateReady();
+        if (!nativeAuthPlatform) {
+          await firebaseModule.ensureAuthPersistence();
+          if (typeof activeAuth.authStateReady === 'function') {
+            await activeAuth.authStateReady();
+          }
         }
         activeGetProvider = firebaseModule.getGoogleProvider;
       }
@@ -419,7 +459,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         guestMigrationPrepared = prepareGuestAccountMigration(localStorage, sessionStorage);
       }
 
-      if (isNativeGoogleAuthPlatform()) {
+      if (nativeAuthPlatform) {
         const { GoogleAuthProvider, signInWithCredential } = await import('firebase/auth');
         const { idToken } = await signInNativeGoogle({
           forceAccountSelection: options.forceAccountSelection || Boolean(activeAuth.currentUser),

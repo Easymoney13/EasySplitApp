@@ -231,7 +231,37 @@ jobs:
       - name: Install exact dependencies
         run: npm ci
 
-      - name: Synchronize instrumented Android project
+      - name: Synchronize clean Android project for Gate 3
+        env:
+          NEXT_PUBLIC_EASYSPLIT_API_ORIGIN: http://127.0.0.1:3000
+          NEXT_PUBLIC_EASYSPLIT_WEB_ORIGIN: http://127.0.0.1:3000
+          NEXT_PUBLIC_EASYSPLIT_WS_ORIGIN: ws://127.0.0.1:3000
+        run: npm run mobile:sync
+
+      - name: Verify and compile clean Gate 3 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx cap ls
+          git diff --check
+          grep -q 'capacitor-app-launcher' android/app/capacitor.build.gradle
+          grep -q 'capacitor-share' android/app/capacitor.build.gradle
+          ! grep -Rqs 'Gate Four Host' mobile-dist android/app/src/main/assets/public
+          ! grep -Rqs 'GATE4_NATIVE_CORE_FLOW=PASS' mobile-dist android/app/src/main/assets/public
+          ! grep -Rqs '__EASYSPLIT_GATE4_AUTH_DIAGNOSTICS__' mobile-dist android/app/src/main/assets/public
+          mkdir -p "$RUNNER_TEMP/easysplit-android-apks"
+          cd android
+          chmod +x gradlew
+          ./gradlew clean assembleDebug --no-daemon --stacktrace
+          SOURCE_APK="$GITHUB_WORKSPACE/android/app/build/outputs/apk/debug/app-debug.apk"
+          GATE3_APK="$RUNNER_TEMP/easysplit-android-apks/gate3-app-debug.apk"
+          test -f "$SOURCE_APK"
+          cp "$SOURCE_APK" "$GATE3_APK"
+          BUILD_TOOLS=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)
+          "$ANDROID_HOME/build-tools/$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$GATE3_APK"
+          sha256sum "$GATE3_APK" > "$GATE3_APK.sha256"
+
+      - name: Synchronize instrumented Android project for Gate 4
         env:
           EASYSPLIT_GATE4_E2E: 'true'
           VITE_GATE4_RUN_ID: ${{ env.GATE4_RUN_ID }}
@@ -241,7 +271,7 @@ jobs:
           NEXT_PUBLIC_EASYSPLIT_WS_ORIGIN: ws://127.0.0.1:3000
         run: npm run mobile:sync
 
-      - name: Verify synchronized Android config
+      - name: Verify and compile instrumented Gate 4 APK
         shell: bash
         run: |
           set -euo pipefail
@@ -251,18 +281,23 @@ jobs:
           grep -q 'capacitor-share' android/app/capacitor.build.gradle
           grep -q 'Gate Four Host' mobile-dist/index.html
           grep -Rqs 'GATE4_NATIVE_CORE_FLOW=PASS' mobile-dist/assets
-
-      - name: Compile Android debug APK
-        shell: bash
-        run: |
-          set -euo pipefail
+          grep -Rqs '__EASYSPLIT_GATE4_AUTH_DIAGNOSTICS__' mobile-dist/assets
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
-          APK="$GITHUB_WORKSPACE/android/app/build/outputs/apk/debug/app-debug.apk"
-          test -f "$APK"
+          ./gradlew clean assembleDebug --no-daemon --stacktrace
+          SOURCE_APK="$GITHUB_WORKSPACE/android/app/build/outputs/apk/debug/app-debug.apk"
+          GATE4_APK="$RUNNER_TEMP/easysplit-android-apks/gate4-app-debug.apk"
+          GATE3_APK="$RUNNER_TEMP/easysplit-android-apks/gate3-app-debug.apk"
+          test -f "$SOURCE_APK"
+          test -f "$GATE3_APK"
+          cp "$SOURCE_APK" "$GATE4_APK"
           BUILD_TOOLS=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)
-          "$ANDROID_HOME/build-tools/$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK"
+          "$ANDROID_HOME/build-tools/$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$GATE4_APK"
+          sha256sum "$GATE4_APK" > "$GATE4_APK.sha256"
+          if cmp -s "$GATE3_APK" "$GATE4_APK"; then
+            printf '%s\n' 'Gate 3 and Gate 4 APKs are unexpectedly identical' >&2
+            exit 1
+          fi
 
       - name: Run isolated Android Gate 4 and Gate 3 validations
         uses: reactivecircus/android-emulator-runner@v2
@@ -278,7 +313,7 @@ jobs:
             adb kill-server || true
             adb start-server
             adb devices
-          script: bash .github/validation/run-native-android-validation.sh "$RUNNER_TEMP/easysplit-android" android/app/build/outputs/apk/debug/app-debug.apk "$GATE4_RUN_ID"
+          script: bash .github/validation/run-native-android-validation.sh "$RUNNER_TEMP/easysplit-android" "$RUNNER_TEMP/easysplit-android-apks/gate4-app-debug.apk" "$RUNNER_TEMP/easysplit-android-apks/gate3-app-debug.apk" "$GATE4_RUN_ID"
 
       - name: Require complete Android Gate 4 and Gate 3 evidence
         if: always()
@@ -293,6 +328,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: easysplit-android-runtime-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/easysplit-android
+          path: |
+            ${{ runner.temp }}/easysplit-android
+            ${{ runner.temp }}/easysplit-android-apks/*.sha256
           if-no-files-found: warn
           retention-days: 7

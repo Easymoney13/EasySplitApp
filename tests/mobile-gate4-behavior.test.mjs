@@ -11,6 +11,7 @@ import { GATE4_CORE_MARKERS, runGate4Core } from '../mobile/gate4/core-flow.mjs'
 import { GATE4_CORE_MARKERS as REPORT_MARKERS } from '../.github/validation/gate4-contract.mjs';
 import { gate4FixtureScript } from '../mobile/gate4/fixture.mjs';
 import { runGate4Once } from '../mobile/gate4/run-once.mjs';
+import { hasRoomMemberEvidence, readRoomMemberEvidence } from '../mobile/gate4/member-ui-evidence.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -36,6 +37,33 @@ test('Gate 4 fixture behaviorally installs a complete guest profile before appli
   assert.equal(storage.getItem('billsplit_lang'), 'en');
 });
 
+test('Gate 4 participant evidence follows the rendered member avatars and count, not workspace text', () => {
+  const card = {
+    querySelectorAll: (selector) => selector === '[title]'
+      ? [
+          { getAttribute: () => 'Gate Four Host (You) [HOST]' },
+          { getAttribute: () => 'Gate Four Guest' },
+        ]
+      : [],
+  };
+  const heading = {
+    textContent: 'Room Members',
+    parentElement: { querySelector: () => ({ textContent: '2' }) },
+    closest: (selector) => selector === '.photo-card' ? card : null,
+  };
+  const root = { querySelectorAll: (selector) => selector === 'h3' ? [heading] : [] };
+
+  assert.deepEqual(readRoomMemberEvidence(root), {
+    count: 2,
+    titles: ['Gate Four Host (You) [HOST]', 'Gate Four Guest'],
+  });
+  assert.equal(hasRoomMemberEvidence(root, 'Gate Four Guest', 2), true);
+  assert.equal(hasRoomMemberEvidence(root, 'Gate Four Guest', 1), false);
+
+  heading.parentElement = { querySelector: () => ({ textContent: '1' }) };
+  assert.equal(hasRoomMemberEvidence(root, 'Gate Four Guest', 2), false);
+});
+
 test('test-only auth instrumentation observes the real sequence without changing product sources', async () => {
   const [firebaseSource, languageSource] = await Promise.all([
     readFile(new URL('../lib/firebase.ts', import.meta.url), 'utf8'),
@@ -44,12 +72,22 @@ test('test-only auth instrumentation observes the real sequence without changing
   const firebase = instrumentGate4AuthSource(firebaseSource, '/repo/lib/firebase.ts').code;
   const language = instrumentGate4AuthSource(languageSource, '/repo/src/components/LanguageContext.tsx').code;
   assert.match(firebase, /stage: 'AUTH_CREATED'/);
+  assert.match(firebaseSource, /const nativeAuthPlatform = Capacitor\.isNativePlatform\(\);/);
+  assert.match(firebaseSource, /nativeAuthPlatform[\s\S]*?initializeAuth\(app, \{ persistence: browserLocalPersistence \}\)[\s\S]*?: getAuth\(app\)/);
+  assert.match(firebaseSource, /if \(nativeAuthPlatform\) return Promise\.resolve\(\);/);
   assert.match(firebase, /stage: 'PERSISTENCE_STARTED'/);
   assert.match(firebase, /stage: 'PERSISTENCE_COMPLETED'/);
   assert.match(language, /stage: 'MODULE_IMPORTED'/);
   assert.match(language, /stage: 'LISTENER_REGISTERED'/);
   assert.match(language, /stage: 'CALLBACK_FIRED'/);
   assert.match(language, /history: \[\.\.\.\(previous\?\.history \|\| \[\]\), entry\]\.slice\(-20\)/);
+  const listenerIndex = languageSource.indexOf('const unsubscribe = onAuthStateChanged');
+  const persistenceIndex = languageSource.indexOf('void ensureAuthPersistence();', listenerIndex);
+  assert.ok(listenerIndex >= 0 && persistenceIndex > listenerIndex, 'listener must register before web persistence is started');
+  assert.match(
+    languageSource,
+    /if \(!nativeAuthPlatform\) \{\s*void ensureAuthPersistence\(\);\s*\}/,
+  );
   assert.doesNotMatch(firebaseSource, /__EASYSPLIT_GATE4_AUTH_DIAGNOSTICS__/);
   assert.doesNotMatch(languageSource, /__EASYSPLIT_GATE4_AUTH_DIAGNOSTICS__/);
   assert.throws(
@@ -156,14 +194,22 @@ test('Android orchestration runs Gate 3 even when the Gate 4 child fails', async
   const fixture = await mkdtemp(join(tmpdir(), 'easysplit-gate4-orchestration-'));
   const gate4 = join(fixture, 'gate4.sh');
   const gate3 = join(fixture, 'gate3.sh');
-  const apk = join(fixture, 'app.apk');
+  const gate4Apk = join(fixture, 'gate4.apk');
+  const gate3Apk = join(fixture, 'gate3.apk');
   try {
-    await writeFile(gate4, '#!/usr/bin/env bash\nmkdir -p "$1"\nprintf gate4 >"$1/called"\nexit 23\n');
-    await writeFile(gate3, '#!/usr/bin/env bash\nmkdir -p "$1"\nprintf gate3 >"$1/called"\nexit 17\n');
-    await writeFile(apk, 'fixture');
+    await writeFile(gate4, '#!/usr/bin/env bash\nmkdir -p "$1"\nprintf gate4 >"$1/called"\nprintf "%s" "$2" >"$1/apk-path"\nexit 23\n');
+    await writeFile(gate3, '#!/usr/bin/env bash\nmkdir -p "$1"\nprintf gate3 >"$1/called"\nprintf "%s" "$2" >"$1/apk-path"\nexit 17\n');
+    await writeFile(gate4Apk, 'gate4-fixture');
+    await writeFile(gate3Apk, 'gate3-fixture');
     await chmod(gate4, 0o755);
     await chmod(gate3, 0o755);
-    await execFileAsync('bash', [wrapper.pathname, join(fixture, 'out'), apk, 'run-android'], {
+    await execFileAsync('bash', [
+      wrapper.pathname,
+      join(fixture, 'out'),
+      gate4Apk,
+      gate3Apk,
+      'run-android',
+    ], {
       env: {
         ...process.env,
         EASYSPLIT_GATE4_WRAPPER: gate4,
@@ -172,6 +218,8 @@ test('Android orchestration runs Gate 3 even when the Gate 4 child fails', async
     });
     assert.equal(await readFile(join(fixture, 'out/gate4/called'), 'utf8'), 'gate4');
     assert.equal(await readFile(join(fixture, 'out/gate3/called'), 'utf8'), 'gate3');
+    assert.equal(await readFile(join(fixture, 'out/gate4/apk-path'), 'utf8'), gate4Apk);
+    assert.equal(await readFile(join(fixture, 'out/gate3/apk-path'), 'utf8'), gate3Apk);
   } finally {
     await rm(fixture, { recursive: true, force: true });
   }
