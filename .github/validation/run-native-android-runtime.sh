@@ -36,6 +36,14 @@ if [[ "${1:-}" == shell && "${2:-}" == input && "${3:-}" == touchscreen \
       stable_samples=0
     fi
     if [[ $stable_samples -ge 6 ]]; then
+      # EasySplit itself is validated with the real predictive-edge gesture.
+      # External capture activities are different: the API-36 camera can ignore
+      # shell touchscreen swipes even while fully resumed. For those activities,
+      # dispatch Android's system Back key and still require EasySplit to return
+      # to the foreground before the runtime marker can pass.
+      if [[ "$current_activity" != com.easysplit.app/* ]]; then
+        exec "$real_adb" shell input keyevent KEYCODE_BACK
+      fi
       exec "$real_adb" "$@"
     fi
     sleep 0.25
