@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Camera, Upload, Flashlight, RefreshCw, X } from 'lucide-react';
 import { useLanguage } from './LanguageContext';
 import { createReceiptDraft, receiptScanUserMessage } from '../../lib/receiptScanClient';
-import { EasySplitLoadingScreen } from './EasySplitLoadingScreen';
+import { OCRProgressOverlay } from './OCRProgressOverlay';
 
 interface CameraViewfinderProps {
   onScanComplete: (receiptData: any) => void;
@@ -174,7 +174,7 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
   };
 
   if (isScanning) {
-    return <EasySplitLoadingScreen isOverlay={true} />;
+    return <OCRProgressOverlay isVisible={true} />;
   }
 
   return (
