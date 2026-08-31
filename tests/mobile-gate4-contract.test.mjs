@@ -45,6 +45,7 @@ test('Gate 4 native runner is test-only and drives shared UI plus realtime/payme
   assert.match(runner, /Capacitor\.getPlatform\(\)/);
   assert.match(runner, /App\.getLaunchUrl\(\)/);
   assert.match(runner, /easysplit:\\\/\\\/gate4/);
+  assert.match(runner, /Capacitor\.getPlatform\(\) === 'ios'/);
   assert.ok(
     runner.indexOf("click('[data-testid=\"settle-and-pay\"]')") < runner.indexOf("query<HTMLSelectElement>('[data-testid=\"payer-select\"]')"),
     'the settlement dialog must open before the runner queries its payer selector',
@@ -57,6 +58,9 @@ test('Gate 4 native runner is test-only and drives shared UI plus realtime/payme
     assert.match(wrapper, /api\/network-ip/);
     assert.match(wrapper, /gate4-reporter\.mjs wait/);
   }
+  assert.match(iosWrapper, /simctl launch "\$UDID" com\.easysplit\.app/);
+  assert.doesNotMatch(iosWrapper, /simctl openurl[^\n]*easysplit:\/\/gate4/);
+  assert.match(androidWrapper, /easysplit:\/\/gate4/);
   assert.doesNotMatch(androidMain, /usesCleartextTraffic="true"/);
   assert.match(androidDebug, /usesCleartextTraffic="true"/);
 });

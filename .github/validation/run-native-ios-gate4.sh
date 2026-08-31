@@ -43,7 +43,7 @@ curl --silent --fail http://127.0.0.1:3000/api/network-ip >/dev/null
 curl --silent --fail http://127.0.0.1:3904/health >/dev/null
 
 xcrun simctl terminate "$UDID" com.easysplit.app >/dev/null 2>&1 || true
-xcrun simctl openurl "$UDID" 'easysplit://gate4'
+xcrun simctl launch "$UDID" com.easysplit.app | tee "$OUTPUT_DIR/gate4-launch.txt"
 node .github/validation/gate4-reporter.mjs wait "$OUTPUT_DIR/ios-result.json" ios 180000
 diagnostics
 trap - EXIT

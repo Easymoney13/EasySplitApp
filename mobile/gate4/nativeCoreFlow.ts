@@ -250,9 +250,13 @@ function startGate4() {
   });
 }
 
-void App.addListener('appUrlOpen', ({ url }) => {
-  if (isGate4Launch(url)) startGate4();
-});
-void App.getLaunchUrl().then((launch) => {
-  if (isGate4Launch(launch?.url)) startGate4();
-});
+if (Capacitor.getPlatform() === 'ios') {
+  startGate4();
+} else {
+  void App.addListener('appUrlOpen', ({ url }) => {
+    if (isGate4Launch(url)) startGate4();
+  });
+  void App.getLaunchUrl().then((launch) => {
+    if (isGate4Launch(launch?.url)) startGate4();
+  });
+}
