@@ -22,6 +22,7 @@ const PUBLIC_ENV_KEYS = [
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, repoRoot, '');
   validateMobileEnv(env);
+  const gate4NativeE2E = env.EASYSPLIT_GATE4_E2E === 'true';
 
   const define = Object.fromEntries(
     PUBLIC_ENV_KEYS.map((key) => [`process.env.${key}`, JSON.stringify(env[key] || '')]),
@@ -32,7 +33,20 @@ export default defineConfig(({ mode }) => {
     publicDir: resolve(repoRoot, 'public'),
     envDir: repoRoot,
     base: './',
-    plugins: [react()],
+    plugins: [
+      react(),
+      ...(gate4NativeE2E ? [{
+        name: 'easysplit-gate4-native-e2e',
+        transformIndexHtml: {
+          order: 'pre' as const,
+          handler: () => [{
+            tag: 'script',
+            attrs: { type: 'module', src: '/gate4/nativeCoreFlow.ts' },
+            injectTo: 'body' as const,
+          }],
+        },
+      }] : []),
+    ],
     resolve: {
       alias: {
         'next/navigation': resolve(repoRoot, 'mobile/shims/next-navigation.ts'),

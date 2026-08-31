@@ -2098,6 +2098,7 @@ export default function HomePage() {
 
               {/* Option 3: Manual Split */}
               <button
+                data-testid="create-manual-split"
                 type="button"
                 onClick={() => {
                   setShowStartSplitModal(false);

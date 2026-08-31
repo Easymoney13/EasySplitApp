@@ -919,7 +919,7 @@ function SessionWorkspaceInner() {
   }
 
   return (
-    <div className="app-surface flex w-full flex-1 min-h-full flex-col text-slate-900 dark:text-slate-100 transition-colors duration-300 justify-between">
+    <div data-testid="session-workspace" className="app-surface flex w-full flex-1 min-h-full flex-col text-slate-900 dark:text-slate-100 transition-colors duration-300 justify-between">
       <div className="session-scroll-area p-5 pb-4 space-y-6 flex-1">
         {/* Header Bar */}
       <header className="flex items-center justify-between py-2 border-b border-slate-200/80 dark:border-slate-800">
@@ -1065,6 +1065,7 @@ function SessionWorkspaceInner() {
           </div>
 
           <select
+            data-testid="payer-select"
             value={activePayerId}
             onChange={(e) => sendAction('SET_PAYER', { payerId: e.target.value })}
             disabled={!isCurrentUserHost || isAccountingLocked}
@@ -1115,6 +1116,7 @@ function SessionWorkspaceInner() {
               </button>
 
               <button
+                data-testid="split-everyone"
                 onClick={() => sendAction('SPLIT_EVERYONE', {})}
                 className="brand-tap py-1.5 px-3.5 rounded-full bg-gradient-to-r from-brand-600 to-peach-500 hover:from-brand-700 hover:to-peach-600 text-white text-xs font-black flex items-center gap-1.5 transition-all shadow-md shadow-brand-500/20"
               >
@@ -1309,6 +1311,7 @@ function SessionWorkspaceInner() {
 
         {isGroupLinked ? (
           <button
+            data-testid="settle-and-pay"
             onClick={() => {
               if (isCurrentMemberSettled) {
                 void reopenMyShare();
@@ -1327,6 +1330,7 @@ function SessionWorkspaceInner() {
           </button>
         ) : (
           <button
+            data-testid="settle-and-pay"
             onClick={() => {
               if (isCurrentMemberSettled) {
                 void reopenMyShare();
@@ -1577,6 +1581,7 @@ function SessionWorkspaceInner() {
                   <div className="grid grid-cols-4 gap-2 flex-1">
                     {[0, 10, 12, 15].map((pct) => (
                       <button
+                        data-testid={`tip-${pct}`}
                         key={pct}
                         type="button"
                         onClick={() => {
@@ -1733,6 +1738,7 @@ function SessionWorkspaceInner() {
               {/* Settle Action Button - Matching Picture 2 Specification */}
               <div className="pt-2">
                 <button
+                  data-testid="mark-payment-complete"
                   disabled={isSettling !== 'idle'}
                   onClick={async () => {
                     setIsSettling('loading');
@@ -1796,6 +1802,7 @@ function SessionWorkspaceInner() {
       {/* Centered Celebration Reaction Modal */}
       {showCompletionReaction && (
         <div 
+          data-testid="settlement-complete"
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn"
           onClick={() => {
             if (!isFinishing) setShowCompletionReaction(false);

@@ -201,6 +201,7 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
       <div 
         role="dialog" 
         aria-modal="true"
+        data-testid="manual-bill-dialog"
         className="w-full max-w-md rounded-[32px] bg-[#F4F6FA] dark:bg-[#0B101D] text-slate-900 dark:text-slate-100 shadow-2xl max-h-[92vh] flex flex-col overflow-hidden border border-slate-200/80 dark:border-slate-800 animate-slideUp"
       >
         {/* Header Bar */}
@@ -233,6 +234,7 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
             {/* Store Name & Date */}
             <div className="text-center space-y-1 pb-3 border-b border-dashed border-slate-200 dark:border-slate-700/80">
               <input
+                data-testid="manual-store-name"
                 type="text"
                 value={storeName}
                 onChange={(e) => {
@@ -261,6 +263,7 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
                     >
                       <div className="flex items-center gap-2">
                         <input
+                          data-testid="manual-item-name"
                           type="text"
                           value={item.name}
                           onChange={(e) => handleItemChange(item.id, 'name', e.target.value)}
@@ -271,6 +274,7 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
                         />
                         <div className="w-24 relative">
                           <input
+                            data-testid="manual-item-price"
                             type="number"
                             step="0.01"
                             value={item.price}
@@ -296,6 +300,7 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
                 return (
                   <div
                     key={item.id}
+                    data-testid="manual-item-row"
                     onClick={() => setEditingItemId(item.id)}
                     className="flex items-center justify-between text-xs py-1.5 px-2 rounded-xl hover:bg-slate-50 dark:hover:bg-[#18233A]/60 cursor-pointer transition-colors group"
                   >
@@ -418,6 +423,7 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
             </button>
 
             <button
+              data-testid="manual-bill-submit"
               type="submit"
               disabled={submittingNow}
               className="brand-tap flex-[2] py-3.5 px-6 rounded-full bg-brand-600 hover:bg-brand-700 text-white font-black text-xs shadow-lg shadow-brand-500/25 transition-all flex items-center justify-center gap-2 disabled:opacity-50"

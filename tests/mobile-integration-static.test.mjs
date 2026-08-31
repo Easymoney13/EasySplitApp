@@ -191,12 +191,16 @@ test('Android runtime allows full logcat output for crash scanning', async () =>
 });
 
 test('Android emulator runner delegates validation and diagnostics to one shell wrapper', async () => {
-  const workflow = await read('.github/workflows/capacitor-native-builds.yml');
+  const [workflow, gate4Wrapper] = await Promise.all([
+    read('.github/workflows/capacitor-native-builds.yml'),
+    read('.github/validation/run-native-android-gate4.sh'),
+  ]);
 
   assert.match(
     workflow,
-    /script: bash \.github\/validation\/run-native-android-runtime\.sh "\$RUNNER_TEMP\/easysplit-android-smoke" android-runtime\/app-debug\.apk/,
+    /script: bash \.github\/validation\/run-native-android-gate4\.sh "\$RUNNER_TEMP\/easysplit-android-smoke" android-runtime\/app-debug\.apk/,
   );
+  assert.match(gate4Wrapper, /bash \.github\/validation\/run-native-android-runtime\.sh "\$OUTPUT_DIR" "\$APK_PATH"/);
   assert.doesNotMatch(workflow, /set \+e|RUNTIME_STATUS=\$\?/);
   assert.match(workflow, /test -s "\$SCREENSHOT"/);
   assert.match(workflow, /test -s "\$LOGCAT"/);

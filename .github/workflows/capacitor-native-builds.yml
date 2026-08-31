@@ -88,6 +88,12 @@ jobs:
           npm run verify:mobile-shell
 
       - name: Synchronize native projects
+        env:
+          EASYSPLIT_GATE4_E2E: 'true'
+          VITE_GATE4_REPORT_ORIGIN: http://127.0.0.1:3904
+          NEXT_PUBLIC_EASYSPLIT_API_ORIGIN: http://127.0.0.1:3000
+          NEXT_PUBLIC_EASYSPLIT_WEB_ORIGIN: http://127.0.0.1:3000
+          NEXT_PUBLIC_EASYSPLIT_WS_ORIGIN: ws://127.0.0.1:3000
         run: npm run mobile:sync
 
       - name: Verify synchronized plugins and native config
@@ -101,6 +107,8 @@ jobs:
           grep -q "capacitor-app-launcher" android/app/capacitor.build.gradle
           grep -q "capacitor-share" android/app/capacitor.build.gradle
           grep -q 'X-EasySplit-Client-Id' lib/platformSecurity.js
+          ! grep -q '/gate4/nativeCoreFlow.ts' mobile-dist/index.html
+          grep -Rqs 'GATE4_NATIVE_CORE_FLOW=PASS' mobile-dist/assets
 
       - name: Compile iOS simulator without signing
         shell: bash
@@ -143,6 +151,7 @@ jobs:
           test -d "$APP_PATH"
           xcrun simctl install "$UDID" "$APP_PATH"
           xcrun simctl get_app_container "$UDID" com.easysplit.app app
+          bash .github/validation/run-native-ios-gate4.sh "$RUNNER_TEMP/easysplit-ios-smoke" "$UDID"
           xcrun simctl launch "$UDID" com.easysplit.app | tee "$RUNNER_TEMP/easysplit-ios-smoke/launch.txt"
           sleep 3
           xcrun simctl io "$UDID" screenshot "$RUNNER_TEMP/easysplit-ios-smoke/home.png"
@@ -193,7 +202,7 @@ jobs:
           retention-days: 7
 
   android-api-36-runtime:
-    name: Android 16 install + launch + Back + deep links
+    name: Android 16 core E2E + Back + deep links
     needs: compile-native-projects
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -233,7 +242,7 @@ jobs:
           name: easysplit-android-debug-${{ github.run_id }}
           path: android-runtime
 
-      - name: Run Android 16 native runtime smoke
+      - name: Run Android 16 native core E2E and runtime smoke
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 36
@@ -247,7 +256,7 @@ jobs:
             adb kill-server || true
             adb start-server
             adb devices
-          script: bash .github/validation/run-native-android-runtime.sh "$RUNNER_TEMP/easysplit-android-smoke" android-runtime/app-debug.apk
+          script: bash .github/validation/run-native-android-gate4.sh "$RUNNER_TEMP/easysplit-android-smoke" android-runtime/app-debug.apk
 
       - name: Require Android runtime PASS evidence
         shell: bash
@@ -257,10 +266,13 @@ jobs:
           EXIT_CODE="$RUNNER_TEMP/easysplit-android-smoke/exit-code.txt"
           SCREENSHOT="$RUNNER_TEMP/easysplit-android-smoke/final.png"
           LOGCAT="$RUNNER_TEMP/easysplit-android-smoke/logcat.txt"
+          GATE4_REPORT="$RUNNER_TEMP/easysplit-android-smoke/android-result.json"
           test -s "$RESULT"
           test -s "$EXIT_CODE"
           test -s "$SCREENSHOT"
           test -s "$LOGCAT"
+          test -s "$GATE4_REPORT"
+          node .github/validation/gate4-reporter.mjs wait "$GATE4_REPORT" android 1000
           cat "$RESULT"
           test "$(cat "$EXIT_CODE")" -eq 0
           for marker in \
