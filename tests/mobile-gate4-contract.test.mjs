@@ -3,27 +3,36 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { GATE4_CORE_MARKERS, validateGate4Report } from '../.github/validation/gate4-contract.mjs';
 
-test('Gate 4 accepts only a complete successful native report for the expected platform', () => {
+test('Gate 4 accepts only a complete successful report for the exact platform and run', () => {
   for (const platform of ['ios', 'android']) {
-    assert.equal(validateGate4Report({ platform, status: 'PASS', markers: GATE4_CORE_MARKERS }, platform), true);
+    const runId = `run-${platform}`;
+    const report = { runId, platform, stage: 'NATIVE_CORE_FLOW', status: 'PASS', markers: GATE4_CORE_MARKERS };
+    assert.equal(validateGate4Report(report, platform, runId), true);
     assert.throws(
-      () => validateGate4Report({ platform, status: 'PASS', markers: GATE4_CORE_MARKERS.slice(1) }, platform),
-      /GATE4_SESSION_CREATION=PASS/,
+      () => validateGate4Report({ ...report, markers: GATE4_CORE_MARKERS.slice(1) }, platform, runId),
+      /must exactly match/,
     );
     assert.throws(
-      () => validateGate4Report({ platform, status: 'FAIL', markers: [], error: 'flow failed' }, platform),
+      () => validateGate4Report({ ...report, markers: [...GATE4_CORE_MARKERS, 'EXTRA=PASS'] }, platform, runId),
+      /must exactly match/,
+    );
+    assert.throws(
+      () => validateGate4Report({ ...report, stage: 'PAYMENT_COMPLETION' }, platform, runId),
+      /NATIVE_CORE_FLOW/,
+    );
+    assert.throws(() => validateGate4Report(report, platform, 'stale-run'), /Expected Gate 4 run stale-run/);
+    assert.throws(
+      () => validateGate4Report({ ...report, status: 'FAIL', error: 'flow failed' }, platform, runId),
       /flow failed/,
     );
   }
 });
 
-test('Gate 4 native runner is test-only and drives shared UI plus realtime/payment behavior', async () => {
-  const [viteConfig, runner, home, session, manual, workflow, androidWrapper, iosWrapper, androidMain, androidDebug] = await Promise.all([
+test('Gate 4 runner stays test-only and uses real session UI, transport, and credential helpers', async () => {
+  const [viteConfig, runner, session, workflow, androidWrapper, iosWrapper, androidMain, androidDebug] = await Promise.all([
     readFile('vite.mobile.config.ts', 'utf8'),
     readFile('mobile/gate4/nativeCoreFlow.ts', 'utf8'),
-    readFile('src/app/page.tsx', 'utf8'),
     readFile('src/app/session/[id]/page.tsx', 'utf8'),
-    readFile('src/components/ManualBillModal.tsx', 'utf8'),
     readFile('.github/workflows/capacitor-native-builds.yml', 'utf8'),
     readFile('.github/validation/run-native-android-gate4.sh', 'utf8'),
     readFile('.github/validation/run-native-ios-gate4.sh', 'utf8'),
@@ -31,36 +40,33 @@ test('Gate 4 native runner is test-only and drives shared UI plus realtime/payme
     readFile('android/app/src/debug/AndroidManifest.xml', 'utf8'),
   ]);
   assert.match(viteConfig, /EASYSPLIT_GATE4_E2E === 'true'/);
-  assert.match(viteConfig, /order: 'pre'/);
-  assert.match(viteConfig, /gate4\/nativeCoreFlow\.ts/);
-  assert.match(home, /data-testid="create-manual-split"/);
-  assert.match(manual, /data-testid="manual-bill-submit"/);
+  assert.match(viteConfig, /injectTo: 'head-pre'/);
+  assert.match(viteConfig, /VITE_GATE4_RUN_ID is required/);
   for (const selector of ['session-workspace', 'split-everyone', 'payer-select', 'settle-and-pay', 'mark-payment-complete', 'settlement-complete']) {
     assert.equal(session.includes(`data-testid="${selector}"`), true, `missing ${selector}`);
   }
-  assert.match(session, /data-testid=\{`tip-\$\{pct\}`\}/);
+  assert.match(runner, /request\('\/api\/receipt\/scan'/);
+  assert.match(runner, /saveRoomCredentials\('session'/);
+  assert.match(runner, /saveSessionInviteToken\(sessionId/);
+  assert.match(runner, /pushShellRoute\(window/);
   assert.match(runner, /new WebSocket\(realtimeUrl\(\)\)/);
   assert.match(runner, /payment-target/);
-  assert.match(runner, /status === 'settled'/);
-  assert.match(runner, /Capacitor\.getPlatform\(\)/);
-  assert.match(runner, /App\.getLaunchUrl\(\)/);
-  assert.match(runner, /easysplit:\\\/\\\/gate4/);
-  assert.match(runner, /Capacitor\.getPlatform\(\) === 'ios'/);
-  assert.ok(
-    runner.indexOf("click('[data-testid=\"settle-and-pay\"]')") < runner.indexOf("query<HTMLSelectElement>('[data-testid=\"payer-select\"]')"),
-    'the settlement dialog must open before the runner queries its payer selector',
-  );
-  assert.match(workflow, /EASYSPLIT_GATE4_E2E: 'true'/);
-  assert.match(workflow, /GATE4_NATIVE_CORE_FLOW=PASS/);
-  assert.match(workflow, /run-native-ios-gate4\.sh/);
-  assert.match(workflow, /run-native-android-gate4\.sh/);
+  assert.doesNotMatch(runner, /start-split-sheet|profile-display-name|create-manual-split/);
+  assert.doesNotMatch(runner, /setAuthLoading|firebaseUser\s*=/);
+
+  assert.match(workflow, /ios-native:[\s\S]*needs: shared-verification/);
+  assert.match(workflow, /android-native:[\s\S]*needs: shared-verification/);
+  assert.doesNotMatch(workflow, /android-native:[\s\S]*needs: ios-native/);
+  assert.match(workflow, /run-native-android-validation\.sh/);
+  assert.match(workflow, /Run iOS launch and deep-link smoke independently\n\s+if: always\(\)/);
+  assert.match(workflow, /Require complete iOS runtime evidence\n\s+if: always\(\)/);
+  assert.match(workflow, /Require complete Android Gate 4 and Gate 3 evidence\n\s+if: always\(\)/);
+  assert.match(workflow, /! grep -Rqs '__EASYSPLIT_GATE4_AUTH_DIAGNOSTICS__' mobile-dist/);
   for (const wrapper of [androidWrapper, iosWrapper]) {
-    assert.match(wrapper, /api\/network-ip/);
+    assert.match(wrapper, /gate4-exit-code\.txt/);
     assert.match(wrapper, /gate4-reporter\.mjs wait/);
+    assert.match(wrapper, /exit 0/);
   }
-  assert.match(iosWrapper, /simctl launch "\$UDID" com\.easysplit\.app/);
-  assert.doesNotMatch(iosWrapper, /simctl openurl[^\n]*easysplit:\/\/gate4/);
-  assert.match(androidWrapper, /easysplit:\/\/gate4/);
   assert.doesNotMatch(androidMain, /usesCleartextTraffic="true"/);
   assert.match(androidDebug, /usesCleartextTraffic="true"/);
 });

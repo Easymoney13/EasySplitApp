@@ -195,18 +195,21 @@ test('Android runtime allows full logcat output for crash scanning', async () =>
   assert.match(runtimeSmoke, /captureExpectedRendererTermination\([\s\S]*?performAndroidBack\('root'[\s\S]*?requireRootBackTeardown: true/);
 });
 
-test('Android emulator runner delegates validation and diagnostics to one shell wrapper', async () => {
-  const [workflow, gate4Wrapper] = await Promise.all([
+test('Android emulator runner delegates isolated Gate 4 and Gate 3 evidence to one orchestrator', async () => {
+  const [workflow, orchestrator, evidenceValidator] = await Promise.all([
     read('.github/workflows/capacitor-native-builds.yml'),
-    read('.github/validation/run-native-android-gate4.sh'),
+    read('.github/validation/run-native-android-validation.sh'),
+    read('.github/validation/require-native-evidence.mjs'),
   ]);
 
   assert.match(
     workflow,
-    /script: bash \.github\/validation\/run-native-android-gate4\.sh "\$RUNNER_TEMP\/easysplit-android-smoke" android-runtime\/app-debug\.apk/,
+    /script: bash \.github\/validation\/run-native-android-validation\.sh "\$RUNNER_TEMP\/easysplit-android" android\/app\/build\/outputs\/apk\/debug\/app-debug\.apk "\$GATE4_RUN_ID"/,
   );
-  assert.match(gate4Wrapper, /bash \.github\/validation\/run-native-android-runtime\.sh "\$OUTPUT_DIR" "\$APK_PATH"/);
-  assert.doesNotMatch(workflow, /set \+e|RUNTIME_STATUS=\$\?/);
-  assert.match(workflow, /test -s "\$SCREENSHOT"/);
-  assert.match(workflow, /test -s "\$LOGCAT"/);
+  assert.match(orchestrator, /run-native-android-gate4\.sh/);
+  assert.match(orchestrator, /run-native-android-runtime\.sh/);
+  assert.match(workflow, /Require complete Android Gate 4 and Gate 3 evidence[\s\S]*if: always\(\)/);
+  assert.doesNotMatch(workflow, /continue-on-error/);
+  assert.match(evidenceValidator, /Gate 3 screenshot/);
+  assert.match(evidenceValidator, /Gate 3 logcat/);
 });

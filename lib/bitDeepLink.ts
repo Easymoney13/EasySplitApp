@@ -1,4 +1,5 @@
 import { copyText, openExternalApp } from './nativeActions';
+import { Capacitor } from '@capacitor/core';
 
 export interface BitPaymentParams {
   phone: string;

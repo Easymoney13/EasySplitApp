@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateMobileEnv } from './mobile/env-core.mjs';
+import { gate4FixtureScript } from './mobile/gate4/fixture.mjs';
+import { gate4AuthInstrumentationPlugin } from './mobile/gate4/auth-instrumentation.mjs';
 
 const repoRoot = fileURLToPath(new URL('.', import.meta.url));
 
@@ -23,6 +25,11 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, repoRoot, '');
   validateMobileEnv(env);
   const gate4NativeE2E = env.EASYSPLIT_GATE4_E2E === 'true';
+  const gate4RunId = env.VITE_GATE4_RUN_ID || '';
+  if (gate4NativeE2E && !gate4RunId) {
+    throw new Error('VITE_GATE4_RUN_ID is required for a Gate 4 instrumented build');
+  }
+  const gate4Fixture = gate4NativeE2E ? gate4FixtureScript() : '';
 
   const define = Object.fromEntries(
     PUBLIC_ENV_KEYS.map((key) => [`process.env.${key}`, JSON.stringify(env[key] || '')]),
@@ -35,15 +42,23 @@ export default defineConfig(({ mode }) => {
     base: './',
     plugins: [
       react(),
+      ...(gate4NativeE2E ? [gate4AuthInstrumentationPlugin()] : []),
       ...(gate4NativeE2E ? [{
         name: 'easysplit-gate4-native-e2e',
         transformIndexHtml: {
           order: 'pre' as const,
-          handler: () => [{
-            tag: 'script',
-            attrs: { type: 'module', src: '/gate4/nativeCoreFlow.ts' },
-            injectTo: 'body' as const,
-          }],
+          handler: () => [
+            {
+              tag: 'script',
+              children: gate4Fixture,
+              injectTo: 'head-pre' as const,
+            },
+            {
+              tag: 'script',
+              attrs: { type: 'module', src: '/gate4/nativeCoreFlow.ts' },
+              injectTo: 'body' as const,
+            },
+          ],
         },
       }] : []),
     ],

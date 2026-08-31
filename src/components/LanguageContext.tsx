@@ -630,7 +630,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       {/* Global Onboarding / Profile Modal */}
       {showProfileModal && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-md animate-fadeIn" dir={isRtl ? 'rtl' : 'ltr'}>
-          <div role="dialog" aria-modal="true" data-testid="profile-onboarding" aria-label={language === 'he' ? 'ברוכים הבאים ל-EasySplit' : 'Welcome to EasySplit'} className="w-full max-w-sm max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-[28px] p-6 bg-white dark:bg-brand-900 border border-slate-200 dark:border-[#222C3D] text-slate-900 dark:text-white space-y-4 shadow-2xl transition-all">
+          <div role="dialog" aria-modal="true" aria-label={language === 'he' ? 'ברוכים הבאים ל-EasySplit' : 'Welcome to EasySplit'} className="w-full max-w-sm max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-[28px] p-6 bg-white dark:bg-brand-900 border border-slate-200 dark:border-[#222C3D] text-slate-900 dark:text-white space-y-4 shadow-2xl transition-all">
             
             {/* Language Switcher */}
             <div className={`flex ${isRtl ? 'justify-start' : 'justify-end'} items-center`}>
@@ -725,7 +725,6 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                   {language === 'he' ? 'שם לתצוגה' : 'Display Name'}
                 </label>
                 <input
-                  data-testid="profile-display-name"
                   value={guestName}
                   onChange={(event) => setGuestName(event.target.value)}
                   maxLength={30}
@@ -744,7 +743,6 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 <div className="relative">
                   <Phone className="pointer-events-none absolute left-3.5 rtl:left-auto rtl:right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                   <input
-                    data-testid="profile-phone"
                     type="tel"
                     inputMode="tel"
                     value={guestPhone}

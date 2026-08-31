@@ -1,18 +1,31 @@
 import { App } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
-import { realtimeUrl } from '../../lib/platformTransport';
+import { apiUrl, realtimeUrl } from '../../lib/platformTransport';
+import {
+  getOrCreateRoomClientId,
+  getRoomMemberId,
+  getRoomToken,
+  getSessionInviteToken,
+  roomHeaders,
+  saveRoomCredentials,
+  saveSessionInviteToken,
+} from '../../lib/roomTokens';
+import { pushShellRoute } from '../router-core.mjs';
+import { runGate4Core } from './core-flow.mjs';
+import { runGate4Once } from './run-once.mjs';
 
-const MARKERS = [
-  'GATE4_SESSION_CREATION=PASS',
-  'GATE4_REALTIME_PARTICIPANT=PASS',
-  'GATE4_ALLOCATION_RECONCILIATION=PASS',
-  'GATE4_PAYMENT_COMPLETION=PASS',
-  'GATE4_NATIVE_CORE_FLOW=PASS',
-];
-
-const API_ORIGIN = String(process.env.NEXT_PUBLIC_EASYSPLIT_API_ORIGIN || '').replace(/\/+$/, '');
 const REPORT_ORIGIN = String(import.meta.env.VITE_GATE4_REPORT_ORIGIN || '').replace(/\/+$/, '');
+const RUN_ID = String(import.meta.env.VITE_GATE4_RUN_ID || '');
 const TIMEOUT_MS = 30_000;
+const HOST_NAME = 'Gate Four Host';
+const HOST_PHONE = '0501234567';
+const GUEST_NAME = 'Gate Four Guest';
+const GUEST_PHONE = '0527654321';
+
+const execution = {
+  stage: 'BOOTSTRAP',
+  markers: [] as string[],
+};
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -35,6 +48,9 @@ function query<T extends Element>(selector: string): T | null {
 function click(selector: string) {
   const element = query<HTMLElement>(selector);
   if (!element) throw new Error(`Missing control: ${selector}`);
+  if ('disabled' in element && Boolean((element as HTMLButtonElement).disabled)) {
+    throw new Error(`Disabled control: ${selector}`);
+  }
   element.click();
 }
 
@@ -46,16 +62,61 @@ function setControlValue(control: HTMLInputElement | HTMLSelectElement, value: s
   control.dispatchEvent(new Event(control instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }));
 }
 
-function roomHeaders(token: string, clientId: string) {
+function diagnostics() {
+  const localProfile = localStorage.getItem('billsplit_local_profile');
   return {
-    'Content-Type': 'application/json',
-    'X-Room-Token': token,
-    'X-EasySplit-Client-Id': clientId,
+    stage: execution.stage,
+    markers: [...execution.markers],
+    documentReadyState: document.readyState,
+    route: window.location.search,
+    accountScope: localStorage.getItem('billsplit_account_scope'),
+    hasLocalProfile: Boolean(localProfile),
+    hasLocalPhone: Boolean(localStorage.getItem('billsplit_phone')),
+    hasOnboarding: Boolean(query('[role="dialog"][aria-label*="EasySplit"]')),
+    hasStartButton: Boolean(query('[data-testid="start-split-button"]')),
+    hasSessionWorkspace: Boolean(query('[data-testid="session-workspace"]')),
+    auth: window.__EASYSPLIT_GATE4_AUTH_DIAGNOSTICS__ || { stage: 'NOT_OBSERVED' },
   };
 }
 
+async function postEvidence(path: '/progress' | '/report', payload: Record<string, unknown>) {
+  if (!REPORT_ORIGIN) throw new Error('VITE_GATE4_REPORT_ORIGIN is required');
+  const response = await fetch(`${REPORT_ORIGIN}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(`Gate 4 reporter rejected ${path} (${response.status}): ${body.error || 'unknown error'}`);
+  }
+}
+
+async function progress(platform: string, update: Record<string, unknown>) {
+  execution.stage = String(update.stage || execution.stage);
+  execution.markers = Array.isArray(update.markers) ? [...update.markers] as string[] : execution.markers;
+  await postEvidence('/progress', {
+    runId: RUN_ID,
+    platform,
+    ...update,
+    diagnostics: diagnostics(),
+  });
+}
+
+async function report(platform: string, status: 'PASS' | 'FAIL', details: Record<string, unknown>) {
+  await postEvidence('/report', {
+    runId: RUN_ID,
+    platform,
+    status,
+    markers: [...execution.markers],
+    stage: execution.stage,
+    diagnostics: diagnostics(),
+    ...details,
+  });
+}
+
 async function request(path: string, init: RequestInit = {}) {
-  const response = await fetch(`${API_ORIGIN}${path}`, init);
+  const response = await fetch(apiUrl(path), init);
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.error || `${init.method || 'GET'} ${path} failed (${response.status})`);
   return body;
@@ -64,7 +125,11 @@ async function request(path: string, init: RequestInit = {}) {
 function action(sessionId: string, memberId: string, token: string, clientId: string, type: string, payload: Record<string, unknown>) {
   return request('/api/session/action', {
     method: 'POST',
-    headers: roomHeaders(token, clientId),
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Room-Token': token,
+      'X-EasySplit-Client-Id': clientId,
+    },
     body: JSON.stringify({
       sessionId,
       action: type,
@@ -127,136 +192,241 @@ function subscribe(sessionId: string, token: string) {
   };
 }
 
-async function report(platform: string, status: 'PASS' | 'FAIL', details: Record<string, unknown>) {
-  if (!REPORT_ORIGIN) throw new Error('VITE_GATE4_REPORT_ORIGIN is required');
-  const response = await fetch(`${REPORT_ORIGIN}/report`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ platform, status, markers: status === 'PASS' ? MARKERS : [], ...details }),
-  });
-  if (!response.ok) throw new Error(`Gate 4 reporter rejected the result (${response.status})`);
+function itemCard(itemName: string) {
+  const heading = Array.from(document.querySelectorAll('h3')).find((candidate) => candidate.textContent?.trim() === itemName);
+  return heading?.closest<HTMLElement>('.relative.p-4') || null;
 }
 
-async function run() {
-  const platform = Capacitor.getPlatform();
-  if (!['ios', 'android'].includes(platform)) throw new Error(`Gate 4 requires a native platform, received ${platform}`);
-  if (!API_ORIGIN) throw new Error('Gate 4 API origin is required');
+function createDriver() {
+  return {
+    async waitForApplication() {
+      const startButton = await waitFor(
+        () => query<HTMLButtonElement>('[data-testid="start-split-button"]'),
+        'application auth/profile readiness',
+      );
+      if (startButton.disabled) throw new Error('Application start control is disabled');
+      const rawProfile = localStorage.getItem('billsplit_local_profile');
+      const profile = rawProfile ? JSON.parse(rawProfile) : null;
+      if (profile?.displayName !== HOST_NAME || profile?.phoneNumber !== HOST_PHONE) {
+        throw new Error('Gate 4 guest fixture was not consumed by the application');
+      }
+      if (localStorage.getItem('billsplit_account_scope') !== 'guest') {
+        throw new Error('Gate 4 account scope is not guest');
+      }
+      if (query('[role="dialog"][aria-label*="EasySplit"]')) throw new Error('Onboarding still blocks the application');
+    },
 
-  const nameInput = await waitFor(() => query<HTMLInputElement>('[data-testid="profile-display-name"]'), 'onboarding name');
-  const phoneInput = query<HTMLInputElement>('[data-testid="profile-phone"]');
-  if (!phoneInput) throw new Error('Onboarding phone input is missing');
-  setControlValue(nameInput, 'Gate Four Host');
-  setControlValue(phoneInput, '0501234567');
-  nameInput.closest('form')?.querySelector<HTMLButtonElement>('button[type="submit"]')?.click();
-  await waitFor(() => !query('[data-testid="profile-onboarding"]'), 'onboarding completion');
+    async createSession() {
+      const hostClientId = getOrCreateRoomClientId();
+      const created = await request('/api/receipt/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-EasySplit-Client-Id': hostClientId },
+        body: JSON.stringify({
+          parsedBill: {
+            storeName: 'Gate Four Dinner',
+            currency: 'NIS',
+            items: [{ id: 'gate4_item', name: 'Shared Dinner', price: 150, category: 'Food', claimedBy: [] }],
+          },
+          hostName: HOST_NAME,
+          hostPhone: HOST_PHONE,
+          clientId: hostClientId,
+          confirmedByUser: true,
+        }),
+      });
+      const sessionId = String(created.sessionId || '');
+      const hostId = String(created.memberId || created.hostId || '');
+      const hostToken = String(created.accessToken || '');
+      const inviteToken = String(created.inviteToken || '');
+      if (!sessionId || !hostId || !hostToken || !inviteToken) {
+        throw new Error('Session creation credentials are incomplete');
+      }
 
-  click('[data-testid="start-split-button"]');
-  await waitFor(() => query('[data-testid="start-split-sheet"]'), 'start split sheet');
-  click('[data-testid="create-manual-split"]');
-  await waitFor(() => query('[data-testid="manual-bill-dialog"]'), 'manual bill dialog');
-  const store = query<HTMLInputElement>('[data-testid="manual-store-name"]');
-  if (!store) throw new Error('Store input is missing');
-  setControlValue(store, 'Gate Four Dinner');
-  click('[data-testid="manual-item-row"]');
-  const itemName = await waitFor(() => query<HTMLInputElement>('[data-testid="manual-item-name"]'), 'manual item name');
-  const itemPrice = query<HTMLInputElement>('[data-testid="manual-item-price"]');
-  if (!itemPrice) throw new Error('Item price input is missing');
-  setControlValue(itemName, 'Shared Dinner');
-  setControlValue(itemPrice, '150');
-  click('[data-testid="manual-bill-submit"]');
-  await waitFor(() => query('[data-testid="session-workspace"]'), 'created session workspace');
+      saveRoomCredentials('session', sessionId, hostId, hostToken);
+      saveSessionInviteToken(sessionId, inviteToken);
+      if (
+        getRoomMemberId('session', sessionId) !== hostId
+        || getRoomToken('session', sessionId) !== hostToken
+        || getSessionInviteToken(sessionId) !== inviteToken
+      ) {
+        throw new Error('Session credentials did not round-trip through room helpers');
+      }
 
-  const active = JSON.parse(localStorage.getItem('billsplit_active_session') || '{}');
-  const sessionId = String(active.id || '');
-  const hostId = String(active.hostId || localStorage.getItem(`billsplit_member_${sessionId}`) || '');
-  const hostToken = String(localStorage.getItem(`billsplit_session_token_${sessionId}`) || '');
-  const inviteToken = String(localStorage.getItem(`billsplit_session_invite_${sessionId}`) || active.inviteToken || '');
-  const hostClientId = String(localStorage.getItem('billsplit_room_client_id') || '');
-  if (!sessionId || !hostId || !hostToken || !inviteToken || !hostClientId) throw new Error('Created session credentials are incomplete');
+      localStorage.setItem('billsplit_active_session', JSON.stringify({
+        id: sessionId,
+        code: created.code,
+        storeName: created.session?.storeName || 'Gate Four Dinner',
+        isHost: true,
+        hostId,
+        inviteToken,
+      }));
+      pushShellRoute(window, `/session/${encodeURIComponent(sessionId)}`);
 
-  const guestClientId = `gate4_guest_${platform}_${Date.now()}`;
-  const joined = await request(`/api/session/${encodeURIComponent(sessionId)}/join`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-EasySplit-Client-Id': guestClientId },
-    body: JSON.stringify({
-      name: 'Gate Four Guest',
-      phone: '0527654321',
-      clientId: guestClientId,
-      inviteToken,
-    }),
-  });
-  const guestId = String(joined.memberId || '');
-  const guestToken = String(joined.accessToken || '');
-  if (!guestId || !guestToken) throw new Error('Guest credentials are incomplete');
+      const workspace = await waitFor(() => query<HTMLElement>('[data-testid="session-workspace"]'), 'created session workspace');
+      const splitButton = query<HTMLButtonElement>('[data-testid="split-everyone"]');
+      if (!splitButton || splitButton.disabled) throw new Error('Host split control is unavailable');
+      const text = workspace.textContent || '';
+      if (!text.includes('Gate Four Dinner') || !text.includes('Shared Dinner')) {
+        throw new Error('Created session UI does not show the expected receipt');
+      }
+      const serverState = await request(`/api/session/${encodeURIComponent(sessionId)}`, {
+        headers: roomHeaders('session', sessionId, false),
+      });
+      if (serverState.session?.id !== sessionId || Number(serverState.session?.items?.[0]?.price) !== 150) {
+        throw new Error('Created session server state does not reconcile with the UI');
+      }
+      return { sessionId, hostId, hostToken, inviteToken, hostClientId };
+    },
 
-  const realtime = subscribe(sessionId, guestToken);
-  await realtime.waitUntil((session) => session.members?.length === 2, 'participant join');
-  await waitFor(() => document.body.textContent?.includes('Gate Four Guest'), 'participant in native UI');
+    async joinParticipant(context: any) {
+      const guestClientId = `gate4_guest_${Capacitor.getPlatform()}_${Date.now()}`;
+      const joined = await request(`/api/session/${encodeURIComponent(context.sessionId)}/join`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-EasySplit-Client-Id': guestClientId },
+        body: JSON.stringify({
+          name: GUEST_NAME,
+          phone: GUEST_PHONE,
+          clientId: guestClientId,
+          inviteToken: context.inviteToken,
+        }),
+      });
+      const guestId = String(joined.memberId || '');
+      const guestToken = String(joined.accessToken || '');
+      if (!guestId || !guestToken) throw new Error('Guest credentials are incomplete');
+      const realtime = subscribe(context.sessionId, guestToken);
+      const joinedState = await realtime.waitUntil(
+        (session: any) => session.members?.length === 2 && session.members.some((member: any) => member.id === guestId),
+        'participant join',
+      );
+      await waitFor(
+        () => query<HTMLElement>('[data-testid="session-workspace"]')?.textContent?.includes(GUEST_NAME),
+        'participant in native UI',
+      );
+      if (!joinedState.members.some((member: any) => member.name === GUEST_NAME)) {
+        throw new Error('Realtime participant identity is incorrect');
+      }
+      return { guestClientId, guestId, guestToken, realtime };
+    },
 
-  click('[data-testid="split-everyone"]');
-  await realtime.waitUntil(
-    (session) => session.items?.length === 1 && session.items.every((item: any) => item.claimedBy?.length === 2),
-    'shared allocation',
-  );
+    async allocateAndReconcile(context: any) {
+      click('[data-testid="split-everyone"]');
+      const allocated = await context.realtime.waitUntil(
+        (session: any) => session.items?.length === 1 && session.items.every((item: any) => item.claimedBy?.length === 2),
+        'shared allocation',
+      );
+      await waitFor(() => {
+        const text = itemCard('Shared Dinner')?.textContent || '';
+        return text.includes(HOST_NAME) && text.includes(GUEST_NAME) && text.toLowerCase().includes('each');
+      }, 'shared allocation in native UI');
 
-  click('[data-testid="settle-and-pay"]');
-  await waitFor(() => query('[data-testid="tip-10"]'), 'settlement dialog');
-  const payerSelect = query<HTMLSelectElement>('[data-testid="payer-select"]');
-  if (!payerSelect) throw new Error('Payer selector is missing');
-  setControlValue(payerSelect, hostId);
-  click('[data-testid="tip-10"]');
-  await realtime.waitUntil((session) => session.payerId === hostId && session.tipPercentage === 10, 'payer and tip');
+      click('[data-testid="settle-and-pay"]');
+      const payerSelect = await waitFor(() => query<HTMLSelectElement>('[data-testid="payer-select"]'), 'payer selector');
+      const tipButton = query<HTMLButtonElement>('[data-testid="tip-10"]');
+      if (!tipButton || tipButton.disabled) throw new Error('Tip control is unavailable');
+      setControlValue(payerSelect, context.hostId);
+      tipButton.click();
+      const reconciled = await context.realtime.waitUntil(
+        (session: any) => session.payerId === context.hostId
+          && session.tipPercentage === 10
+          && session.items?.every((item: any) => item.claimedBy?.length === 2),
+        'payer, tip, and allocation reconciliation',
+      );
+      await waitFor(
+        () => payerSelect.value === context.hostId && document.body.textContent?.includes('Tip (10%)'),
+        'payer and tip in native UI',
+      );
+      const total = reconciled.items.reduce((sum: number, item: any) => sum + Number(item.price || 0), 0);
+      if (total !== 150 || allocated.items[0].claimedBy.length !== 2) {
+        throw new Error('Allocated item total does not reconcile');
+      }
+      const payment = await request(
+        `/api/session/${encodeURIComponent(context.sessionId)}/payment-target/${encodeURIComponent(context.hostId)}`,
+        {
+          headers: {
+            'X-Room-Token': context.guestToken,
+            'X-EasySplit-Client-Id': context.guestClientId,
+          },
+        },
+      );
+      if (payment.phone !== HOST_PHONE || Math.abs(Number(payment.amount) - 82.5) > 0.01) {
+        throw new Error(`Payment target mismatch: ${JSON.stringify(payment)}`);
+      }
+      return { paymentAmount: Number(payment.amount), itemTotal: total };
+    },
 
-  const payment = await request(`/api/session/${encodeURIComponent(sessionId)}/payment-target/${encodeURIComponent(hostId)}`, {
-    headers: roomHeaders(guestToken, guestClientId),
-  });
-  if (payment.phone !== '0501234567' || Math.abs(Number(payment.amount) - 82.5) > 0.01) {
-    throw new Error(`Payment target mismatch: ${JSON.stringify(payment)}`);
-  }
-
-  await action(sessionId, guestId, guestToken, guestClientId, 'TOGGLE_SETTLED', { settled: true });
-  await realtime.waitUntil((session) => session.members?.find((member: any) => member.id === guestId)?.settled === true, 'guest settlement');
-  const completeButton = await waitFor(() => query<HTMLButtonElement>('[data-testid="mark-payment-complete"]'), 'host payment button');
-  completeButton.click();
-  await waitFor(() => query('[data-testid="settlement-complete"]'), 'native completion state');
-  const finalSession = await realtime.waitUntil((session) => session.status === 'settled', 'closed session');
-  realtime.socket.close();
-
-  const total = finalSession.items.reduce((sum: number, item: any) => sum + Number(item.price || 0), 0);
-  if (total !== 150 || finalSession.members.some((member: any) => member.settled !== true)) {
-    throw new Error('Final session reconciliation failed');
-  }
-  await report(platform, 'PASS', { sessionId, amountPerMember: payment.amount, itemTotal: total });
+    async completePayment(context: any) {
+      await action(
+        context.sessionId,
+        context.guestId,
+        context.guestToken,
+        context.guestClientId,
+        'TOGGLE_SETTLED',
+        { settled: true },
+      );
+      await context.realtime.waitUntil(
+        (session: any) => session.members?.find((member: any) => member.id === context.guestId)?.settled === true,
+        'guest settlement',
+      );
+      const completeButton = await waitFor(
+        () => query<HTMLButtonElement>('[data-testid="mark-payment-complete"]'),
+        'host payment completion control',
+      );
+      if (completeButton.disabled) throw new Error('Host payment completion control is disabled');
+      completeButton.click();
+      await waitFor(() => query('[data-testid="settlement-complete"]'), 'native completion state');
+      const finalSession = await context.realtime.waitUntil(
+        (session: any) => session.status === 'settled' && session.members?.every((member: any) => member.settled === true),
+        'closed session',
+      );
+      context.realtime.socket.close(1000);
+      if (finalSession.items.reduce((sum: number, item: any) => sum + Number(item.price || 0), 0) !== 150) {
+        throw new Error('Final session reconciliation failed');
+      }
+      return { finalStatus: finalSession.status };
+    },
+  };
 }
-
-const guardKey = 'easysplit_gate4_native_started';
 
 function isGate4Launch(url: string | undefined) {
   return /^easysplit:\/\/gate4(?:[/?#]|$)/i.test(String(url || ''));
 }
 
-function startGate4() {
-  if (sessionStorage.getItem(guardKey)) return;
-  sessionStorage.setItem(guardKey, 'true');
-  void run().catch(async (error) => {
-    const platform = Capacitor.getPlatform();
-    const message = error instanceof Error ? `${error.message}\n${error.stack || ''}` : String(error);
-    console.error('Gate 4 native flow failed', error);
-    try {
-      await report(platform, 'FAIL', { error: message });
-    } catch (reportError) {
-      console.error('Gate 4 failure report could not be sent', reportError);
-    }
+async function startGate4() {
+  const platform = Capacitor.getPlatform();
+  if (!['ios', 'android'].includes(platform)) return;
+  if (!RUN_ID) throw new Error('VITE_GATE4_RUN_ID is required');
+  await runGate4Once({
+    storage: localStorage,
+    runId: RUN_ID,
+    platform,
+    execute: async () => {
+      const result = await runGate4Core(createDriver(), (update: Record<string, unknown>) => progress(platform, update));
+      execution.markers = [...result.markers];
+      execution.stage = 'NATIVE_CORE_FLOW';
+      await report(platform, 'PASS', {
+        sessionId: result.context.sessionId,
+        amountPerMember: result.context.paymentAmount,
+        itemTotal: result.context.itemTotal,
+      });
+      return result;
+    },
+    onFailure: async (error: unknown) => {
+      const message = error instanceof Error ? `${error.message}\n${error.stack || ''}` : String(error);
+      try {
+        await report(platform, 'FAIL', { error: message });
+      } catch (reportError) {
+        console.error('Gate 4 failure report could not be sent', reportError);
+      }
+    },
   });
 }
 
 if (Capacitor.getPlatform() === 'ios') {
-  startGate4();
+  void startGate4();
 } else {
   void App.addListener('appUrlOpen', ({ url }) => {
-    if (isGate4Launch(url)) startGate4();
+    if (isGate4Launch(url)) void startGate4();
   });
   void App.getLaunchUrl().then((launch) => {
-    if (isGate4Launch(launch?.url)) startGate4();
+    if (isGate4Launch(launch?.url)) void startGate4();
   });
 }

@@ -1,62 +1,106 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
-OUTPUT_DIR=${1:?Gate 4 output directory is required}
-APK_PATH=${2:?Android APK path is required}
-mkdir -p "$OUTPUT_DIR"
-OUTPUT_DIR=$(cd "$OUTPUT_DIR" && pwd)
-APK_PATH=$(cd "$(dirname "$APK_PATH")" && pwd)/$(basename "$APK_PATH")
+set -uo pipefail
 
-SERVER_LOG="$OUTPUT_DIR/gate4-server.log"
-REPORTER_LOG="$OUTPUT_DIR/gate4-reporter.log"
-DB_PATH="$OUTPUT_DIR/gate4-db.json"
+output_dir=${1:?Gate 4 output directory is required}
+apk_path=${2:?Android APK path is required}
+run_id=${3:?Gate 4 runId is required}
+adb_bin=${ADB:-adb}
+curl_bin=${CURL:-curl}
+npm_bin=${NPM:-npm}
+node_bin=${EASYSPLIT_NODE_BIN:-node}
+mkdir -p "$output_dir"
+output_dir=$(cd "$output_dir" && pwd)
+apk_path=$(cd "$(dirname "$apk_path")" && pwd)/$(basename "$apk_path")
 
-BILLSPLIT_DB_PATH="$DB_PATH" \
+server_log="$output_dir/gate4-server.log"
+reporter_log="$output_dir/gate4-reporter.log"
+db_path="$output_dir/gate4-db.json"
+result_file="$output_dir/gate4-result.txt"
+exit_file="$output_dir/gate4-exit-code.txt"
+
+BILLSPLIT_DB_PATH="$db_path" \
   NODE_ENV=test \
   PORT=3000 \
   WS_SUBSCRIPTION_TIMEOUT_MS=30000 \
-  npm run dev >"$SERVER_LOG" 2>&1 &
-SERVER_PID=$!
-node .github/validation/gate4-reporter.mjs serve "$OUTPUT_DIR" 3904 >"$REPORTER_LOG" 2>&1 &
-REPORTER_PID=$!
+  "$npm_bin" run dev >"$server_log" 2>&1 &
+server_pid=$!
+"$node_bin" .github/validation/gate4-reporter.mjs serve "$output_dir" 3904 "$run_id" >"$reporter_log" 2>&1 &
+reporter_pid=$!
 
 cleanup() {
-  kill "$SERVER_PID" "$REPORTER_PID" 2>/dev/null || true
-  wait "$SERVER_PID" "$REPORTER_PID" 2>/dev/null || true
+  kill "$server_pid" "$reporter_pid" 2>/dev/null || true
+  wait "$server_pid" "$reporter_pid" 2>/dev/null || true
 }
-diagnostics() {
-  adb exec-out screencap -p >"$OUTPUT_DIR/gate4-final.png" 2>/dev/null || true
-  adb logcat -d >"$OUTPUT_DIR/gate4-logcat.txt" 2>&1 || true
-}
-trap 'diagnostics; cleanup' EXIT
 
+diagnostics() {
+  "$adb_bin" exec-out screencap -p >"$output_dir/gate4-final.png" 2>"$output_dir/gate4-screenshot-error.txt" || true
+  "$adb_bin" logcat -d -v threadtime >"$output_dir/gate4-logcat.txt" 2>"$output_dir/gate4-logcat-error.txt" || true
+}
+
+trap 'diagnostics; cleanup' EXIT
+status=0
+
+ready=false
 for _ in $(seq 1 90); do
-  if curl --silent --fail http://127.0.0.1:3000/api/network-ip >/dev/null \
-    && curl --silent --fail http://127.0.0.1:3904/health >/dev/null; then
+  if "$curl_bin" --silent --fail http://127.0.0.1:3000/api/network-ip >/dev/null \
+    && "$curl_bin" --silent --fail http://127.0.0.1:3904/health >/dev/null; then
+    ready=true
     break
   fi
-  if ! kill -0 "$SERVER_PID" 2>/dev/null || ! kill -0 "$REPORTER_PID" 2>/dev/null; then
-    echo 'Gate 4 local services stopped before becoming ready' >&2
-    exit 1
+  if ! kill -0 "$server_pid" 2>/dev/null || ! kill -0 "$reporter_pid" 2>/dev/null; then
+    status=70
+    printf 'Gate 4 local services stopped before becoming ready\n' >"$result_file"
+    break
   fi
   sleep 1
 done
-curl --silent --fail http://127.0.0.1:3000/api/network-ip >/dev/null
-curl --silent --fail http://127.0.0.1:3904/health >/dev/null
 
-adb reverse tcp:3000 tcp:3000
-adb reverse tcp:3904 tcp:3904
-adb install -r "$APK_PATH" >/dev/null
-adb shell pm clear com.easysplit.app >/dev/null
-adb logcat -c
-adb shell am start -W \
-  -a android.intent.action.VIEW \
-  -c android.intent.category.BROWSABLE \
-  -d 'easysplit://gate4' \
-  -p com.easysplit.app >/dev/null
-node .github/validation/gate4-reporter.mjs wait "$OUTPUT_DIR/android-result.json" android 180000
+if [[ "$ready" != true && $status -eq 0 ]]; then
+  status=71
+  printf 'Gate 4 local services timed out before becoming ready\n' >"$result_file"
+fi
+
+if [[ $status -eq 0 ]]; then
+  "$adb_bin" reverse tcp:3000 tcp:3000 >/dev/null 2>&1
+  status=$?
+fi
+if [[ $status -eq 0 ]]; then
+  "$adb_bin" reverse tcp:3904 tcp:3904 >/dev/null 2>&1
+  status=$?
+fi
+if [[ $status -eq 0 ]]; then
+  "$adb_bin" install -r "$apk_path" >"$output_dir/gate4-install.txt" 2>&1
+  status=$?
+fi
+if [[ $status -eq 0 ]]; then
+  "$adb_bin" shell pm clear com.easysplit.app >"$output_dir/gate4-clear.txt" 2>&1
+  status=$?
+fi
+if [[ $status -eq 0 ]]; then
+  "$adb_bin" logcat -c >/dev/null 2>&1
+  "$adb_bin" shell am start -W \
+    -a android.intent.action.VIEW \
+    -c android.intent.category.BROWSABLE \
+    -d 'easysplit://gate4' \
+    -p com.easysplit.app >"$output_dir/gate4-launch.txt" 2>&1
+  status=$?
+fi
+
+if [[ $status -ne 0 && ! -s "$result_file" ]]; then
+  printf 'Gate 4 Android setup failed with exit code %s\n' "$status" >"$result_file"
+fi
+
+if [[ $status -eq 0 ]]; then
+  "$node_bin" .github/validation/gate4-reporter.mjs wait \
+    "$output_dir/android-result.json" android "$run_id" 180000 >"$result_file" 2>&1
+  status=$?
+fi
+
+printf '%s\n' "$status" >"$exit_file"
 diagnostics
 trap - EXIT
 cleanup
 
-bash .github/validation/run-native-android-runtime.sh "$OUTPUT_DIR" "$APK_PATH"
+# The workflow evidence step is the sole pass/fail authority.
+exit 0
