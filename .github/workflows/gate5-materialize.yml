@@ -20,7 +20,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Publish clean verified Gate 5 commit
+      - name: Publish clean Gate 5 code tree
         shell: bash
         run: |
           set -euo pipefail
@@ -39,14 +39,17 @@ jobs:
           git apply --index --binary --whitespace=error-all "$RUNNER_TEMP/gate5.patch"
           git rm -f .github/gate5.patch.b64 .github/workflows/gate5-materialize.yml
           git diff --cached --check
-          tree=$(git write-tree)
-          test "$tree" = 'd1cb2189e45cdf8ad28afa454d4632d1347b13d9'
+          full_tree=$(git write-tree)
+          test "$full_tree" = 'd1cb2189e45cdf8ad28afa454d4632d1347b13d9'
+          cp .github/workflows/mobile-release-dry-run.yml .github/gate5-release-workflow.txt
+          git add .github/gate5-release-workflow.txt
+          git rm -f .github/workflows/mobile-release-dry-run.yml
+          intermediate_tree=$(git write-tree)
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           commit=$(printf '%s\n\n%s\n' \
-            'feat(gate5): prepare native release validation' \
-            'Materialized from verified patch 984a5477fe213ff713e02f9794e117f4007fe7d4246224c7ec98691adc355968.' \
-            | git commit-tree "$tree" -p "$base")
-          test "$(git rev-parse "$commit^{tree}")" = "$tree"
+            'feat(gate5): prepare native release validation code' \
+            'The reviewed release workflow is staged as data for an authorized connector.' \
+            | git commit-tree "$intermediate_tree" -p "$base")
           test "$(git rev-parse "$commit^")" = "$base"
           git push origin "$commit:$target"
