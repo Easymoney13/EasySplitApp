@@ -20,7 +20,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Apply verified Gate 5 patch
+      - name: Apply and diagnose verified Gate 5 patch
         shell: bash
         run: |
           set -euo pipefail
@@ -32,7 +32,16 @@ jobs:
           git apply --index --binary --whitespace=error-all "$RUNNER_TEMP/gate5.patch"
           git rm -f .github/gate5.patch.b64 .github/workflows/gate5-materialize.yml
           git diff --cached --check
-          test "$(git write-tree)" = 'd1cb2189284955ec728fc7790b29903e019b55e0'
+          actual_tree=$(git write-tree)
+          echo "ACTUAL_TREE=$actual_tree"
+          echo 'EXPECTED_TREE=d1cb2189284955ec728fc7790b29903e019b55e0'
+          echo '--- INDEX VS MAIN (RAW) ---'
+          git diff --cached --raw --abbrev=40 d4e32370134d8fa3f20c49adc1c5f9056ca0fff9
+          echo '--- INDEX ENTRIES FOR CHANGED PATHS ---'
+          git diff --cached --name-only d4e32370134d8fa3f20c49adc1c5f9056ca0fff9 | while IFS= read -r path; do
+            git ls-files -s -- "$path"
+          done
+          test "$actual_tree" = 'd1cb2189284955ec728fc7790b29903e019b55e0'
 
       - name: Commit exact verified tree
         shell: bash
