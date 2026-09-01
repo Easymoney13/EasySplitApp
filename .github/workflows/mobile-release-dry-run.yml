@@ -70,6 +70,7 @@ jobs:
           npm run verify:mobile-release
           npm run verify:mobile-release-endpoints
           npm run test:release
+          node --test tests/android-page-alignment.test.mjs
 
   ios-release-dry-run:
     name: iOS 26 Release device build without signing
@@ -249,8 +250,12 @@ jobs:
           set -euo pipefail
           AAB="$GITHUB_WORKSPACE/android/app/build/outputs/bundle/release/app-release.aab"
           LINT="$GITHUB_WORKSPACE/android/app/build/reports/lint-results-release.html"
+          DIAGNOSTIC_AAB="$RUNNER_TEMP/EasySplit-release-UNSIGNED-DIAGNOSTIC.aab"
           test -s "$AAB"
           test -s "$LINT"
+          cp "$AAB" "$DIAGNOSTIC_AAB"
+          printf 'UNSIGNED DIAGNOSTIC ONLY. NOT FOR GOOGLE PLAY UPLOAD. Source SHA: %s\n' "$GITHUB_SHA" > "$RUNNER_TEMP/UNSIGNED-DIAGNOSTIC-ONLY.txt"
+          (cd "$RUNNER_TEMP" && sha256sum EasySplit-release-UNSIGNED-DIAGNOSTIC.aab > EasySplit-release-UNSIGNED-DIAGNOSTIC.aab.sha256)
           rm -rf "$RUNNER_TEMP/easysplit-aab"
           mkdir -p "$RUNNER_TEMP/easysplit-aab"
           unzip -q "$AAB" -d "$RUNNER_TEMP/easysplit-aab"
@@ -259,7 +264,9 @@ jobs:
           test -f "$RUNNER_TEMP/easysplit-aab/base/assets/public/index.html"
           java -jar "$RUNNER_TEMP/bundletool.jar" validate --bundle="$AAB"
           MANIFEST="$RUNNER_TEMP/easysplit-aab-manifest.xml"
+          BUNDLE_CONFIG="$RUNNER_TEMP/easysplit-aab-config.txt"
           java -jar "$RUNNER_TEMP/bundletool.jar" dump manifest --bundle="$AAB" --module=base > "$MANIFEST"
+          java -jar "$RUNNER_TEMP/bundletool.jar" dump config --bundle="$AAB" > "$BUNDLE_CONFIG"
           test "$(java -jar "$RUNNER_TEMP/bundletool.jar" dump manifest --bundle="$AAB" --module=base --xpath=/manifest/@package)" = 'com.easysplit.app'
           test "$(java -jar "$RUNNER_TEMP/bundletool.jar" dump manifest --bundle="$AAB" --module=base --xpath=/manifest/@android:versionCode)" = '1'
           test "$(java -jar "$RUNNER_TEMP/bundletool.jar" dump manifest --bundle="$AAB" --module=base --xpath=/manifest/@android:versionName)" = '1.0'
@@ -273,16 +280,16 @@ jobs:
             echo 'Android dry-run AAB is unexpectedly signed' >&2
             exit 1
           fi
-          if find "$RUNNER_TEMP/easysplit-aab/base/lib" -type f -name '*.so' -print -quit 2>/dev/null | grep -q .; then
-            echo 'Native libraries require explicit Android 16 KB page-size review before release' >&2
-            exit 1
-          fi
-          DIAGNOSTIC_AAB="$RUNNER_TEMP/EasySplit-release-UNSIGNED-DIAGNOSTIC.aab"
-          cp "$AAB" "$DIAGNOSTIC_AAB"
-          printf 'UNSIGNED DIAGNOSTIC ONLY. NOT FOR GOOGLE PLAY UPLOAD. Source SHA: %s\n' "$GITHUB_SHA" > "$RUNNER_TEMP/UNSIGNED-DIAGNOSTIC-ONLY.txt"
-          (cd "$RUNNER_TEMP" && sha256sum EasySplit-release-UNSIGNED-DIAGNOSTIC.aab > EasySplit-release-UNSIGNED-DIAGNOSTIC.aab.sha256)
+          # Native code is allowed only after a real Android 16 KB page-size review:
+          # bundle ZIP alignment plus every ELF LOAD segment, rather than an all-.so ban.
+          command -v readelf >/dev/null
+          node scripts/verify-android-page-alignment.mjs \
+            "$RUNNER_TEMP/easysplit-aab" \
+            "$BUNDLE_CONFIG" \
+            "$RUNNER_TEMP/easysplit-android-page-alignment.json"
 
       - name: Upload unsigned Android Release diagnostic
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: easysplit-android-release-unsigned-${{ github.run_id }}-${{ github.run_attempt }}
@@ -290,6 +297,9 @@ jobs:
             ${{ runner.temp }}/EasySplit-release-UNSIGNED-DIAGNOSTIC.aab
             ${{ runner.temp }}/EasySplit-release-UNSIGNED-DIAGNOSTIC.aab.sha256
             ${{ runner.temp }}/UNSIGNED-DIAGNOSTIC-ONLY.txt
+            ${{ runner.temp }}/easysplit-aab-manifest.xml
+            ${{ runner.temp }}/easysplit-aab-config.txt
+            ${{ runner.temp }}/easysplit-android-page-alignment.json
             android/app/build/reports/lint-results-release.html
           if-no-files-found: error
           retention-days: 7
