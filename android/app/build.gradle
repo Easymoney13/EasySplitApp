@@ -1,8 +1,50 @@
 apply plugin: 'com.android.application'
 
+def releaseKeystorePath = System.getenv('EASYSPLIT_ANDROID_KEYSTORE_PATH')
+def releaseKeystorePassword = System.getenv('EASYSPLIT_ANDROID_KEYSTORE_PASSWORD')
+def releaseKeyAlias = System.getenv('EASYSPLIT_ANDROID_KEY_ALIAS')
+def releaseKeyPassword = System.getenv('EASYSPLIT_ANDROID_KEY_PASSWORD')
+def releaseSigningConfigured = [
+    releaseKeystorePath,
+    releaseKeystorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+].every { value -> value != null && !value.trim().isEmpty() }
+
+def releaseDryRunProperty = project.findProperty('easysplitReleaseDryRun')?.toString() == 'true'
+def releaseDryRunWorkflowRef = System.getenv('GITHUB_WORKFLOW_REF') ?: ''
+def releaseDryRunEvent = System.getenv('GITHUB_EVENT_NAME') ?: ''
+def releaseDryRunRef = System.getenv('GITHUB_REF') ?: ''
+def releaseDryRunRefAllowed = [
+    'refs/heads/main',
+    'refs/heads/codex/gate5-stage12-current',
+].contains(releaseDryRunRef)
+def releaseDryRunEventAllowed = releaseDryRunRefAllowed && (
+    releaseDryRunEvent == 'workflow_dispatch'
+        || (releaseDryRunEvent == 'push' && releaseDryRunRef == 'refs/heads/codex/gate5-stage12-current')
+)
+def releaseDryRunAllowed = (
+    releaseDryRunProperty
+        && System.getenv('EASYSPLIT_RELEASE_DRY_RUN') == 'true'
+        && System.getenv('GITHUB_ACTIONS') == 'true'
+        && System.getenv('GITHUB_REPOSITORY') == 'Easymoney13/EasySplitApp'
+        && releaseDryRunEventAllowed
+        && releaseDryRunWorkflowRef.startsWith('Easymoney13/EasySplitApp/.github/workflows/mobile-release-dry-run.yml@')
+)
+
 android {
     namespace = "com.easysplit.app"
     compileSdk = rootProject.ext.compileSdkVersion
+    signingConfigs {
+        release {
+            if (releaseSigningConfigured) {
+                storeFile file(releaseKeystorePath)
+                storePassword releaseKeystorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
     defaultConfig {
         applicationId "com.easysplit.app"
         minSdkVersion rootProject.ext.minSdkVersion
@@ -18,6 +60,9 @@ android {
     }
     buildTypes {
         release {
+            if (releaseSigningConfigured) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
@@ -51,4 +96,26 @@ try {
     }
 } catch(Exception e) {
     logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}
+
+// Never mistake an unsigned production artifact for a Play-ready release.
+// The only unsigned exception is the repository-owned Gate 5 dry-run workflow.
+gradle.taskGraph.whenReady { taskGraph ->
+    def releasePackagingRequested = taskGraph.allTasks.any { task ->
+        task.project == project && task.name ==~ /(?i).*(bundle|assemble|package).*release.*/
+    }
+    if (!releasePackagingRequested) return
+
+    if (releaseDryRunAllowed && releaseSigningConfigured) {
+        throw new GradleException('EasySplit release dry run must not receive Android signing credentials.')
+    }
+
+    if (!releaseSigningConfigured && !releaseDryRunAllowed) {
+        throw new GradleException(
+            'EasySplit release signing is not configured. Set EASYSPLIT_ANDROID_KEYSTORE_PATH, ' +
+            'EASYSPLIT_ANDROID_KEYSTORE_PASSWORD, EASYSPLIT_ANDROID_KEY_ALIAS, and ' +
+            'EASYSPLIT_ANDROID_KEY_PASSWORD. Unsigned packaging is allowed only in the ' +
+            'mobile-release-dry-run GitHub workflow on its reviewed Gate 5 branch or manual dispatch.'
+        )
+    }
 }

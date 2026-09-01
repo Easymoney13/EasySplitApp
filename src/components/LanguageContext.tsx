@@ -1,6 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { Sparkles, Phone, User, Globe, LogOut, Loader2, AlertCircle, CheckCircle, X } from 'lucide-react';
 import defaultTranslations, { translations as namedTranslations, formatCurrency, convertCurrency, formatDualPrice, updateLiveExchangeRates } from '../../lib/i18n';
 import { getCookie, setCookie, removeCookie } from '../../lib/cookies';
@@ -45,6 +46,7 @@ export interface AuthNotification {
 }
 
 export type GoogleLoginResult = 'authenticated' | 'cancelled' | 'failed' | 'busy';
+export type AuthLoginResult = GoogleLoginResult;
 
 export interface GoogleLoginOptions {
   forceAccountSelection?: boolean;
@@ -68,7 +70,9 @@ interface LanguageContextType {
   isAuthenticating: boolean;
   authNotification: AuthNotification | null;
   clearAuthNotification: () => void;
-  loginWithGoogle: (options?: GoogleLoginOptions) => Promise<GoogleLoginResult>;
+  loginWithGoogle: (options?: GoogleLoginOptions) => Promise<AuthLoginResult>;
+  loginWithApple: () => Promise<AuthLoginResult>;
+  deleteAccount: () => Promise<boolean>;
   logout: () => Promise<void>;
 }
 
@@ -281,7 +285,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                  username: user.displayName || 'Google User',
+                  username: savedLocalProfile?.displayName || '',
                   phone: savedLocalProfile?.phoneNumber || '',
                   settings: {
                     language: savedLang || 'en',
@@ -293,7 +297,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               const data = await res.json();
               if (data && data.success && data.user) {
                 setProfile({
-                  displayName: data.user.username || user.displayName || 'Google User',
+                  displayName: data.user.username || user.displayName || 'User',
                   avatarColor: data.user.avatarColor || '#4DE1A1',
                   avatarUrl: savedLocalProfile?.avatarUrl || user.photoURL || undefined,
                   phoneNumber: data.user.phone || savedLocalProfile?.phoneNumber || undefined,
@@ -308,7 +312,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               console.error('Error syncing user with backend:', err);
               // Fallback settings
               setProfile({
-                displayName: user.displayName || 'Google User',
+                displayName: user.displayName || 'User',
                 avatarColor: '#4DE1A1',
                 avatarUrl: savedLocalProfile?.avatarUrl || user.photoURL || undefined,
                 phoneNumber: savedLocalProfile?.phoneNumber,
@@ -365,7 +369,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   useEffect(() => {
     if (!firebaseUser) return;
-    setGuestName(profile.displayName === 'Google User' ? '' : profile.displayName || '');
+    setGuestName(['Google User', 'Apple User', 'User'].includes(profile.displayName) ? '' : profile.displayName || '');
     setGuestPhone(profile.phoneNumber || '');
   }, [firebaseUser, profile.displayName, profile.phoneNumber]);
 
@@ -514,6 +518,118 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   };
 
+  const loginWithApple = async (): Promise<AuthLoginResult> => {
+    if (isAuthenticating) return 'busy';
+    if (Capacitor.getPlatform() !== 'ios') {
+      showAuthMessage(language === 'he'
+        ? 'התחברות עם Apple זמינה באפליקציית iPhone.'
+        : 'Sign in with Apple is available in the iPhone app.', 'info');
+      return 'failed';
+    }
+
+    setIsAuthenticating(true);
+    clearAuthNotification();
+    let guestMigrationPrepared = false;
+    let signInCompleted = false;
+    try {
+      const { auth } = await import('../../lib/firebase');
+      if (auth.currentUser) {
+        setFirebaseUser(auth.currentUser);
+        return 'authenticated';
+      }
+      if (typeof window !== 'undefined') {
+        guestMigrationPrepared = prepareGuestAccountMigration(localStorage, sessionStorage);
+      }
+
+      const { OAuthProvider, signInWithCredential } = await import('firebase/auth');
+      const { signInNativeApple } = await import('../../lib/nativeAppleAuth');
+      const apple = await signInNativeApple();
+      const provider = new OAuthProvider('apple.com');
+      const credential = provider.credential({
+        idToken: apple.idToken,
+        rawNonce: apple.rawNonce,
+      });
+      await signInWithCredential(auth, credential);
+      signInCompleted = true;
+      return 'authenticated';
+    } catch (e: any) {
+      console.error('Apple Sign-In failed:', e);
+      if (e?.code === 'SIGN_IN_CANCELED') return 'cancelled';
+      showAuthMessage(language === 'he'
+        ? 'ההתחברות באמצעות Apple נכשלה. אנא נסו שוב.'
+        : 'Failed to sign in with Apple. Please try again.', 'error');
+      return 'failed';
+    } finally {
+      if (guestMigrationPrepared && !signInCompleted && typeof window !== 'undefined') {
+        clearGuestAccountMigration(sessionStorage);
+      }
+      setIsAuthenticating(false);
+    }
+  };
+
+  const deleteAccount = async (): Promise<boolean> => {
+    if (isAuthenticating) return false;
+    setIsAuthenticating(true);
+    clearAuthNotification();
+    try {
+      const providerId = firebaseUser?.providerData?.find((provider: any) => provider?.providerId)?.providerId || '';
+      let authorizationCode = '';
+      if (providerId === 'apple.com') {
+        if (Capacitor.getPlatform() !== 'ios') {
+          throw new Error('Apple account deletion requires the iPhone app.');
+        }
+        // Normal Apple login remains persistent and one-time. Apple asks for a
+        // fresh authorization only when the user explicitly deletes the account,
+        // so the server can revoke the Apple authorization before deleting data.
+        const { signInNativeApple } = await import('../../lib/nativeAppleAuth');
+        const apple = await signInNativeApple();
+        authorizationCode = apple.authorizationCode;
+      }
+
+      const response = await fetch(apiUrl('/api/user/account'), {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(authorizationCode ? { authorizationCode } : {}),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Failed to delete account');
+
+      if (isNativeGoogleAuthPlatform() && providerId === 'google.com') {
+        try { await signOutNativeGoogle(); } catch (_) {}
+      }
+
+      const { auth } = await import('../../lib/firebase');
+      const { signOut } = await import('firebase/auth');
+      await signOut(auth).catch(() => undefined);
+      if (typeof window !== 'undefined') {
+        clearAccountScopedStorage(localStorage);
+        clearCreatorIntent(localStorage);
+        clearCreatorIntent(sessionStorage);
+        removeCookie('billsplit_user_groups');
+      }
+      setFirebaseUser(null);
+      setProfile({ displayName: '', avatarColor: '#4DE1A1', avatarUrl: undefined, phoneNumber: undefined });
+      setGuestName('');
+      setGuestPhone('');
+      if (typeof window !== 'undefined') window.location.href = '/';
+      return true;
+    } catch (error: any) {
+      console.error('Account deletion failed:', error);
+      if (error?.code === 'SIGN_IN_CANCELED') {
+        showAuthMessage(language === 'he'
+          ? 'מחיקת החשבון בוטלה.'
+          : 'Account deletion was cancelled.', 'info');
+        return false;
+      }
+      showAuthMessage(language === 'he'
+        ? 'מחיקת החשבון נכשלה. אנא נסו שוב.'
+        : 'Failed to delete the account. Please try again.', 'error');
+      return false;
+    } finally {
+      setIsAuthenticating(false);
+    }
+  };
+
   const logout = async () => {
     try {
       if (typeof window !== 'undefined') {
@@ -525,7 +641,8 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setProfile({ displayName: '', avatarColor: '#4DE1A1', avatarUrl: undefined, phoneNumber: undefined });
       setGuestName('');
       setGuestPhone('');
-      if (isNativeGoogleAuthPlatform()) {
+      const currentProviderId = firebaseUser?.providerData?.find((provider: any) => provider?.providerId)?.providerId || '';
+      if (isNativeGoogleAuthPlatform() && currentProviderId === 'google.com') {
         try {
           await signOutNativeGoogle();
         } catch (nativeSignOutError) {
@@ -604,6 +721,8 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     && (!profile.displayName.trim() || !profile.phoneNumber || !isValidIsraeliPhone(profile.phoneNumber))
   );
   const showProfileModal = showOnboarding || showAuthenticatedProfileCompletion;
+  const authenticatedProviderId = firebaseUser?.providerData?.find((provider: any) => provider?.providerId)?.providerId || '';
+  const authenticatedWithApple = authenticatedProviderId === 'apple.com';
 
   return (
     <LanguageContext.Provider
@@ -626,6 +745,8 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         authNotification,
         clearAuthNotification,
         loginWithGoogle,
+        loginWithApple,
+        deleteAccount,
         logout
       }}
     >
@@ -693,19 +814,19 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
                 {firebaseUser
-                  ? (language === 'he' ? 'השלימו את מספר הטלפון כדי לאפשר העברות Bit/Paybox בחלוקות.' : 'Complete your phone number to enable Bit/Paybox transfers.')
-                  : (language === 'he' ? 'מלאו פרטים להמשך כאורח, או התחברו עם Google לסנכרון בין מכשירים.' : 'Enter your details, or sign in with Google to sync across devices.')}
+                  ? (language === 'he' ? 'השלימו שם ומספר טלפון כדי להמשיך.' : 'Complete your name and phone number to continue.')
+                  : (language === 'he' ? 'מלאו פרטים להמשך כאורח, או התחברו עם Google / Apple לסנכרון בין מכשירים.' : 'Enter your details, or sign in with Google / Apple to sync across devices.')}
               </p>
             </div>
 
-            {/* Google Account Status Badge if authenticated */}
+            {/* Connected account status if authenticated */}
             {firebaseUser && (
               <div className="p-3.5 rounded-2xl bg-white dark:bg-[#15142A] border border-slate-200/90 dark:border-[#2A2847] shadow-xs flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 overflow-hidden">
                   {firebaseUser.photoURL ? (
                     <img
                       src={firebaseUser.photoURL}
-                      alt={firebaseUser.displayName || 'Google'}
+                      alt={firebaseUser.displayName || (authenticatedWithApple ? 'Apple' : 'Google')}
                       className="w-9 h-9 rounded-full object-cover shrink-0 ring-2 ring-slate-100 dark:ring-white/10"
                     />
                   ) : (
@@ -716,10 +837,10 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                   <div className="overflow-hidden min-w-0">
                     <div className="flex items-center gap-1.5">
                       <span className="text-xs font-bold text-slate-900 dark:text-white truncate">
-                        {firebaseUser.displayName || 'Google User'}
+                        {firebaseUser.displayName || profile.displayName || 'User'}
                       </span>
                       <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 border border-emerald-200/50 dark:border-emerald-800/40 shrink-0">
-                        Google
+                        {authenticatedWithApple ? 'Apple' : 'Google'}
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono truncate mt-0.5">
@@ -728,18 +849,18 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => void loginWithGoogle({ forceAccountSelection: true })}
-                  disabled={isAuthenticating}
-                  className="text-[11px] font-bold text-brand-600 dark:text-brand-300 px-3 py-1.5 rounded-xl bg-brand-50 hover:bg-brand-100 dark:bg-brand-950/60 dark:hover:bg-brand-900/60 transition-all shrink-0 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                  title={language === 'he' ? 'החלף חשבון Google' : 'Switch Google account'}
-                >
-                  {isAuthenticating ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : null}
-                  <span>{language === 'he' ? 'החלף חשבון' : 'Switch'}</span>
-                </button>
+                {!authenticatedWithApple && (
+                  <button
+                    type="button"
+                    onClick={() => void loginWithGoogle({ forceAccountSelection: true })}
+                    disabled={isAuthenticating}
+                    className="text-[11px] font-bold text-brand-600 dark:text-brand-300 px-3 py-1.5 rounded-xl bg-brand-50 hover:bg-brand-100 dark:bg-brand-950/60 dark:hover:bg-brand-900/60 transition-all shrink-0 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                    title={language === 'he' ? 'החלף חשבון Google' : 'Switch Google account'}
+                  >
+                    {isAuthenticating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                    <span>{language === 'he' ? 'החלף חשבון' : 'Switch'}</span>
+                  </button>
+                )}
               </div>
             )}
 
@@ -852,6 +973,19 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                     </>
                   )}
                 </button>
+                {Capacitor.getPlatform() === 'ios' && (
+                  <button
+                    type="button"
+                    onClick={() => void loginWithApple()}
+                    disabled={isAuthenticating}
+                    className="mt-2 w-full py-3.5 rounded-xl bg-black hover:bg-slate-900 border border-black text-white text-sm font-bold shadow-md hover:shadow-lg transition-all active:scale-95 flex items-center justify-center gap-3 disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    <svg className="w-5 h-5 shrink-0 fill-current" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.79 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.53 4.1ZM12.03 7.25C11.88 5.02 13.69 3.18 15.77 3c.29 2.58-2.34 4.5-3.74 4.25Z" />
+                    </svg>
+                    <span>{language === 'he' ? 'התחבר עם Apple' : 'Sign in with Apple'}</span>
+                  </button>
+                )}
               </div>
             )}
           </div>

@@ -147,6 +147,8 @@ export default function HomePage() {
     firebaseUser,
     isAuthenticating,
     loginWithGoogle,
+    loginWithApple,
+    deleteAccount,
     logout
   } = useLanguage();
 
@@ -321,6 +323,8 @@ export default function HomePage() {
   const [nameInput, setNameInput] = useState(profile.displayName || '');
   const [phoneInput, setPhoneInput] = useState(profile.phoneNumber || '');
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [showDeleteAccountConfirm, setShowDeleteAccountConfirm] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
   useEffect(() => {
     setNameInput(profile.displayName || '');
@@ -961,6 +965,20 @@ export default function HomePage() {
       console.error('Sign-Out error:', err);
     }
   };
+
+  const handleDeleteAccount = async () => {
+    if (isDeletingAccount) return;
+    setIsDeletingAccount(true);
+    try {
+      const deleted = await deleteAccount();
+      if (deleted) triggerHaptic('medium');
+    } finally {
+      setIsDeletingAccount(false);
+    }
+  };
+
+  const authProviderId = firebaseUser?.providerData?.find((provider: any) => provider?.providerId)?.providerId || '';
+  const isAppleAccount = authProviderId === 'apple.com';
 
   const userInitials = (profile.displayName || 'User').substring(0, 2).toUpperCase();
 
@@ -1686,14 +1704,14 @@ export default function HomePage() {
             </div>
 
             <form onSubmit={handleSaveSettings} className="space-y-4">
-              {/* Google Account Card */}
+              {/* Connected account card */}
               {firebaseUser ? (
                 <div className="photo-card p-3.5 bg-white dark:bg-[#15142A] border border-slate-200/90 dark:border-[#2A2847] shadow-xs rounded-2xl flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3 overflow-hidden">
                     {firebaseUser.photoURL ? (
                       <img
                         src={firebaseUser.photoURL}
-                        alt="Google"
+                        alt={isAppleAccount ? 'Apple' : 'Google'}
                         className="w-9 h-9 rounded-full object-cover shrink-0 ring-2 ring-slate-100 dark:ring-white/10"
                       />
                     ) : (
@@ -1704,10 +1722,10 @@ export default function HomePage() {
                     <div className="overflow-hidden min-w-0">
                       <div className="flex items-center gap-1.5">
                         <span className="text-xs font-bold text-slate-900 dark:text-white truncate">
-                          {firebaseUser.displayName || 'Google User'}
+                          {firebaseUser.displayName || profile.displayName || 'User'}
                         </span>
                         <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 border border-emerald-200/50 dark:border-emerald-800/40 shrink-0">
-                          Google
+                          {isAppleAccount ? 'Apple' : 'Google'}
                         </span>
                       </div>
                       <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono truncate mt-0.5">
@@ -1715,17 +1733,17 @@ export default function HomePage() {
                       </p>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => void loginWithGoogle({ forceAccountSelection: true })}
-                    disabled={isAuthenticating}
-                    className="text-[11px] font-bold text-brand-600 dark:text-brand-300 px-3 py-1.5 rounded-xl bg-brand-50 hover:bg-brand-100 dark:bg-brand-950/60 dark:hover:bg-brand-900/60 transition-all shrink-0 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isAuthenticating ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : null}
-                    <span>{t('switchGoogleAccount', undefined, 'Switch Account')}</span>
-                  </button>
+                  {!isAppleAccount && (
+                    <button
+                      type="button"
+                      onClick={() => void loginWithGoogle({ forceAccountSelection: true })}
+                      disabled={isAuthenticating}
+                      className="text-[11px] font-bold text-brand-600 dark:text-brand-300 px-3 py-1.5 rounded-xl bg-brand-50 hover:bg-brand-100 dark:bg-brand-950/60 dark:hover:bg-brand-900/60 transition-all shrink-0 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isAuthenticating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                      <span>{t('switchGoogleAccount', undefined, 'Switch Account')}</span>
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div className="photo-card p-4 bg-white dark:bg-brand-900 border border-slate-200/80 dark:border-white/5 shadow-md shadow-slate-950/10 space-y-3 rounded-2xl">
@@ -1770,6 +1788,17 @@ export default function HomePage() {
                       </>
                     )}
                   </button>
+                  {Capacitor.getPlatform() === 'ios' && (
+                    <button
+                      type="button"
+                      onClick={() => void loginWithApple()}
+                      disabled={isAuthenticating}
+                      className="w-full py-2.5 px-4 rounded-xl bg-black hover:bg-slate-900 border border-black text-white text-xs font-bold shadow-xs transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      <svg className="w-4 h-4 shrink-0 fill-current" viewBox="0 0 24 24" aria-hidden="true"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.79 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.53 4.1ZM12.03 7.25C11.88 5.02 13.69 3.18 15.77 3c.29 2.58-2.34 4.5-3.74 4.25Z" /></svg>
+                      <span>{language === 'he' ? 'התחבר עם Apple' : 'Sign in with Apple'}</span>
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -1929,6 +1958,38 @@ export default function HomePage() {
                   <LogOut className="w-4 h-4" />
                   <span>{t('signOutBtn', undefined, 'Sign Out')}</span>
                 </button>
+              )}
+
+              {firebaseUser && (
+                <div className="mt-3 rounded-xl border border-rose-200/80 dark:border-rose-950/50 bg-rose-50/40 dark:bg-rose-950/10 p-3">
+                  {!showDeleteAccountConfirm ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowDeleteAccountConfirm(true)}
+                      className="w-full py-2 text-xs font-bold text-rose-700 dark:text-rose-400 flex items-center justify-center gap-1.5"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span>{language === 'he' ? 'מחיקת החשבון' : 'Delete account'}</span>
+                    </button>
+                  ) : (
+                    <div className="space-y-3">
+                      <p className="text-[11px] leading-relaxed text-rose-700 dark:text-rose-300">
+                        {language === 'he'
+                          ? 'החשבון והמידע האישי שלך יימחקו לצמיתות. חלוקות משותפות יישמרו ללא הפרטים המזהים שלך.'
+                          : 'Your account and personal data will be permanently deleted. Shared splits remain, without your identifying information.'}
+                      </p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button type="button" onClick={() => setShowDeleteAccountConfirm(false)} disabled={isDeletingAccount} className="rounded-lg border border-slate-200 dark:border-slate-700 py-2 text-xs font-bold">
+                          {language === 'he' ? 'ביטול' : 'Cancel'}
+                        </button>
+                        <button type="button" onClick={() => void handleDeleteAccount()} disabled={isDeletingAccount} className="rounded-lg bg-rose-600 py-2 text-xs font-bold text-white disabled:opacity-50 flex items-center justify-center gap-1">
+                          {isDeletingAccount ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                          {language === 'he' ? 'מחק לצמיתות' : 'Delete permanently'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
             </form>
           </div>
