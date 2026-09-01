@@ -1,0 +1,306 @@
+name: Mobile release dry run
+run-name: UNSIGNED mobile release dry run @ ${{ github.sha }}
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/gate5-stage12-current
+    paths:
+      - '.github/workflows/mobile-release-dry-run.yml'
+      - 'android/**'
+      - 'ios/**'
+      - 'lib/**'
+      - 'mobile/**'
+      - 'public/**'
+      - 'scripts/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'capacitor.config.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'server.js'
+      - 'vite.mobile.config.ts'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: easysplit-mobile-release-dry-run-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 22.23.2
+
+jobs:
+  shared-release-audit:
+    name: Shared release audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install exact dependencies
+        run: npm ci
+
+      - name: Verify existing product, OCR and web baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run verify
+          npm run test:strain
+          git diff --check
+
+      - name: Verify production mobile release bundle
+        env:
+          NEXT_PUBLIC_EASYSPLIT_API_ORIGIN: https://billspltapp.onrender.com
+          NEXT_PUBLIC_EASYSPLIT_WEB_ORIGIN: https://billspltapp.onrender.com
+          NEXT_PUBLIC_EASYSPLIT_WS_ORIGIN: wss://billspltapp.onrender.com
+        run: |
+          set -euo pipefail
+          npm run verify:mobile-release
+          npm run verify:mobile-release-endpoints
+          npm run test:release
+          node --test tests/android-page-alignment.test.mjs
+
+  ios-release-dry-run:
+    name: iOS 26 Release device build without signing
+    needs: shared-release-audit
+    runs-on: macos-26
+    timeout-minutes: 40
+    env:
+      NEXT_PUBLIC_EASYSPLIT_API_ORIGIN: https://billspltapp.onrender.com
+      NEXT_PUBLIC_EASYSPLIT_WEB_ORIGIN: https://billspltapp.onrender.com
+      NEXT_PUBLIC_EASYSPLIT_WS_ORIGIN: wss://billspltapp.onrender.com
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Require App Store-compatible Xcode and SDK
+        run: bash scripts/verify-ios-release-toolchain.sh
+
+      - name: Install exact dependencies
+        run: npm ci
+
+      - name: Synchronize clean native project
+        run: npm run mobile:sync
+
+      - name: Verify clean release inputs
+        run: |
+          set -euo pipefail
+          node scripts/verify-mobile-release.mjs
+          npx cap ls
+          git diff --check
+
+      - name: Compile iPhoneOS 26 Release without signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/EasySplitReleaseDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Inspect iOS Release app
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/EasySplitReleaseDerivedData/Build/Products/Release-iphoneos/App.app"
+          test -d "$APP"
+          test -d "$APP/public"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")" = 'com.easysplit.app'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")" = '1.0'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")" = '1'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :GIDClientID' "$APP/Info.plist")" = '510350845002-11pq3jtk5vb5f2kv1nrn1jqd02f04dqp.apps.googleusercontent.com'
+          URL_TYPES="$(plutil -extract CFBundleURLTypes xml1 -o - "$APP/Info.plist")"
+          grep -q '<string>easysplit</string>' <<< "$URL_TYPES"
+          grep -q '<string>com.googleusercontent.apps.510350845002-11pq3jtk5vb5f2kv1nrn1jqd02f04dqp</string>' <<< "$URL_TYPES"
+          EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Info.plist")"
+          test -f "$APP/$EXECUTABLE"
+          file "$APP/$EXECUTABLE" | grep -q 'arm64'
+          xcrun vtool -show-build "$APP/$EXECUTABLE" | grep -Eq 'platform[[:space:]]+IOS'
+          CAPACITOR_DEBUG="$(/usr/libexec/PlistBuddy -c 'Print :CAPACITOR_DEBUG' "$APP/Info.plist" 2>/dev/null || true)"
+          case "$(printf '%s' "$CAPACITOR_DEBUG" | tr '[:lower:]' '[:upper:]')" in
+            YES|TRUE|1) echo 'iOS Release app is marked as debug' >&2; exit 1 ;;
+          esac
+          find "$APP" -name PrivacyInfo.xcprivacy -print -quit | grep -q .
+          test ! -d "$APP/_CodeSignature"
+          test ! -f "$APP/embedded.mobileprovision"
+          if codesign -dv "$APP" >/dev/null 2>&1; then
+            echo 'iOS dry-run app is unexpectedly signed' >&2
+            exit 1
+          fi
+          node scripts/verify-mobile-release.mjs "$APP/public"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$RUNNER_TEMP/EasySplit-release-unsigned-app.zip"
+          printf 'UNSIGNED DIAGNOSTIC ONLY. NOT FOR APP STORE UPLOAD. Source SHA: %s\n' "$GITHUB_SHA" > "$RUNNER_TEMP/UNSIGNED-DIAGNOSTIC-ONLY.txt"
+          (cd "$RUNNER_TEMP" && shasum -a 256 EasySplit-release-unsigned-app.zip > EasySplit-release-unsigned-app.zip.sha256)
+
+      - name: Upload unsigned iOS Release diagnostic
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: easysplit-ios-release-unsigned-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/EasySplit-release-unsigned-app.zip
+            ${{ runner.temp }}/EasySplit-release-unsigned-app.zip.sha256
+            ${{ runner.temp }}/UNSIGNED-DIAGNOSTIC-ONLY.txt
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  android-release-dry-run:
+    name: Android API 36 Release AAB without signing
+    needs: shared-release-audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      NEXT_PUBLIC_EASYSPLIT_API_ORIGIN: https://billspltapp.onrender.com
+      NEXT_PUBLIC_EASYSPLIT_WEB_ORIGIN: https://billspltapp.onrender.com
+      NEXT_PUBLIC_EASYSPLIT_WS_ORIGIN: wss://billspltapp.onrender.com
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Validate official Gradle wrapper JAR
+        uses: gradle/actions/wrapper-validation@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+
+      - name: Set up Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Set up Java 21
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+
+      - name: Fetch verified bundletool 1.18.3
+        shell: bash
+        env:
+          BUNDLETOOL_SHA256: a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-all-errors \
+            https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar \
+            --output "$RUNNER_TEMP/bundletool.jar"
+          printf '%s  %s\n' "$BUNDLETOOL_SHA256" "$RUNNER_TEMP/bundletool.jar" | sha256sum --check --strict
+
+      - name: Install exact dependencies
+        run: npm ci
+
+      - name: Synchronize clean native project
+        run: npm run mobile:sync
+
+      - name: Verify clean release inputs
+        run: |
+          set -euo pipefail
+          node scripts/verify-mobile-release.mjs
+          npx cap ls
+          git diff --check
+
+      - name: Build isolated unsigned diagnostic Release AAB
+        shell: bash
+        env:
+          EASYSPLIT_RELEASE_DRY_RUN: 'true'
+        run: |
+          set -euo pipefail
+          for key in EASYSPLIT_ANDROID_KEYSTORE_PATH EASYSPLIT_ANDROID_KEYSTORE_PASSWORD EASYSPLIT_ANDROID_KEY_ALIAS EASYSPLIT_ANDROID_KEY_PASSWORD; do
+            if [[ -n "${!key:-}" ]]; then
+              echo "Unsigned dry run must not receive $key" >&2
+              exit 1
+            fi
+          done
+          cd android
+          chmod +x gradlew
+          ./gradlew clean :app:lintRelease :app:bundleRelease \
+            -PeasysplitReleaseDryRun=true --no-daemon --stacktrace
+
+      - name: Inspect Android Release AAB
+        shell: bash
+        run: |
+          set -euo pipefail
+          AAB="$GITHUB_WORKSPACE/android/app/build/outputs/bundle/release/app-release.aab"
+          LINT="$GITHUB_WORKSPACE/android/app/build/reports/lint-results-release.html"
+          DIAGNOSTIC_AAB="$RUNNER_TEMP/EasySplit-release-UNSIGNED-DIAGNOSTIC.aab"
+          test -s "$AAB"
+          test -s "$LINT"
+          cp "$AAB" "$DIAGNOSTIC_AAB"
+          printf 'UNSIGNED DIAGNOSTIC ONLY. NOT FOR GOOGLE PLAY UPLOAD. Source SHA: %s\n' "$GITHUB_SHA" > "$RUNNER_TEMP/UNSIGNED-DIAGNOSTIC-ONLY.txt"
+          (cd "$RUNNER_TEMP" && sha256sum EasySplit-release-UNSIGNED-DIAGNOSTIC.aab > EasySplit-release-UNSIGNED-DIAGNOSTIC.aab.sha256)
+          rm -rf "$RUNNER_TEMP/easysplit-aab"
+          mkdir -p "$RUNNER_TEMP/easysplit-aab"
+          unzip -q "$AAB" -d "$RUNNER_TEMP/easysplit-aab"
+          test -f "$RUNNER_TEMP/easysplit-aab/base/manifest/AndroidManifest.xml"
+          test -f "$RUNNER_TEMP/easysplit-aab/base/dex/classes.dex"
+          test -f "$RUNNER_TEMP/easysplit-aab/base/assets/public/index.html"
+          java -jar "$RUNNER_TEMP/bundletool.jar" validate --bundle="$AAB"
+          MANIFEST="$RUNNER_TEMP/easysplit-aab-manifest.xml"
+          BUNDLE_CONFIG="$RUNNER_TEMP/easysplit-aab-config.txt"
+          java -jar "$RUNNER_TEMP/bundletool.jar" dump manifest --bundle="$AAB" --module=base > "$MANIFEST"
+          java -jar "$RUNNER_TEMP/bundletool.jar" dump config --bundle="$AAB" > "$BUNDLE_CONFIG"
+          test "$(java -jar "$RUNNER_TEMP/bundletool.jar" dump manifest --bundle="$AAB" --module=base --xpath=/manifest/@package)" = 'com.easysplit.app'
+          test "$(java -jar "$RUNNER_TEMP/bundletool.jar" dump manifest --bundle="$AAB" --module=base --xpath=/manifest/@android:versionCode)" = '1'
+          test "$(java -jar "$RUNNER_TEMP/bundletool.jar" dump manifest --bundle="$AAB" --module=base --xpath=/manifest/@android:versionName)" = '1.0'
+          test "$(java -jar "$RUNNER_TEMP/bundletool.jar" dump manifest --bundle="$AAB" --module=base --xpath=/manifest/uses-sdk/@android:targetSdkVersion)" = '36'
+          grep -q 'android.permission.INTERNET' "$MANIFEST"
+          grep -q 'android:scheme="easysplit"' "$MANIFEST"
+          ! grep -q 'android:debuggable="true"' "$MANIFEST"
+          ! grep -q 'android:usesCleartextTraffic="true"' "$MANIFEST"
+          node scripts/verify-mobile-release.mjs "$RUNNER_TEMP/easysplit-aab/base/assets/public"
+          if find "$RUNNER_TEMP/easysplit-aab" -type f \( -name '*.RSA' -o -name '*.DSA' -o -name '*.EC' -o -name '*.SF' \) -path '*/META-INF/*' -print -quit | grep -q .; then
+            echo 'Android dry-run AAB is unexpectedly signed' >&2
+            exit 1
+          fi
+          # Native code is allowed only after a real Android 16 KB page-size review:
+          # bundle ZIP alignment plus every ELF LOAD segment, rather than an all-.so ban.
+          command -v readelf >/dev/null
+          node scripts/verify-android-page-alignment.mjs \
+            "$RUNNER_TEMP/easysplit-aab" \
+            "$BUNDLE_CONFIG" \
+            "$RUNNER_TEMP/easysplit-android-page-alignment.json"
+
+      - name: Upload unsigned Android Release diagnostic
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: easysplit-android-release-unsigned-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/EasySplit-release-UNSIGNED-DIAGNOSTIC.aab
+            ${{ runner.temp }}/EasySplit-release-UNSIGNED-DIAGNOSTIC.aab.sha256
+            ${{ runner.temp }}/UNSIGNED-DIAGNOSTIC-ONLY.txt
+            ${{ runner.temp }}/easysplit-aab-manifest.xml
+            ${{ runner.temp }}/easysplit-aab-config.txt
+            ${{ runner.temp }}/easysplit-android-page-alignment.json
+            android/app/build/reports/lint-results-release.html
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

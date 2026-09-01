@@ -20,7 +20,13 @@
     "mobile:sync": "npm run mobile:build && cap sync",
     "mobile:open:ios": "npm run mobile:check-node && cap open ios",
     "mobile:open:android": "npm run mobile:check-node && cap open android",
-    "verify:mobile-shell": "node --test tests/mobile-*.test.mjs && npm run mobile:build"
+    "verify:mobile-shell": "node --test tests/mobile-*.test.mjs && npm run mobile:build",
+    "verify:mobile-release": "npm run verify:mobile-release-env && npm run mobile:build && node scripts/verify-mobile-release.mjs",
+    "verify:mobile-release-env": "node scripts/verify-mobile-release-env.mjs",
+    "verify:mobile-release-endpoints": "node scripts/verify-mobile-release-endpoints.mjs",
+    "mobile:bundle:android": "npm run mobile:sync && cd android && ./gradlew :app:bundleRelease --no-daemon --stacktrace",
+    "mobile:archive:ios": "bash scripts/archive-ios-release.sh",
+    "test:release": "node --test tests/release-compliance.test.mjs tests/mobile-release-env.test.mjs tests/mobile-release-bundle-audit.test.mjs tests/ios-release-toolchain.test.mjs tests/apple-token-revocation.test.js"
   },
   "dependencies": {
     "@capacitor/android": "8.5.0",
@@ -35,6 +41,7 @@
     "@capacitor/share": "8.0.1",
     "@capacitor/splash-screen": "8.0.2",
     "@capacitor/status-bar": "8.0.3",
+    "@capawesome/capacitor-apple-sign-in": "0.1.3",
     "@capawesome/capacitor-google-sign-in": "0.1.3",
     "@google/generative-ai": "^0.21.0",
     "canvas-confetti": "^1.9.3",

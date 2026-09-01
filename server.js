@@ -59,6 +59,7 @@ const parseReceiptImage = geminiModule.parseReceiptImage || geminiModule.default
 const parseReceiptTextWithGemini = geminiModule.parseReceiptTextWithGemini || geminiModule.default?.parseReceiptTextWithGemini;
 
 const security = require('./lib/security');
+const { revokeAppleAuthorization } = require('./lib/appleTokenRevocation');
 const { createApiCorsMiddleware, isAllowedClientOrigin, resolveAllowedMobileOrigins } = require('./lib/platformSecurity');
 const debtMinimizer = require('./lib/debtMinimizer');
 const calculateDebtMinimization = debtMinimizer.calculateDebtMinimization;
@@ -2485,7 +2486,11 @@ app.prepare().then(() => {
 
       const { uid, name, picture } = req.user;
       const { username, phone, settings } = validateUserSyncBody(req.body || {});
-      const finalName = security.sanitizeName(username || name || 'User', 'User');
+      const existingUser = await db.getUserByUid(uid);
+      const finalName = security.sanitizeName(
+        username || existingUser?.username || name || 'User',
+        'User',
+      );
 
       const user = await db.findOrCreateUser(uid, finalName, phone, settings || {});
 
@@ -2503,6 +2508,48 @@ app.prepare().then(() => {
       return res.json({ success: true, user: publicUserProfile(user) });
     } catch (err) {
       return sendRouteError(res, err, 'Failed to sync user');
+    }
+  });
+
+  // DELETE /api/user/account - Permanently delete the authenticated account and personal data
+  server.delete('/api/user/account', authenticateUser, async (req, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: 'Unauthorized: Authentication required' });
+      }
+
+      const uid = req.user.uid;
+      const provider = req.user.firebase?.sign_in_provider || '';
+
+      // Apple requires revoking the user's authorization when an account created
+      // through Sign in with Apple is deleted. A fresh authorization code is
+      // collected client-side only for this security-sensitive deletion action.
+      if (provider === 'apple.com') {
+        await revokeAppleAuthorization(req.body?.authorizationCode);
+      }
+
+      const result = await db.deleteUserAccountData(uid);
+
+      try {
+        await admin.auth().deleteUser(uid);
+      } catch (authDeleteError) {
+        if (authDeleteError?.code !== 'auth/user-not-found') throw authDeleteError;
+      }
+
+      void trackAnalyticsEvent('user_account_deleted', {
+        userId: uid,
+        metadata: { route: '/api/user/account', provider },
+      });
+
+      return res.json({
+        success: true,
+        deleted: result.deleted,
+        anonymizedRecords: result.anonymizedRecords,
+        deletedVisits: result.deletedVisits,
+        provider,
+      });
+    } catch (err) {
+      return sendRouteError(res, err, 'Failed to delete account');
     }
   });
 

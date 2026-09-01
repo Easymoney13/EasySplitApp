@@ -76,7 +76,9 @@ export default defineConfig(({ mode }) => {
       outDir: resolve(repoRoot, 'mobile-dist'),
       emptyOutDir: true,
       target: ['ios16.4', 'chrome111'],
-      sourcemap: true,
+      // Keep source maps for instrumented Gate 4 diagnostics only. Clean/store
+      // builds must not ship repository source maps inside the native bundle.
+      sourcemap: gate4NativeE2E,
       // The shared EasySplit client imports a small set of repository-owned CommonJS
       // modules. Include lib/ explicitly so Rollup converts them consistently.
       commonjsOptions: {
