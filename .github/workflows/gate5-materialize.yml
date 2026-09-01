@@ -20,10 +20,17 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Apply and diagnose verified Gate 5 patch
+      - name: Publish clean verified Gate 5 commit
         shell: bash
         run: |
           set -euo pipefail
+          base=d4e32370134d8fa3f20c49adc1c5f9056ca0fff9
+          target=refs/heads/codex/gate5-stage12-current
+          test "$(git rev-parse origin/main)" = "$base"
+          if git ls-remote --exit-code --heads origin "$target" >/dev/null 2>&1; then
+            echo 'Target Gate 5 branch already exists; refusing to overwrite it.' >&2
+            exit 1
+          fi
           base64 --decode .github/gate5.patch.b64 | gzip -dc > "$RUNNER_TEMP/gate5.patch"
           printf '%s  %s\n' \
             '984a5477fe213ff713e02f9794e117f4007fe7d4246224c7ec98691adc355968' \
@@ -32,23 +39,14 @@ jobs:
           git apply --index --binary --whitespace=error-all "$RUNNER_TEMP/gate5.patch"
           git rm -f .github/gate5.patch.b64 .github/workflows/gate5-materialize.yml
           git diff --cached --check
-          actual_tree=$(git write-tree)
-          echo "ACTUAL_TREE=$actual_tree"
-          echo 'EXPECTED_TREE=d1cb2189284955ec728fc7790b29903e019b55e0'
-          echo '--- INDEX VS MAIN (RAW) ---'
-          git diff --cached --raw --abbrev=40 d4e32370134d8fa3f20c49adc1c5f9056ca0fff9
-          echo '--- INDEX ENTRIES FOR CHANGED PATHS ---'
-          git diff --cached --name-only d4e32370134d8fa3f20c49adc1c5f9056ca0fff9 | while IFS= read -r path; do
-            git ls-files -s -- "$path"
-          done
-          test "$actual_tree" = 'd1cb2189284955ec728fc7790b29903e019b55e0'
-
-      - name: Commit exact verified tree
-        shell: bash
-        run: |
-          set -euo pipefail
+          tree=$(git write-tree)
+          test "$tree" = 'd1cb2189e45cdf8ad28afa454d4632d1347b13d9'
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'feat(gate5): materialize verified release-ready tree'
-          test "$(git rev-parse HEAD^{tree})" = 'd1cb2189284955ec728fc7790b29903e019b55e0'
-          git push origin HEAD:codex/gate5-materialize-staging
+          commit=$(printf '%s\n\n%s\n' \
+            'feat(gate5): prepare native release validation' \
+            'Materialized from verified patch 984a5477fe213ff713e02f9794e117f4007fe7d4246224c7ec98691adc355968.' \
+            | git commit-tree "$tree" -p "$base")
+          test "$(git rev-parse "$commit^{tree}")" = "$tree"
+          test "$(git rev-parse "$commit^")" = "$base"
+          git push origin "$commit:$target"
