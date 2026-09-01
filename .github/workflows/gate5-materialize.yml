@@ -1,0 +1,45 @@
+name: Gate 5 verified tree materialization
+
+on:
+  push:
+    branches:
+      - codex/gate5-materialize-staging
+    paths:
+      - '.github/workflows/gate5-materialize.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout staging branch
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+
+      - name: Apply verified Gate 5 patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 --decode .github/gate5.patch.b64 | gzip -dc > "$RUNNER_TEMP/gate5.patch"
+          printf '%s  %s\n' \
+            '984a5477fe213ff713e02f9794e117f4007fe7d4246224c7ec98691adc355968' \
+            "$RUNNER_TEMP/gate5.patch" | sha256sum --check --strict
+          git apply --check --binary --whitespace=error-all "$RUNNER_TEMP/gate5.patch"
+          git apply --index --binary --whitespace=error-all "$RUNNER_TEMP/gate5.patch"
+          git rm -f .github/gate5.patch.b64 .github/workflows/gate5-materialize.yml
+          git diff --cached --check
+          test "$(git write-tree)" = 'd1cb2189284955ec728fc7790b29903e019b55e0'
+
+      - name: Commit exact verified tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(gate5): materialize verified release-ready tree'
+          test "$(git rev-parse HEAD^{tree})" = 'd1cb2189284955ec728fc7790b29903e019b55e0'
+          git push origin HEAD:codex/gate5-materialize-staging
