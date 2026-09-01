@@ -38,8 +38,16 @@ test('LanguageContext uses popup-only web auth and Firebase JS credential exchan
   assert.match(source, /signInWithPopup/);
   assert.doesNotMatch(source, /signInWithRedirect|getRedirectResult|isMobileDevice/);
   assert.match(source, /signOutNativeGoogle\(\)/);
+  assert.match(
+    source,
+    /if \(isNativeGoogleAuthPlatform\(\)\) \{[\s\S]*?setAuthModules\(\{ auth, googleProvider, getGoogleProvider \}\);[\s\S]*?return;[\s\S]*?await ensureAuthPersistence\(\);[\s\S]*?signInWithPopup/,
+  );
+  assert.match(
+    source,
+    /if \(!activeAuth\) \{[\s\S]*?activeAuth = firebaseModule\.auth;[\s\S]*?if \(!nativeAuthPlatform\) \{[\s\S]*?await firebaseModule\.ensureAuthPersistence\(\);/,
+  );
   assert.ok(
-    source.indexOf('isNativeGoogleAuthPlatform()') < source.indexOf('activeSignInWithPopup(activeAuth, provider)'),
+    source.indexOf('if (nativeAuthPlatform)') < source.indexOf('activeSignInWithPopup(activeAuth, provider)'),
     'native platform branch must run before Firebase web popup auth',
   );
 });

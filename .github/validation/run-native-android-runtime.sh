@@ -17,7 +17,45 @@ install_status=$?
 
 runtime_status=$install_status
 if [[ $install_status -eq 0 ]]; then
-  "$node_bin" "$project_root/.github/validation/native-android-runtime.mjs" \
+  runtime_adb="$diagnostics_dir/runtime-adb"
+  cat >"$runtime_adb" <<'ADB_WRAPPER'
+#!/usr/bin/env bash
+set -uo pipefail
+real_adb=${EASYSPLIT_REAL_ADB:-adb}
+if [[ "${1:-}" == shell && "${2:-}" == input && "${3:-}" == touchscreen \
+      && "${4:-}" == -d && "${6:-}" == swipe ]]; then
+  last_activity=''
+  stable_samples=0
+  for _ in $(seq 1 120); do
+    current_activity=$("$real_adb" shell dumpsys activity activities 2>/dev/null \
+      | sed -n 's/.*topResumedActivity=.* u[0-9][0-9]* \([^ ]*\).*/\1/p' | head -1)
+    if [[ -n "$current_activity" && "$current_activity" == "$last_activity" ]]; then
+      stable_samples=$((stable_samples + 1))
+    else
+      last_activity="$current_activity"
+      stable_samples=0
+    fi
+    if [[ $stable_samples -ge 6 ]]; then
+      # EasySplit itself is validated with the real predictive-edge gesture.
+      # External capture activities are different: the API-36 camera can ignore
+      # shell touchscreen swipes even while fully resumed. For those activities,
+      # dispatch Android's system Back key and still require EasySplit to return
+      # to the foreground before the runtime marker can pass.
+      if [[ "$current_activity" != com.easysplit.app/* ]]; then
+        exec "$real_adb" shell input keyevent KEYCODE_BACK
+      fi
+      exec "$real_adb" "$@"
+    fi
+    sleep 0.25
+  done
+  printf 'Timed out waiting for a stable top-resumed activity before Android Back\n' >&2
+  exit 124
+fi
+exec "$real_adb" "$@"
+ADB_WRAPPER
+  chmod +x "$runtime_adb"
+  EASYSPLIT_REAL_ADB="$adb_bin" ADB="$runtime_adb" \
+    "$node_bin" "$project_root/.github/validation/native-android-runtime.mjs" \
     > "$diagnostics_dir/result.txt" 2>&1
   runtime_status=$?
 else

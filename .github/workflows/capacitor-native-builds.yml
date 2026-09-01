@@ -48,10 +48,10 @@ env:
   NEXT_PUBLIC_EASYSPLIT_WS_ORIGIN: wss://api.easysplit.invalid
 
 jobs:
-  compile-native-projects:
-    name: Shared regression + iOS/Android compile + iOS runtime
-    runs-on: macos-latest
-    timeout-minutes: 50
+  shared-verification:
+    name: Shared regression and mobile shell
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
     steps:
       - name: Checkout source
         uses: actions/checkout@v5
@@ -62,35 +62,50 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - name: Set up Java 21
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '21'
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android API 36
-        shell: bash
-        run: |
-          set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager 'platform-tools' 'platforms;android-36' 'build-tools;36.0.0'
-
       - name: Install exact dependencies
         run: npm ci
 
       - name: Verify shared and mobile code
         run: |
+          set -euo pipefail
           npm run verify
           npm run test:strain
           npm run verify:mobile-shell
+          ! grep -Rqs 'GATE4_NATIVE_CORE_FLOW=PASS' mobile-dist
+          ! grep -Rqs 'Gate Four Host' mobile-dist
+          ! grep -Rqs '__EASYSPLIT_GATE4_AUTH_DIAGNOSTICS__' mobile-dist
 
-      - name: Synchronize native projects
+  ios-native:
+    name: iOS simulator core E2E and deep links
+    needs: shared-verification
+    runs-on: macos-latest
+    timeout-minutes: 50
+    env:
+      GATE4_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}-ios
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install exact dependencies
+        run: npm ci
+
+      - name: Synchronize instrumented iOS project
+        env:
+          EASYSPLIT_GATE4_E2E: 'true'
+          VITE_GATE4_RUN_ID: ${{ env.GATE4_RUN_ID }}
+          VITE_GATE4_REPORT_ORIGIN: http://127.0.0.1:3904
+          NEXT_PUBLIC_EASYSPLIT_API_ORIGIN: http://127.0.0.1:3000
+          NEXT_PUBLIC_EASYSPLIT_WEB_ORIGIN: http://127.0.0.1:3000
+          NEXT_PUBLIC_EASYSPLIT_WS_ORIGIN: ws://127.0.0.1:3000
         run: npm run mobile:sync
 
-      - name: Verify synchronized plugins and native config
+      - name: Verify synchronized iOS config
         shell: bash
         run: |
           set -euo pipefail
@@ -98,9 +113,8 @@ jobs:
           git diff --check
           grep -q 'CapacitorAppLauncher' ios/App/CapApp-SPM/Package.swift
           grep -q 'CapacitorShare' ios/App/CapApp-SPM/Package.swift
-          grep -q "capacitor-app-launcher" android/app/capacitor.build.gradle
-          grep -q "capacitor-share" android/app/capacitor.build.gradle
-          grep -q 'X-EasySplit-Client-Id' lib/platformSecurity.js
+          grep -q 'Gate Four Host' mobile-dist/index.html
+          grep -Rqs 'GATE4_NATIVE_CORE_FLOW=PASS' mobile-dist/assets
 
       - name: Compile iOS simulator without signing
         shell: bash
@@ -116,13 +130,13 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             build
 
-      - name: Install, launch, and deep-link iOS Simulator app
+      - name: Boot clean iOS simulator and install app
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/easysplit-ios-smoke"
-          xcrun simctl list devices available -j > "$RUNNER_TEMP/easysplit-ios-smoke/devices.json"
-          UDID=$(node - "$RUNNER_TEMP/easysplit-ios-smoke/devices.json" <<'NODE'
+          mkdir -p "$RUNNER_TEMP/easysplit-ios/gate4" "$RUNNER_TEMP/easysplit-ios/smoke"
+          xcrun simctl list devices available -j > "$RUNNER_TEMP/easysplit-ios/devices.json"
+          UDID=$(node - "$RUNNER_TEMP/easysplit-ios/devices.json" <<'NODE'
           const fs = require('fs');
           const devices = JSON.parse(fs.readFileSync(process.argv[2], 'utf8')).devices || {};
           for (const [runtime, entries] of Object.entries(devices)) {
@@ -137,66 +151,56 @@ jobs:
           NODE
           )
           test -n "$UDID"
+          printf '%s\n' "$UDID" > "$RUNNER_TEMP/easysplit-ios/udid.txt"
           xcrun simctl boot "$UDID" || true
           xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl uninstall "$UDID" com.easysplit.app >/dev/null 2>&1 || true
           APP_PATH="$RUNNER_TEMP/EasySplitDerivedData/Build/Products/Debug-iphonesimulator/App.app"
           test -d "$APP_PATH"
           xcrun simctl install "$UDID" "$APP_PATH"
           xcrun simctl get_app_container "$UDID" com.easysplit.app app
-          xcrun simctl launch "$UDID" com.easysplit.app | tee "$RUNNER_TEMP/easysplit-ios-smoke/launch.txt"
-          sleep 3
-          xcrun simctl io "$UDID" screenshot "$RUNNER_TEMP/easysplit-ios-smoke/home.png"
-          xcrun simctl openurl "$UDID" 'easysplit://session/smoke-session?groupId=smoke-group#invite=smoke-token'
-          sleep 2
-          xcrun simctl io "$UDID" screenshot "$RUNNER_TEMP/easysplit-ios-smoke/live-deep-link.png"
-          xcrun simctl terminate "$UDID" com.easysplit.app
-          xcrun simctl openurl "$UDID" 'easysplit://group/smoke-group'
-          sleep 2
-          xcrun simctl io "$UDID" screenshot "$RUNNER_TEMP/easysplit-ios-smoke/cold-deep-link.png"
-          xcrun simctl spawn "$UDID" log show --style compact --last 3m --predicate 'process == "App"' > "$RUNNER_TEMP/easysplit-ios-smoke/app.log" || true
-          if grep -E 'Fatal error|SIGABRT|Terminating app due to uncaught exception' "$RUNNER_TEMP/easysplit-ios-smoke/app.log"; then
-            echo 'iOS runtime crash signature detected' >&2
-            exit 1
-          fi
-          echo 'IOS_SIMULATOR_INSTALL=PASS'
-          echo 'IOS_SIMULATOR_LAUNCH=PASS'
-          echo 'IOS_LIVE_DEEP_LINK_DISPATCH=PASS'
-          echo 'IOS_COLD_DEEP_LINK_DISPATCH=PASS'
 
-      - name: Compile Android debug APK
+      - name: Run iOS Gate 4
         shell: bash
         run: |
           set -euo pipefail
-          cd android
-          chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
-          APK="$GITHUB_WORKSPACE/android/app/build/outputs/apk/debug/app-debug.apk"
-          test -f "$APK"
-          BUILD_TOOLS=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)
-          "$ANDROID_HOME/build-tools/$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK"
+          UDID=$(cat "$RUNNER_TEMP/easysplit-ios/udid.txt")
+          bash .github/validation/run-native-ios-gate4.sh \
+            "$RUNNER_TEMP/easysplit-ios/gate4" "$UDID" "$GATE4_RUN_ID"
 
-      - name: Upload Android debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: easysplit-android-debug-${{ github.run_id }}
-          path: android/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-          retention-days: 7
+      - name: Run iOS launch and deep-link smoke independently
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          UDID=$(cat "$RUNNER_TEMP/easysplit-ios/udid.txt")
+          bash .github/validation/run-native-ios-smoke.sh \
+            "$RUNNER_TEMP/easysplit-ios/smoke" "$UDID"
+
+      - name: Require complete iOS runtime evidence
+        if: always()
+        run: |
+          node .github/validation/require-native-evidence.mjs ios \
+            "$RUNNER_TEMP/easysplit-ios/gate4" \
+            "$RUNNER_TEMP/easysplit-ios/smoke" \
+            "$GATE4_RUN_ID"
 
       - name: Upload iOS runtime diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: easysplit-ios-smoke-${{ github.run_id }}
-          path: ${{ runner.temp }}/easysplit-ios-smoke
+          name: easysplit-ios-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/easysplit-ios
           if-no-files-found: warn
           retention-days: 7
 
-  android-api-36-runtime:
-    name: Android 16 install + launch + Back + deep links
-    needs: compile-native-projects
+  android-native:
+    name: Android 16 core E2E, Back, and deep links
+    needs: shared-verification
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 50
+    env:
+      GATE4_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}-android
     steps:
       - name: Checkout source
         uses: actions/checkout@v5
@@ -224,16 +228,78 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Install exact dependencies for runtime harness
+      - name: Install exact dependencies
         run: npm ci
 
-      - name: Download compiled Android APK
-        uses: actions/download-artifact@v5
-        with:
-          name: easysplit-android-debug-${{ github.run_id }}
-          path: android-runtime
+      - name: Synchronize clean Android project for Gate 3
+        env:
+          NEXT_PUBLIC_EASYSPLIT_API_ORIGIN: http://127.0.0.1:3000
+          NEXT_PUBLIC_EASYSPLIT_WEB_ORIGIN: http://127.0.0.1:3000
+          NEXT_PUBLIC_EASYSPLIT_WS_ORIGIN: ws://127.0.0.1:3000
+        run: npm run mobile:sync
 
-      - name: Run Android 16 native runtime smoke
+      - name: Verify and compile clean Gate 3 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx cap ls
+          git diff --check
+          grep -q 'capacitor-app-launcher' android/app/capacitor.build.gradle
+          grep -q 'capacitor-share' android/app/capacitor.build.gradle
+          ! grep -Rqs 'Gate Four Host' mobile-dist android/app/src/main/assets/public
+          ! grep -Rqs 'GATE4_NATIVE_CORE_FLOW=PASS' mobile-dist android/app/src/main/assets/public
+          ! grep -Rqs '__EASYSPLIT_GATE4_AUTH_DIAGNOSTICS__' mobile-dist android/app/src/main/assets/public
+          mkdir -p "$RUNNER_TEMP/easysplit-android-apks"
+          cd android
+          chmod +x gradlew
+          ./gradlew clean assembleDebug --no-daemon --stacktrace
+          SOURCE_APK="$GITHUB_WORKSPACE/android/app/build/outputs/apk/debug/app-debug.apk"
+          GATE3_APK="$RUNNER_TEMP/easysplit-android-apks/gate3-app-debug.apk"
+          test -f "$SOURCE_APK"
+          cp "$SOURCE_APK" "$GATE3_APK"
+          BUILD_TOOLS=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)
+          "$ANDROID_HOME/build-tools/$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$GATE3_APK"
+          sha256sum "$GATE3_APK" > "$GATE3_APK.sha256"
+
+      - name: Synchronize instrumented Android project for Gate 4
+        env:
+          EASYSPLIT_GATE4_E2E: 'true'
+          VITE_GATE4_RUN_ID: ${{ env.GATE4_RUN_ID }}
+          VITE_GATE4_REPORT_ORIGIN: http://127.0.0.1:3904
+          NEXT_PUBLIC_EASYSPLIT_API_ORIGIN: http://127.0.0.1:3000
+          NEXT_PUBLIC_EASYSPLIT_WEB_ORIGIN: http://127.0.0.1:3000
+          NEXT_PUBLIC_EASYSPLIT_WS_ORIGIN: ws://127.0.0.1:3000
+        run: npm run mobile:sync
+
+      - name: Verify and compile instrumented Gate 4 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx cap ls
+          git diff --check
+          grep -q 'capacitor-app-launcher' android/app/capacitor.build.gradle
+          grep -q 'capacitor-share' android/app/capacitor.build.gradle
+          grep -q 'Gate Four Host' mobile-dist/index.html
+          grep -Rqs 'GATE4_NATIVE_CORE_FLOW=PASS' mobile-dist/assets
+          grep -Rqs '__EASYSPLIT_GATE4_AUTH_DIAGNOSTICS__' mobile-dist/assets
+          cd android
+          chmod +x gradlew
+          ./gradlew clean assembleDebug --no-daemon --stacktrace
+          SOURCE_APK="$GITHUB_WORKSPACE/android/app/build/outputs/apk/debug/app-debug.apk"
+          GATE4_APK="$RUNNER_TEMP/easysplit-android-apks/gate4-app-debug.apk"
+          GATE3_APK="$RUNNER_TEMP/easysplit-android-apks/gate3-app-debug.apk"
+          test -f "$SOURCE_APK"
+          test -f "$GATE3_APK"
+          cp "$SOURCE_APK" "$GATE4_APK"
+          BUILD_TOOLS=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)
+          "$ANDROID_HOME/build-tools/$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$GATE4_APK"
+          sha256sum "$GATE4_APK" > "$GATE4_APK.sha256"
+          if cmp -s "$GATE3_APK" "$GATE4_APK"; then
+            printf '%s\n' 'Gate 3 and Gate 4 APKs are unexpectedly identical' >&2
+            exit 1
+          fi
+
+      - name: Run isolated Android Gate 4 and Gate 3 validations
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 36
@@ -247,42 +313,23 @@ jobs:
             adb kill-server || true
             adb start-server
             adb devices
-          script: bash .github/validation/run-native-android-runtime.sh "$RUNNER_TEMP/easysplit-android-smoke" android-runtime/app-debug.apk
+          script: bash .github/validation/run-native-android-validation.sh "$RUNNER_TEMP/easysplit-android" "$RUNNER_TEMP/easysplit-android-apks/gate4-app-debug.apk" "$RUNNER_TEMP/easysplit-android-apks/gate3-app-debug.apk" "$GATE4_RUN_ID"
 
-      - name: Require Android runtime PASS evidence
-        shell: bash
+      - name: Require complete Android Gate 4 and Gate 3 evidence
+        if: always()
         run: |
-          set -euo pipefail
-          RESULT="$RUNNER_TEMP/easysplit-android-smoke/result.txt"
-          EXIT_CODE="$RUNNER_TEMP/easysplit-android-smoke/exit-code.txt"
-          SCREENSHOT="$RUNNER_TEMP/easysplit-android-smoke/final.png"
-          LOGCAT="$RUNNER_TEMP/easysplit-android-smoke/logcat.txt"
-          test -s "$RESULT"
-          test -s "$EXIT_CODE"
-          test -s "$SCREENSHOT"
-          test -s "$LOGCAT"
-          cat "$RESULT"
-          test "$(cat "$EXIT_CODE")" -eq 0
-          for marker in \
-            ANDROID_GESTURE_NAVIGATION=PASS \
-            ANDROID_COLD_LAUNCH=PASS \
-            ANDROID_GUEST_LIVE_CONTINUITY=PASS \
-            ANDROID_GUEST_COLD_CONTINUITY=PASS \
-            ANDROID_BACK_CAMERA_DISMISS=PASS \
-            ANDROID_LIVE_DEEP_LINK=PASS \
-            ANDROID_COLD_DEEP_LINK=PASS \
-            ANDROID_BACK_ROOT=PASS \
-            ANDROID_BACKGROUND_RESUME=PASS \
-            ANDROID_CRASH_ANR_SCAN=PASS
-          do
-            grep -Fxq "$marker" "$RESULT"
-          done
+          node .github/validation/require-native-evidence.mjs android \
+            "$RUNNER_TEMP/easysplit-android/gate4" \
+            "$RUNNER_TEMP/easysplit-android/gate3" \
+            "$GATE4_RUN_ID"
 
       - name: Upload Android runtime diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: easysplit-android-smoke-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/easysplit-android-smoke
+          name: easysplit-android-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/easysplit-android
+            ${{ runner.temp }}/easysplit-android-apks/*.sha256
           if-no-files-found: warn
           retention-days: 7

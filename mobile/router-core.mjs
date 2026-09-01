@@ -61,6 +61,17 @@ export function currentDepth(state) {
   return Number(state.esDepth);
 }
 
+export function pushShellRoute(browserWindow, path) {
+  const depth = currentDepth(browserWindow.history.state) + 1;
+  const search = buildShellSearch(path);
+  browserWindow.history.pushState(
+    { ...(browserWindow.history.state || {}), esDepth: depth },
+    '',
+    `${browserWindow.location.pathname}${search}`,
+  );
+  browserWindow.dispatchEvent(new Event(NAV_EVENT));
+}
+
 export function initialHistoryPlan(search, state) {
   if (hasManagedDepth(state)) {
     return { seedHome: false, depth: currentDepth(state) };

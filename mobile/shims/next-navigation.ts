@@ -4,6 +4,7 @@ import {
   buildShellSearch,
   currentDepth,
   paramsFromRoute,
+  pushShellRoute,
   routeFromSearch,
 } from '../router-core.mjs';
 
@@ -12,10 +13,7 @@ function notifyNavigation() {
 }
 
 function push(path: string) {
-  const depth = currentDepth(window.history.state) + 1;
-  const search = buildShellSearch(path);
-  window.history.pushState({ ...(window.history.state || {}), esDepth: depth }, '', `${window.location.pathname}${search}`);
-  notifyNavigation();
+  pushShellRoute(window, path);
 }
 
 function replace(path: string) {
