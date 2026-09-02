@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
+const { getFirestore } = require('firebase-admin/firestore');
 
 const {
   COLLECTIONS,
@@ -185,8 +186,8 @@ async function main() {
   if (!validation.ok) {
     throw new Error(`Local JSON validation failed: ${validation.errors.join(', ')}`);
   }
-  const admin = initializeFirebaseAdmin(projectRoot);
-  const firestore = admin.firestore();
+  const app = initializeFirebaseAdmin(projectRoot);
+  const firestore = getFirestore(app);
   const remoteCollections = await readFirestoreCollections(firestore);
   const classification = classifyCutover(localData, remoteCollections);
   const apply = process.argv.includes('--apply');

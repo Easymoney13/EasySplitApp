@@ -133,7 +133,9 @@ function inviteTokenMatches(rawToken, expectedHash) {
   return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
 }
 
-const admin = require('firebase-admin');
+const { cert, initializeApp } = require('firebase-admin/app');
+const { getAppCheck } = require('firebase-admin/app-check');
+const { getAuth } = require('firebase-admin/auth');
 
 if (!process.env.GEMINI_API_KEY) {
   console.warn('⚠️ GEMINI_API_KEY is not configured. Server-side receipt OCR will reject image scans instead of returning unverified text.');
@@ -145,8 +147,8 @@ const fullServiceAccountPath = path.resolve(process.cwd(), serviceAccountPath);
 
 if (process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
   try {
-    admin.initializeApp({
-      credential: admin.credential.cert({
+    initializeApp({
+      credential: cert({
         projectId: process.env.FIREBASE_PROJECT_ID || 'easysplit-24576',
         clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
         privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
@@ -159,8 +161,8 @@ if (process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
 } else if (fs.existsSync(fullServiceAccountPath)) {
   try {
     const serviceAccount = require(fullServiceAccountPath);
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount)
+    initializeApp({
+      credential: cert(serviceAccount)
     });
     console.log('✅ Firebase Admin SDK initialized successfully with Service Account Key.');
   } catch (err) {
@@ -168,7 +170,7 @@ if (process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
   }
 } else {
   try {
-    admin.initializeApp({
+    initializeApp({
       projectId: 'easysplit-24576'
     });
     console.warn(`⚠️ Firebase Admin initialized with PROJECT_ID only. Verification will fail unless credentials are provided via environment variables or JSON file at: ${fullServiceAccountPath}`);
@@ -193,7 +195,7 @@ async function authenticateUser(req, res, nextMiddleware) {
 
   const token = authHeader.split('Bearer ')[1];
   try {
-    const decodedToken = await admin.auth().verifyIdToken(token);
+    const decodedToken = await getAuth().verifyIdToken(token);
     req.user = decodedToken;
     nextMiddleware();
   } catch (err) {
@@ -694,7 +696,7 @@ app.prepare().then(() => {
         return res.status(401).json({ error: 'App Check token is required', errorCode: 'APP_CHECK_REQUIRED' });
       }
       try {
-        const appCheckClaims = await admin.appCheck().verifyToken(appCheckToken);
+        const appCheckClaims = await getAppCheck().verifyToken(appCheckToken);
         req.appCheck = appCheckClaims;
         return nextMiddleware();
       } catch (err) {
@@ -703,7 +705,7 @@ app.prepare().then(() => {
     }
     if (appCheckToken) {
       try {
-        const appCheckClaims = await admin.appCheck().verifyToken(appCheckToken);
+        const appCheckClaims = await getAppCheck().verifyToken(appCheckToken);
         req.appCheck = appCheckClaims;
       } catch (_) {}
     }
@@ -2562,7 +2564,7 @@ app.prepare().then(() => {
       const result = await db.deleteUserAccountData(uid);
 
       try {
-        await admin.auth().deleteUser(uid);
+        await getAuth().deleteUser(uid);
       } catch (authDeleteError) {
         if (authDeleteError?.code !== 'auth/user-not-found') throw authDeleteError;
       }

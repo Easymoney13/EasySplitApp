@@ -52,7 +52,7 @@ test('account deletion is authenticated, permanent, and wired through Settings',
   assert.match(server, /server\.delete\('\/api\/user\/account', authenticateUser/);
   assert.match(server, /if \(!req\.user\)[\s\S]*status\(401\)/);
   assert.match(server, /provider === 'apple\.com'[\s\S]*revokeAppleAuthorization\(req\.body\?\.authorizationCode\)[\s\S]*db\.deleteUserAccountData\(uid\)/);
-  assert.match(server, /admin\.auth\(\)\.deleteUser\(uid\)/);
+  assert.match(server, /getAuth\(\)\.deleteUser\(uid\)/);
   assert.match(ctx, /providerId === 'apple\.com'[\s\S]*signInNativeApple\(\)[\s\S]*authorizationCode = apple\.authorizationCode/);
   assert.match(ctx, /fetch\(apiUrl\('\/api\/user\/account'\), \{[\s\S]*method: 'DELETE'[\s\S]*authorizationCode/);
   assert.match(ctx, /clearAccountScopedStorage\(localStorage\)/);

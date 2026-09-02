@@ -3,6 +3,13 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const {
+  applicationDefault,
+  cert,
+  getApps,
+  initializeApp,
+} = require('firebase-admin/app');
+const { getFirestore } = require('firebase-admin/firestore');
 
 const COLLECTIONS = ['users', 'sessions', 'groups', 'history'];
 const ALLOWED_TOP_LEVEL_DIFFERENCES = {
@@ -124,19 +131,17 @@ function compareDatasets(localData, remoteCollections) {
 }
 
 function initializeFirebaseAdmin(projectRoot) {
-  const admin = require('firebase-admin');
-  if (admin.apps.length) return admin;
+  if (getApps().length) return getApps()[0];
   const projectId = process.env.FIREBASE_PROJECT_ID || 'easysplit-24576';
   if (process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
-    admin.initializeApp({
-      credential: admin.credential.cert({
+    return initializeApp({
+      credential: cert({
         projectId,
         clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
         privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
       }),
       projectId,
     });
-    return admin;
   }
 
   const serviceAccountPath = path.resolve(
@@ -144,15 +149,13 @@ function initializeFirebaseAdmin(projectRoot) {
     process.env.FIREBASE_SERVICE_ACCOUNT_PATH || 'firebase-service-account.json',
   );
   if (fs.existsSync(serviceAccountPath)) {
-    admin.initializeApp({
-      credential: admin.credential.cert(require(serviceAccountPath)),
+    return initializeApp({
+      credential: cert(require(serviceAccountPath)),
       projectId,
     });
-    return admin;
   }
 
-  admin.initializeApp({ credential: admin.credential.applicationDefault(), projectId });
-  return admin;
+  return initializeApp({ credential: applicationDefault(), projectId });
 }
 
 async function readFirestoreCollections(firestore) {
@@ -192,8 +195,8 @@ async function main() {
   const dbPath = path.resolve(process.env.BILLSPLIT_DB_PATH);
   if (!fs.existsSync(dbPath)) throw new Error(`Local database was not found at ${dbPath}`);
   const localData = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
-  const admin = initializeFirebaseAdmin(projectRoot);
-  const firestore = admin.firestore();
+  const app = initializeFirebaseAdmin(projectRoot);
+  const firestore = getFirestore(app);
   const remoteCollections = await readFirestoreCollections(firestore);
   const parity = compareDatasets(localData, remoteCollections);
   const writeProbe = process.argv.includes('--write-probe')

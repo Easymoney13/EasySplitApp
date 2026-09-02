@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const path = require('path');
+const { getFirestore } = require('firebase-admin/firestore');
 const { analyzeBackfillDataset } = require('../lib/restaurantDataFoundation');
 const { initializeFirebaseAdmin } = require('./verify-firestore-parity');
 
@@ -19,8 +20,8 @@ async function main() {
     throw new Error('This command is intentionally read-only. No apply mode exists.');
   }
   const projectRoot = path.resolve(__dirname, '..');
-  const admin = initializeFirebaseAdmin(projectRoot);
-  const firestore = admin.firestore();
+  const app = initializeFirebaseAdmin(projectRoot);
+  const firestore = getFirestore(app);
   const collections = await readCollections(firestore);
   const result = analyzeBackfillDataset({
     users: collections.users,
