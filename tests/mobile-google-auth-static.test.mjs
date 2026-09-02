@@ -9,10 +9,10 @@ const WEB_CLIENT_ID = '510350845002-o6t8t84c5fnvncgkspqdit0s0ndgsir9.apps.google
 const IOS_CLIENT_ID = '510350845002-11pq3jtk5vb5f2kv1nrn1jqd02f04dqp.apps.googleusercontent.com';
 const IOS_URL_SCHEME = 'com.googleusercontent.apps.510350845002-11pq3jtk5vb5f2kv1nrn1jqd02f04dqp';
 
-test('native Google auth dependency is exact and leaves Firebase JS version untouched', async () => {
+test('native Google auth dependency is exact and keeps Firebase JS pinned', async () => {
   const pkg = JSON.parse(await read('package.json'));
   assert.equal(pkg.dependencies['@capawesome/capacitor-google-sign-in'], '0.1.3');
-  assert.equal(pkg.dependencies.firebase, '^10.12.2');
+  assert.equal(pkg.dependencies.firebase, '12.18.0');
   assert.equal(pkg.dependencies['@capacitor/core'], '8.5.0');
 });
 
