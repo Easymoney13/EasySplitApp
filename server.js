@@ -106,6 +106,7 @@ const {
 } = require('./lib/groupLifecycle');
 const { trackAnalyticsEvent } = require('./lib/analytics');
 const { createRestaurantIdentity } = require('./lib/restaurantIdentity');
+const { requireRestaurantDataAdmin } = require('./lib/adminAuthorization');
 const {
   attestRestaurantIdentity,
   restaurantProofId,
@@ -2476,6 +2477,36 @@ app.prepare().then(() => {
     const targetIndex = memberIds.indexOf(targetMember.id);
     return targetIndex >= 0 ? tippedShares[targetIndex] / 100 : 0;
   }
+
+  // Internal aggregate-only audience preview. Raw phone numbers and HMACs are
+  // deliberately never returned from this boundary.
+  server.get(
+    '/api/admin/restaurant-audience/preview',
+    authenticateUser,
+    accountReadRateLimit,
+    requireRestaurantDataAdmin,
+    async (req, res) => {
+      try {
+        const restaurantId = security.sanitizeString(String(req.query?.restaurantId || ''), 80);
+        const now = Date.now();
+        const parseBoundary = (value, fallback) => {
+          if (value === undefined || value === null || value === '') return fallback;
+          const numeric = Number(value);
+          if (Number.isFinite(numeric) && numeric > 0) return numeric;
+          const parsed = Date.parse(String(value));
+          return Number.isFinite(parsed) ? parsed : 0;
+        };
+        const to = parseBoundary(req.query?.to, now);
+        const from = parseBoundary(req.query?.from, to - 30 * 24 * 60 * 60 * 1000);
+        const result = await db.queryRestaurantAudience(restaurantId, from, to);
+        if (!result) return res.status(404).json({ error: 'Restaurant not found' });
+        res.setHeader('Cache-Control', 'no-store');
+        return res.json({ success: true, audience: result });
+      } catch (err) {
+        return sendRouteError(res, err, 'Failed to preview restaurant audience');
+      }
+    },
+  );
 
   // POST /api/user/sync - Synchronize/register user account & settings
   server.post('/api/user/sync', authenticateUser, async (req, res) => {

@@ -12,6 +12,7 @@
     "test:strain": "node --test tests/strain.integration.js",
     "test:ocr-hebrew": "node --test tests/hebrew-ocr.integration.js",
     "verify:firestore": "node scripts/verify-firestore-parity.js",
+    "audit:restaurant-data": "node scripts/restaurant-data-foundation-dry-run.js",
     "cutover:firestore": "node scripts/safe-firestore-cutover.js",
     "verify": "npm run test && npm run test:ocr-hebrew && npm run typecheck && npm run build",
     "mobile:check-node": "node scripts/check-mobile-node.mjs",
