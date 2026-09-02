@@ -2524,8 +2524,15 @@ app.prepare().then(() => {
         username || existingUser?.username || name || 'User',
         'User',
       );
+      const effectivePhone = phone || existingUser?.phone || '';
+      if (!effectivePhone) {
+        return res.status(400).json({
+          error: 'A valid Israeli mobile number is required to register or synchronize an account',
+          errorCode: 'PHONE_REQUIRED',
+        });
+      }
 
-      const user = await db.findOrCreateUser(uid, finalName, phone, settings || {});
+      const user = await db.findOrCreateUser(uid, finalName, effectivePhone, settings || {});
 
       // Sync avatar URL from Google if available
       if (picture && user.avatarUrl !== picture) {

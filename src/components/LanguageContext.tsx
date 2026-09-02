@@ -375,7 +375,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   // Debounced effect to sync profile and settings to the backend
   useEffect(() => {
-    if (!isInitialized || authLoading || !firebaseUser) return;
+    if (!isInitialized || authLoading || !firebaseUser || !profile.phoneNumber || !isValidIsraeliPhone(profile.phoneNumber)) return;
 
     const timer = setTimeout(() => {
       fetch(apiUrl('/api/user/sync'), {

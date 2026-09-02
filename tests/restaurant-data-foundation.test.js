@@ -175,3 +175,105 @@ test('restaurant data administration requires an explicit custom claim', () => {
   assert.equal(isRestaurantDataAdmin({ uid: 'admin-user', restaurantDataAdmin: true }), true);
   assert.equal(isRestaurantDataAdmin({ uid: 'admin-user', admin: true }), true);
 });
+
+test('requireRestaurantDataAdmin middleware enforces 401 unauthenticated and 403 unauthorized', () => {
+  const { requireRestaurantDataAdmin } = require('../lib/adminAuthorization');
+
+  let status401 = 0;
+  let json401 = null;
+  requireRestaurantDataAdmin({ user: null }, {
+    status(code) { status401 = code; return this; },
+    json(data) { json401 = data; return this; },
+  }, () => {
+    assert.fail('next() should not be called when unauthenticated');
+  });
+  assert.equal(status401, 401);
+  assert.equal(json401?.error, 'Authentication required');
+
+  let status403 = 0;
+  let json403 = null;
+  requireRestaurantDataAdmin({ user: { uid: 'user_123', email: 'test@example.com' } }, {
+    status(code) { status403 = code; return this; },
+    json(data) { json403 = data; return this; },
+  }, () => {
+    assert.fail('next() should not be called when lacking admin claim');
+  });
+  assert.equal(status403, 403);
+  assert.equal(json403?.error, 'Restaurant data administrator access is required');
+
+  let nextCalled = false;
+  requireRestaurantDataAdmin({ user: { uid: 'admin_123', restaurantDataAdmin: true } }, {}, () => {
+    nextCalled = true;
+  });
+  assert.equal(nextCalled, true);
+});
+
+test('planBackfill accurately plans updates, handles idempotency, and never leaks PII', () => {
+  const { planBackfill } = require('../scripts/restaurant-data-backfill');
+  const secret = 'test-secret-key-123456789012345';
+  const rawPhone = '0501234567';
+
+  const dataset = {
+    users: [
+      { id: 'usr_1', username: 'Alice', phone: rawPhone },
+      { id: 'usr_no_phone', username: 'Bob', phone: '' },
+    ],
+    sessions: [
+      {
+        id: 'sess_1',
+        restaurant: { id: 'rest_1', printedName: 'Test Diner' },
+        createdAt: 1000,
+        date: '2026-09-01',
+        members: [{ id: 'm1', uid: 'usr_1', name: 'Alice', phone: rawPhone, isHost: true }],
+      },
+    ],
+    restaurants: [{ id: 'rest_1', printedName: 'Test Diner' }],
+    restaurant_visits: [
+      { id: 'visit_test_existing', sessionId: 'sess_1', memberId: 'm1', phoneHmac: '' },
+    ],
+  };
+
+  const plan = planBackfill(dataset, secret, 'v1');
+  assert.equal(plan.userUpdates.length, 1);
+  assert.equal(plan.stats.usersMissingPhone, 1);
+  assert.equal(plan.visitUpdates.length, 1);
+  assert.equal(plan.visitCreations.length, 0);
+
+  const userUpdate = plan.userUpdates[0];
+  assert.equal(userUpdate.updates.phoneHmac, createIdentityHmac(secret, rawPhone));
+  assert.equal(userUpdate.updates.phoneDataQualityStatus, 'complete');
+
+  const serialized = JSON.stringify(plan);
+  assert.equal(serialized.includes(rawPhone), false, 'Raw phone number must not appear in plan output');
+
+  const alreadyEnrichedDataset = {
+    users: [{
+      id: 'usr_1',
+      username: 'Alice',
+      phone: rawPhone,
+      phoneHmac: createIdentityHmac(secret, rawPhone),
+      phoneAssurance: 'format_only',
+      phoneDataQualityStatus: 'complete',
+      identityKeyVersion: 'v1',
+    }],
+    sessions: dataset.sessions,
+    restaurants: dataset.restaurants,
+    restaurant_visits: [{
+      id: 'visit_test_existing',
+      sessionId: 'sess_1',
+      memberId: 'm1',
+      phoneHmac: createIdentityHmac(secret, rawPhone),
+      phoneAssurance: 'format_only',
+      occurredAt: 1000,
+      visitDate: '2026-09-01',
+      dataQualityStatus: 'unresolved',
+      identityAliases: [`phone:${createIdentityHmac(secret, rawPhone)}`, 'user:usr_1'],
+      identityKeyVersion: 'v1',
+    }],
+  };
+
+  const idempotentPlan = planBackfill(alreadyEnrichedDataset, secret, 'v1');
+  assert.equal(idempotentPlan.userUpdates.length, 0);
+  assert.equal(idempotentPlan.visitUpdates.length, 0);
+  assert.equal(idempotentPlan.stats.usersAlreadyComplete, 1);
+});

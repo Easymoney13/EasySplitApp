@@ -21,6 +21,7 @@ tsconfig.tsbuildinfo
 scratch/
 
 # local runtime data (never commit user or receipt records)
+/data/
 /db*.json
 !/db.example.json
 /db*.json.*
