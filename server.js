@@ -3109,6 +3109,28 @@ app.prepare().then(() => {
       const cleanupInterval = setInterval(resumePendingCleanup, 5 * 60 * 1000);
       cleanupInterval.unref?.();
     }
+
+    // Periodic Database Canonicalization Engine (runs once daily)
+    const runCanonicalEngine = () => {
+      try {
+        const { refactorDatabase } = require('./lib/canonicalEngine');
+        const firestore = typeof db.getFirestore === 'function' ? db.getFirestore() : null;
+        if (firestore) {
+          void refactorDatabase(firestore).then((result) => {
+            if (result.sessionUpdatesCount > 0 || result.groupUpdatesCount > 0) {
+              console.log(`[CanonicalEngine] Refactored ${result.sessionUpdatesCount} sessions and ${result.groupUpdatesCount} groups.`);
+            }
+          }).catch((error) => {
+            console.warn('[CanonicalEngine] Background refactoring error:', error.message);
+          });
+        }
+      } catch (_) {}
+    };
+    const initialCanonicalTimeout = setTimeout(runCanonicalEngine, 60_000);
+    initialCanonicalTimeout.unref?.();
+    const CANONICAL_INTERVAL_MS = 24 * 60 * 60 * 1000; // Daily (24 hours)
+    const canonicalInterval = setInterval(runCanonicalEngine, CANONICAL_INTERVAL_MS);
+    canonicalInterval.unref?.();
   });
 }).catch((err) => {
   console.error('❌ Failed to prepare Next.js app:', err);
