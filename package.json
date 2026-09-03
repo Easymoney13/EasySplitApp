@@ -16,6 +16,7 @@
     "test:ocr-hebrew": "node --test tests/hebrew-ocr.integration.js",
     "verify:firestore": "node scripts/verify-firestore-parity.js",
     "audit:restaurant-data": "node scripts/restaurant-data-foundation-dry-run.js",
+    "report:restaurants": "node scripts/report-restaurant-customers.js",
     "backfill:restaurant-data": "node scripts/restaurant-data-backfill.js",
     "cutover:firestore": "node scripts/safe-firestore-cutover.js",
     "verify": "npm run test && npm run test:ocr-hebrew && npm run typecheck && npm run build",
@@ -83,6 +84,9 @@
     },
     "qs": "6.16.0",
     "teeny-request": {
+      "uuid": "11.1.1"
+    },
+    "xcode": {
       "uuid": "11.1.1"
     }
   }

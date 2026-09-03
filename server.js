@@ -240,6 +240,7 @@ function getLocalNetworkIp() {
 
 app.prepare().then(() => {
   const server = express();
+  server.disable('x-powered-by');
   const trustedProxyHops = Number(process.env.TRUST_PROXY_HOPS || 0);
   if (Number.isInteger(trustedProxyHops) && trustedProxyHops > 0) server.set('trust proxy', trustedProxyHops);
 
@@ -291,11 +292,12 @@ app.prepare().then(() => {
   }
 
   function websocketClientIp(request) {
+    let raw = request.socket?.remoteAddress || 'unknown';
     if (trustedProxyHops > 0) {
       const forwarded = String(request.headers['x-forwarded-for'] || '').split(',').map((part) => part.trim()).filter(Boolean);
-      if (forwarded.length) return forwarded[Math.max(0, forwarded.length - trustedProxyHops)] || forwarded[0];
+      if (forwarded.length) raw = forwarded[Math.max(0, forwarded.length - trustedProxyHops)] || forwarded[0];
     }
-    return request.socket.remoteAddress || 'unknown';
+    return security.normalizeIp ? security.normalizeIp(raw) : raw;
   }
 
   httpServer.on('upgrade', (request, socket, head) => {
@@ -412,6 +414,13 @@ app.prepare().then(() => {
   });
   server.use((error, req, res, nextMiddleware) => {
     if (error?.type === 'entity.too.large') return res.status(413).json({ error: 'Request body is too large' });
+    if (error instanceof SyntaxError && error.status === 400 && 'body' in error) {
+      return res.status(400).json({ error: 'Invalid JSON payload' });
+    }
+    if (req.path?.startsWith('/api/')) {
+      console.error('Unhandled API error:', error?.message || error);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
     return nextMiddleware(error);
   });
 
@@ -419,8 +428,13 @@ app.prepare().then(() => {
   const ocrResultCache = createExpiringPromiseCache({ ttlMs: 5 * 60_000, maxEntries: 200 });
   const accountReadGate = createAsyncGate({ maxConcurrent: 2, maxQueue: 4, waitTimeoutMs: 750 });
 
-  // 🛡️ Pass-through API Middleware
+  // 🛡️ API Security Headers & Cache-Control (prevents caching of sensitive financial data)
   server.use('/api/', (req, res, nextMiddleware) => {
+    const isPublicStaticApi = req.path === '/exchange-rates' || req.originalUrl?.startsWith('/api/exchange-rates');
+    if (!isPublicStaticApi) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+      res.setHeader('Pragma', 'no-cache');
+    }
     nextMiddleware();
   });
 
@@ -656,9 +670,11 @@ app.prepare().then(() => {
 
   function sessionCreateRateLimit(req, res, nextMiddleware) {
     const now = Date.now();
+    const rawIp = req.ip || req.socket?.remoteAddress;
+    const ip = security.normalizeIp ? security.normalizeIp(rawIp) : (rawIp || 'unknown');
     const key = req.user?.uid
       ? `user:${req.user.uid}`
-      : `ip:${req.ip || req.socket.remoteAddress || 'unknown'}`;
+      : `ip:${ip}`;
     const existing = sessionCreateRateBuckets.get(key);
     const bucket = !existing || now - existing.startedAt > 10 * 60 * 1000
       ? { startedAt: now, count: 0 }
@@ -715,9 +731,11 @@ app.prepare().then(() => {
   function roomWindowRateLimit(buckets, limit, message) {
     return (req, res, nextMiddleware) => {
       const now = Date.now();
+      const rawIp = req.ip || req.socket?.remoteAddress;
+      const ip = security.normalizeIp ? security.normalizeIp(rawIp) : (rawIp || 'unknown');
       const key = req.user?.uid
         ? `user:${req.user.uid}`
-        : `ip:${req.ip || req.socket.remoteAddress || 'unknown'}`;
+        : `ip:${ip}`;
       const previous = buckets.get(key);
       const bucket = !previous || now - previous.startedAt > 10 * 60_000
         ? { startedAt: now, count: 0 }
@@ -740,6 +758,11 @@ app.prepare().then(() => {
   const roomJoinRateLimit = roomWindowRateLimit(roomJoinRateBuckets, (req) => req.user?.uid ? 30 : 150, 'Too many room join attempts. Please wait and try again.');
   const mutationRateLimit = roomWindowRateLimit(mutationRateBuckets, 240, 'Too many room updates. Please wait and try again.');
   const accountReadRateLimit = roomWindowRateLimit(accountReadRateBuckets, 240, 'Too many account reads. Please wait and try again.');
+  const userSyncRateBuckets = new Map();
+  const userSyncRateLimit = roomWindowRateLimit(userSyncRateBuckets, 30, 'Too many profile sync requests. Please wait a moment.');
+  const exchangeRatesRateBuckets = new Map();
+  const exchangeRatesRateLimit = roomWindowRateLimit(exchangeRatesRateBuckets, 60, 'Too many exchange rate requests. Please wait a moment.');
+
   function distributedShortCodeAdmission(namespace, codeResolver, limit, { allowOpaqueRoomId = false } = {}) {
     return async (req, res, nextMiddleware) => {
       const code = security.sanitizeString(codeResolver(req) || '', 100);
@@ -747,7 +770,8 @@ app.prepare().then(() => {
       const isOpaqueRoomId = allowOpaqueRoomId && /^grp[_-][a-z0-9_-]{4,95}$/i.test(code);
       if ((!isShortCode && !isOpaqueRoomId) || typeof db.consumeDistributedRateLimit !== 'function') return nextMiddleware();
       try {
-        const ip = req.ip || req.socket.remoteAddress || 'unknown';
+        const rawIp = req.ip || req.socket?.remoteAddress;
+        const ip = security.normalizeIp ? security.normalizeIp(rawIp) : (rawIp || 'unknown');
         const clientId = security.sanitizeString(
           req.body?.clientId || req.header('X-EasySplit-Client-Id') || '',
           100,
@@ -2385,7 +2409,7 @@ app.prepare().then(() => {
     }
   }
 
-  server.get('/api/exchange-rates', async (req, res) => {
+  server.get('/api/exchange-rates', exchangeRatesRateLimit, async (req, res) => {
     try {
       const now = Date.now();
       if (cachedRates && now - lastRatesFetchTime < 30 * 60 * 1000) {
@@ -2511,7 +2535,7 @@ app.prepare().then(() => {
   );
 
   // POST /api/user/sync - Synchronize/register user account & settings
-  server.post('/api/user/sync', authenticateUser, async (req, res) => {
+  server.post('/api/user/sync', authenticateUser, userSyncRateLimit, async (req, res) => {
     try {
       if (!req.user) {
         return res.status(401).json({ error: 'Unauthorized: Authentication required' });
@@ -2924,6 +2948,7 @@ app.prepare().then(() => {
     ws.isAlive = true;
     ws.messageWindowStartedAt = Date.now();
     ws.messageCount = 0;
+    ws.invalidMessageCount = 0;
     ws.messageInFlight = false;
     ws.subscriptionDeadline = setTimeout(() => {
       if (ws.subscriptions.size === 0) {
@@ -2963,6 +2988,16 @@ app.prepare().then(() => {
         return;
       }
       ws.messageInFlight = true;
+
+      function recordViolation(reason = 'Protocol violation') {
+        ws.invalidMessageCount = (ws.invalidMessageCount || 0) + 1;
+        if (ws.invalidMessageCount >= 3) {
+          ws.close(1008, reason);
+          return true;
+        }
+        return false;
+      }
+
       try {
         if (message.length > 10_000) {
           ws.close(1009, 'Message too large');
@@ -2971,7 +3006,9 @@ app.prepare().then(() => {
         const data = JSON.parse(message.toString());
         const { type, sessionId, groupId, accessToken } = data;
         if (typeof accessToken !== 'string' || accessToken.length < 20 || accessToken.length > 200 || !/^[a-z0-9_\-]+$/i.test(accessToken)) {
-          ws.send(JSON.stringify({ type: 'ERROR', error: 'Invalid subscription credentials' }));
+          if (!recordViolation('Invalid subscription credentials')) {
+            ws.send(JSON.stringify({ type: 'ERROR', error: 'Invalid subscription credentials' }));
+          }
           return;
         }
         if (ws.subscriptions.size >= 4) {
@@ -2982,13 +3019,17 @@ app.prepare().then(() => {
         if (type === 'SUBSCRIBE_GROUP' && groupId) {
           const sanitizedId = security.sanitizeString(groupId, 100);
           if (!security.isValidGroupId(sanitizedId)) {
-            ws.send(JSON.stringify({ type: 'ERROR', error: 'Invalid group subscription' }));
+            if (!recordViolation('Invalid group subscription')) {
+              ws.send(JSON.stringify({ type: 'ERROR', error: 'Invalid group subscription' }));
+            }
             return;
           }
           const group = await db.getGroup(sanitizedId);
           const member = group ? findRoomMember(group, { accessToken }) : null;
           if (!group || !member) {
-            ws.send(JSON.stringify({ type: 'ERROR', error: 'Invalid group subscription' }));
+            if (!recordViolation('Invalid group subscription')) {
+              ws.send(JSON.stringify({ type: 'ERROR', error: 'Invalid group subscription' }));
+            }
             return;
           }
           const authorization = { memberId: member.id, tokenHash: hashAccessToken(accessToken) };
@@ -3002,13 +3043,17 @@ app.prepare().then(() => {
         if (type === 'SUBSCRIBE' && sessionId) {
           const sanitizedId = security.sanitizeString(sessionId, 100);
           if (!security.isValidSessionId(sanitizedId)) {
-            ws.send(JSON.stringify({ type: 'ERROR', error: 'Invalid session subscription' }));
+            if (!recordViolation('Invalid session subscription')) {
+              ws.send(JSON.stringify({ type: 'ERROR', error: 'Invalid session subscription' }));
+            }
             return;
           }
           const session = await db.getSession(sanitizedId);
           const member = session ? findRoomMember(session, { accessToken }) : null;
           if (!session || !member) {
-            ws.send(JSON.stringify({ type: 'ERROR', error: 'Invalid session subscription' }));
+            if (!recordViolation('Invalid session subscription')) {
+              ws.send(JSON.stringify({ type: 'ERROR', error: 'Invalid session subscription' }));
+            }
             return;
           }
           const authorization = { memberId: member.id, tokenHash: hashAccessToken(accessToken) };
@@ -3024,7 +3069,9 @@ app.prepare().then(() => {
         }
 
       } catch (err) {
-        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ERROR', error: 'Invalid WebSocket message' }));
+        if (!recordViolation('Invalid message payload')) {
+          if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ERROR', error: 'Invalid WebSocket message' }));
+        }
       } finally {
         ws.messageInFlight = false;
       }
