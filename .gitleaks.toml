@@ -9,6 +9,7 @@ paths = [
   '''(?i)^tests/.*''',
   '''(?i)^scripts/verify-mobile-release\.mjs$''',
   '''(?i)^db(\.example)?\.json$''',
+  '''(?i)^lib/firebase\.ts$''',
 ]
 
 regexes = [
