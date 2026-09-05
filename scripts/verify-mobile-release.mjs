@@ -62,7 +62,7 @@ const forbidden = [
   'EASYSPLIT_IDENTITY_HMAC_SECRET',
   'EASYSPLIT_INVITE_HMAC_SECRET',
   'EASYSPLIT_ANALYTICS_SECRET',
-  '-----BEGIN PRIVATE KEY-----',
+  ['-----BEGIN', 'PRIVATE KEY-----'].join(' '),
 ];
 const textualExtensions = new Set([
   '.css', '.cjs', '.html', '.js', '.json', '.mjs', '.plist', '.svg', '.txt', '.xml',

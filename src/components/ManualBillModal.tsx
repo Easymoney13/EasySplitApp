@@ -391,25 +391,16 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
             </div>
           </div>
 
-          {/* Fixed Action Buttons Footer */}
-          <div className="p-3.5 bg-white dark:bg-[#0E1524] border-t border-slate-100 dark:border-slate-800/90 flex items-center gap-2.5 shrink-0">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={submittingNow}
-              className="flex-1 py-3 px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 font-bold text-xs sm:text-sm transition-colors cursor-pointer"
-            >
-              {t('cancelBtn', undefined, isRtl ? 'ביטול' : 'Cancel')}
-            </button>
-
+          {/* Fixed Action Button Footer - Apple Style Pill */}
+          <div className="p-4 bg-white dark:bg-[#0E1524] border-t border-slate-100 dark:border-slate-800/90 shrink-0">
             <button
               type="submit"
               disabled={submittingNow}
-              className="brand-tap flex-[2] py-3 px-5 rounded-xl bg-brand-600 hover:bg-brand-700 active:scale-95 text-white font-black text-xs sm:text-sm shadow-md shadow-brand-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+              className="brand-tap w-full py-4 px-6 rounded-full bg-brand-600 hover:bg-brand-700 active:scale-[0.98] text-white font-black text-sm sm:text-base shadow-[0_8px_24px_-4px_rgba(61,58,203,0.4)] transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer select-none"
             >
               {submittingNow ? (
                 <>
-                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                  <Loader2 className="w-5 h-5 animate-spin text-white" />
                   <span>{t('processingBill', undefined, isRtl ? 'יוצר חשבון...' : 'Creating Bill...')}</span>
                 </>
               ) : (

@@ -193,6 +193,16 @@ function SessionWorkspaceInner() {
     if (finishTimerRef.current) clearTimeout(finishTimerRef.current);
   }, []);
 
+  // Auto-close celebration reaction modal after 2 seconds and return to home page
+  useEffect(() => {
+    if (!showCompletionReaction) return;
+    const timer = setTimeout(() => {
+      setShowCompletionReaction(false);
+      router.push('/');
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [showCompletionReaction, router]);
+
   useEffect(() => {
     const displayName = profile.displayName?.trim() || '';
     const phoneNumber = profile.phoneNumber || '';
@@ -1766,34 +1776,36 @@ function SessionWorkspaceInner() {
         onAttach={handleAttachToGroup}
       />
 
-      {/* Centered Celebration Reaction Modal */}
+      {/* Centered Celebration Reaction Modal - Apple Style Clean & Modern */}
       {showCompletionReaction && (
         <div 
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn"
           onClick={() => {
-            if (!isFinishing) setShowCompletionReaction(false);
+            setShowCompletionReaction(false);
+            router.push('/');
           }}
         >
           <div 
-            className="w-full max-w-xs rounded-3xl p-6 bg-white dark:bg-brand-900 border border-slate-200 dark:border-white/10 text-center space-y-4 shadow-[0_20px_60px_rgba(0,0,0,0.5)] animate-scaleUp"
+            className="w-full max-w-xs rounded-[32px] p-6 bg-white dark:bg-[#121124] border border-slate-100 dark:border-white/10 text-center space-y-4 shadow-[0_24px_64px_rgba(0,0,0,0.32)] animate-scaleUp"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="relative w-28 h-28 mx-auto flex items-center justify-center">
-              <div className="absolute inset-0 rounded-full bg-mint-400/20 dark:bg-mint-400/10 animate-ping opacity-50 pointer-events-none" />
-              <div className="relative flex h-24 w-24 items-center justify-center rounded-[30px] bg-gradient-to-br from-mint-300 to-mint-500 text-white shadow-[0_18px_38px_rgba(43,199,137,0.30)]">
-                <CheckCircle2 className="h-12 w-12 stroke-[2.4]" />
+            {/* Apple-style Sleek Black Icon Squircle */}
+            <div className="relative w-24 h-24 mx-auto flex items-center justify-center">
+              <div className="relative flex h-20 w-20 items-center justify-center rounded-[24px] bg-black text-white shadow-[0_14px_32px_rgba(0,0,0,0.25)] border border-white/10">
+                <Check className="h-10 w-10 stroke-[3]" />
               </div>
             </div>
 
             <div className="space-y-1">
-              <h3 className="text-lg font-black text-slate-900 dark:text-white tracking-tight">
+              <h3 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
                 {t('settleSuccessTitle', undefined, 'Bill Split Settled!')}
               </h3>
-              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+              <p className="text-xs font-medium text-slate-500 dark:text-slate-400 max-w-[240px] mx-auto leading-relaxed">
                 {t('settleSuccessDesc', undefined, 'All done! Payments and records are archived.')}
               </p>
             </div>
 
+            {/* Apple-style Black Primary Action Button */}
             <button
               type="button"
               disabled={isFinishing}
@@ -1801,35 +1813,29 @@ function SessionWorkspaceInner() {
                 if (isFinishing) return;
                 setIsFinishing(true);
                 triggerHaptic('success');
-                finishTimerRef.current = setTimeout(() => {
-                  finishTimerRef.current = null;
-                  setShowCompletionReaction(false);
-                  setIsFinishing(false);
-                  router.push('/');
-                }, 900);
+                setShowCompletionReaction(false);
+                setIsFinishing(false);
+                router.push('/');
               }}
-              className="brand-tap w-full py-3.5 px-4 rounded-xl bg-mint-500 hover:bg-mint-600 text-brand-950 font-extrabold text-sm shadow-[0_14px_30px_-16px_rgba(43,199,137,0.75)] transition-all disabled:pointer-events-none"
+              className="brand-tap w-full py-3.5 px-5 rounded-full bg-black hover:bg-neutral-900 active:scale-[0.98] text-white font-bold text-sm shadow-[0_8px_24px_rgba(0,0,0,0.22)] border border-white/10 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:pointer-events-none select-none"
             >
-              <span className="inline-flex items-center justify-center gap-2">
-                <CheckCircle2 className={`h-5 w-5 ${isFinishing ? 'animate-scaleUp' : ''}`} />
+              <CheckCircle2 className={`h-4 w-4 stroke-[2.2] ${isFinishing ? 'animate-scaleUp' : ''}`} />
+              <span>
                 {isFinishing
                   ? t('finishingLabel', undefined, 'Finished!')
                   : t('finishContinueBtn', undefined, 'Finish / Continue')}
               </span>
             </button>
 
+            {/* Clean Apple-style Secondary Action Button */}
             <button
               type="button"
               disabled={isFinishing}
               onClick={() => {
-                if (finishTimerRef.current) {
-                  clearTimeout(finishTimerRef.current);
-                  finishTimerRef.current = null;
-                }
                 setShowCompletionReaction(false);
                 router.push('/?tab=history');
               }}
-              className="brand-tap w-full py-3 px-4 rounded-xl bg-brand-50 hover:bg-brand-100 dark:bg-brand-800 text-brand-700 dark:text-brand-100 border border-brand-100 dark:border-brand-700 font-extrabold text-xs transition-all disabled:cursor-not-allowed disabled:opacity-50"
+              className="brand-tap w-full py-3 px-4 rounded-full bg-slate-100 hover:bg-slate-200 dark:bg-white/10 dark:hover:bg-white/15 active:scale-[0.98] text-slate-700 dark:text-slate-200 font-bold text-xs transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 select-none"
             >
               <span>{t('viewHistoryBtn', undefined, 'View in History')}</span>
             </button>

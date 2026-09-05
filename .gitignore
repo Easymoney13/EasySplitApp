@@ -51,6 +51,13 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 
+# IDE and editor files
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+
 # credentials and private keys
 *service-account*.json
 *service_account*.json

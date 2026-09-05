@@ -2,8 +2,13 @@ import { Capacitor } from "@capacitor/core";
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { browserLocalPersistence, getAuth, GoogleAuthProvider, initializeAuth, setPersistence } from "firebase/auth";
 
+const firebaseApiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "";
+if (!firebaseApiKey && typeof window !== "undefined" && process.env.NODE_ENV === "production") {
+  console.warn("NEXT_PUBLIC_FIREBASE_API_KEY environment variable is not set.");
+}
+
 const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "AIzaSyBQmeJV8TR77XGRSybwTJXA6HZXh8DmGx8",
+  apiKey: firebaseApiKey,
   authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || "easysplit-24576.firebaseapp.com",
   projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "easysplit-24576",
   storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "easysplit-24576.firebasestorage.app",

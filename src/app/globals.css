@@ -348,12 +348,13 @@ select:focus-visible {
 
 .safe-bottom-nav {
   margin-bottom: 0 !important;
-  padding-bottom: max(0.25rem, var(--safe-area-inset-bottom, env(safe-area-inset-bottom)));
+  padding-bottom: max(0.5rem, var(--safe-area-inset-bottom, env(safe-area-inset-bottom)));
+  border: none !important;
 }
 
 .dark .safe-bottom-nav {
   background-color: #100E2C !important;
-  border-color: #25216F !important;
+  border: none !important;
 }
 
 .session-scroll-area {

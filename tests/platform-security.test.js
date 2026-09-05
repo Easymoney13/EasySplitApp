@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   createApiCorsMiddleware,
+  createCsrfProtectionMiddleware,
   isAllowedClientOrigin,
   normalizeOrigin,
   parseAllowedOrigins,
@@ -91,4 +92,80 @@ test('origin matching is exact and resists localhost lookalikes', () => {
   assert.equal(isAllowedClientOrigin('https://localhost.attacker.example', 'api.easysplit.test', allowed), false);
   assert.equal(isAllowedClientOrigin('capacitor://localhost.attacker.example', 'api.easysplit.test', allowed), false);
   assert.equal(isAllowedClientOrigin('https://localhost:444', 'api.easysplit.test', allowed), false);
+});
+
+test('CSRF protection middleware permits valid mutations and rejects malicious cross-site forms', () => {
+  const allowed = parseAllowedOrigins('capacitor://localhost,https://localhost');
+  const csrfMiddleware = createCsrfProtectionMiddleware(allowed);
+
+  function runCsrf({ method = 'POST', path = '/api/session/create', headers = {} }) {
+    let statusCode = 200;
+    let ended = false;
+    let nextCalled = false;
+    let responseBody = null;
+    const req = { method, path, headers };
+    const res = {
+      status(code) { statusCode = code; return this; },
+      json(data) { responseBody = data; ended = true; return this; },
+      end() { ended = true; return this; },
+    };
+    csrfMiddleware(req, res, () => { nextCalled = true; });
+    return { statusCode, ended, nextCalled, responseBody };
+  }
+
+  // Safe GET request passes
+  const safeGet = runCsrf({ method: 'GET' });
+  assert.equal(safeGet.nextCalled, true);
+  assert.equal(safeGet.statusCode, 200);
+
+  // Non-API mutation passes
+  const nonApiPost = runCsrf({ path: '/other-route' });
+  assert.equal(nonApiPost.nextCalled, true);
+
+  // Legitimate same-host JSON API mutation passes
+  const legitimateSameOrigin = runCsrf({
+    headers: {
+      host: 'easysplit.example',
+      origin: 'https://easysplit.example',
+      'sec-fetch-site': 'same-origin',
+      'content-type': 'application/json',
+      'x-easysplit-client-id': 'client-123',
+    },
+  });
+  assert.equal(legitimateSameOrigin.nextCalled, true);
+
+  // Legitimate mobile Capacitor mutation passes
+  const legitimateMobile = runCsrf({
+    headers: {
+      host: 'easysplit.example',
+      origin: 'capacitor://localhost',
+      'sec-fetch-site': 'cross-site',
+      'content-type': 'application/json',
+      'x-room-token': 'token-xyz',
+    },
+  });
+  assert.equal(legitimateMobile.nextCalled, true);
+
+  // Malicious cross-site form submission blocked
+  const crossSiteForm = runCsrf({
+    headers: {
+      host: 'easysplit.example',
+      origin: 'https://evil-site.attacker.com',
+      'sec-fetch-site': 'cross-site',
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+  });
+  assert.equal(crossSiteForm.nextCalled, false);
+  assert.equal(crossSiteForm.statusCode, 403);
+
+  // Malicious cross-origin API call blocked
+  const crossOriginAttacker = runCsrf({
+    headers: {
+      host: 'easysplit.example',
+      origin: 'https://evil-site.attacker.com',
+      'content-type': 'application/json',
+    },
+  });
+  assert.equal(crossOriginAttacker.nextCalled, false);
+  assert.equal(crossOriginAttacker.statusCode, 403);
 });

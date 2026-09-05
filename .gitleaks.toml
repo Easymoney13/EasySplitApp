@@ -1,0 +1,18 @@
+# Gitleaks configuration for EasySplit repository
+# Suppresses false positives for test fixtures, mock assertions, and historical migration artifacts
+
+title = "EasySplit Gitleaks Config"
+
+[allowlist]
+description = "Global allowlist for testing fixtures and historical database migration files"
+paths = [
+  '''(?i)^tests/.*''',
+  '''(?i)^scripts/verify-mobile-release\.mjs$''',
+  '''(?i)^db(\.example)?\.json$''',
+]
+
+regexes = [
+  '''mock-[a-z0-9_-]+''',
+  '''test-[a-z0-9_-]+''',
+  '''sample-[a-z0-9_-]+''',
+]

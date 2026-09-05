@@ -1,3 +1,7 @@
+if (process.argv.includes('--production') || process.argv.includes('--prod')) {
+  process.env.NODE_ENV = 'production';
+}
+
 const fs = require('fs');
 const path = require('path');
 
@@ -60,7 +64,7 @@ const parseReceiptTextWithGemini = geminiModule.parseReceiptTextWithGemini || ge
 
 const security = require('./lib/security');
 const { revokeAppleAuthorization } = require('./lib/appleTokenRevocation');
-const { createApiCorsMiddleware, isAllowedClientOrigin, resolveAllowedMobileOrigins } = require('./lib/platformSecurity');
+const { createApiCorsMiddleware, createCsrfProtectionMiddleware, isAllowedClientOrigin, resolveAllowedMobileOrigins } = require('./lib/platformSecurity');
 const debtMinimizer = require('./lib/debtMinimizer');
 const calculateDebtMinimization = debtMinimizer.calculateDebtMinimization;
 const allocateCentsProportionally = debtMinimizer.allocateCentsProportionally;
@@ -423,6 +427,9 @@ app.prepare().then(() => {
     }
     return nextMiddleware(error);
   });
+
+  const csrfProtection = createCsrfProtectionMiddleware(allowedMobileOrigins);
+  server.use(csrfProtection);
 
   const ocrGate = createAsyncGate({ maxConcurrent: 3, maxQueue: 8, waitTimeoutMs: 1_000 });
   const ocrResultCache = createExpiringPromiseCache({ ttlMs: 5 * 60_000, maxEntries: 200 });
@@ -3085,7 +3092,9 @@ app.prepare().then(() => {
     res.json({ ip: getLocalNetworkIp(), port: PORT });
   });
 
-  server.use('/_next/static', express.static(path.join(__dirname, '.next/static')));
+  if (!dev) {
+    server.use('/_next/static', express.static(path.join(__dirname, '.next/static')));
+  }
   server.use(express.static(path.join(__dirname, 'public')));
 
   server.all('*', (req, res) => {

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 
-const read = (path) => fs.readFile(new URL(`../${path}`, import.meta.url), 'utf8');
+const read = async (path) => (await fs.readFile(new URL(`../${path}`, import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
 
 test('Sign in with Apple release wiring is pinned and native-iOS scoped', async () => {
   const [pkg, helper, entitlements, project] = await Promise.all([

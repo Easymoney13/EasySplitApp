@@ -8,7 +8,8 @@ export function setCookie(name: string, value: any, days: number = 365) {
     const date = new Date();
     date.setTime(date.getTime() + days * 24 * 60 * 60 * 1000);
     const expires = `; expires=${date.toUTCString()}`;
-    document.cookie = `${name}=${encodeURIComponent(stringVal)}${expires}; path=/; SameSite=Lax`;
+    const secureFlag = typeof window !== 'undefined' && window.location.protocol === 'https:' ? '; Secure' : '';
+    document.cookie = `${name}=${encodeURIComponent(stringVal)}${expires}; path=/; SameSite=Lax${secureFlag}`;
   } catch (e) {
     console.error('Error writing cookie:', e);
   }

@@ -982,9 +982,6 @@ export default function HomePage() {
 
   const userInitials = (profile.displayName || 'User').substring(0, 2).toUpperCase();
 
-  // Tab index calculation for LTR / RTL slider
-  const activeTabIndex = activeTab === 'history' ? 0 : activeTab === 'sessions' ? 1 : 2;
-
   return (
     <div className="app-surface flex flex-col h-full min-h-0 flex-1 transition-colors duration-300 dark:text-white">
       {/* OCR Animated Progress Screen */}
@@ -1218,17 +1215,19 @@ export default function HomePage() {
                 <button
                   type="button"
                   onClick={() => setShowCreateGroupModal(true)}
-                  className="brand-tap w-full p-6 sm:p-7 rounded-[28px] brand-card text-center space-y-2.5 cursor-pointer hover:bg-brand-50/50 dark:hover:bg-brand-900/40 transition-all group shadow-xs border border-brand-100/60 dark:border-brand-900/60"
+                  className="brand-tap w-full py-7 px-5 rounded-[28px] brand-card text-center space-y-3 cursor-pointer hover:bg-brand-50/50 dark:hover:bg-brand-900/40 transition-all group shadow-xs border border-brand-100/60 dark:border-brand-900/60"
                 >
-                  <div className="flex items-center justify-center py-1 group-hover:scale-105 transition-transform duration-300">
-                    <SleepingPandaIllustration className="w-28 h-20 sm:w-32 sm:h-22" />
+                  <div className="flex items-center justify-center pt-1 group-hover:scale-105 transition-transform duration-300">
+                    <SleepingPandaIllustration className="w-36 h-28 sm:w-40 sm:h-32" />
                   </div>
-                  <p className="text-base font-extrabold text-slate-900 dark:text-white">
-                    {t('noActiveGroupsYet', undefined, 'No active groups yet')}
-                  </p>
-                  <p className="text-xs text-slate-400 dark:text-slate-400 max-w-xs mx-auto">
-                    {t('createOrJoinGroupPrompt', undefined, 'Create a group or join via code to split bills together')}
-                  </p>
+                  <div className="space-y-1">
+                    <p className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
+                      {t('noActiveGroupsYet', undefined, 'No active groups yet')}
+                    </p>
+                    <p className="text-xs sm:text-sm text-slate-400 dark:text-slate-400 max-w-xs mx-auto leading-relaxed">
+                      {t('createOrJoinGroupPrompt', undefined, 'Create a group or join via code to split bills together')}
+                    </p>
+                  </div>
                 </button>
               ) : (
                 <div className="space-y-2.5">
@@ -1996,67 +1995,67 @@ export default function HomePage() {
         )}
       </div>
 
-      {/* Ultra-Smooth LTR & RTL Animated Sliding Modern Navbar */}
-      <nav className="safe-bottom-nav shrink-0 w-full z-40 p-2.5 bg-white/90 dark:bg-[#100E2C] border-t border-brand-100/80 dark:border-brand-900/60 backdrop-blur-xl shadow-[0_-8px_28px_rgba(37,33,111,0.08)] mt-auto">
-        <div className="relative grid grid-cols-3 gap-2 p-1 bg-brand-50/90 dark:bg-[#181643] rounded-full border border-brand-100 dark:border-brand-800/80">
-          
-          {/* Animated Sliding Pill Indicator */}
-          <div
-            className="absolute top-1 bottom-1 rounded-full bg-brand-600 dark:bg-brand-300 shadow-brand transition-all duration-350 ease-out nav-slider"
-            style={{
-              width: 'calc((100% - 16px) / 3)',
-              transform: `translateX(calc(${activeTabIndex * (isRtl ? -1 : 1)} * (100% + 8px)))`
-            }}
-          />
- 
+      {/* Modern Clean Borderless Navbar */}
+      <nav className="safe-bottom-nav shrink-0 w-full z-40 px-4 py-2.5 bg-white/95 dark:bg-[#100E2C]/95 backdrop-blur-xl mt-auto shadow-[0_-4px_20px_rgba(37,33,111,0.04)] border-none">
+        <div className="grid grid-cols-3 gap-2 items-center">
           {/* TAB 1: HISTORY */}
           <button
+            type="button"
             onClick={() => {
               setActiveTab('history');
               triggerHaptic('light');
             }}
-            className={`relative z-10 flex flex-col items-center justify-center py-2 rounded-full transition-colors duration-200 font-bold active:scale-95 ${
+            className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl transition-colors duration-200 active:scale-95 cursor-pointer select-none ${
               activeTab === 'history'
-                ? 'text-white dark:text-brand-950 font-extrabold'
-                : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                ? 'text-brand-600 dark:text-brand-400 font-bold'
+                : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 font-medium'
             }`}
           >
-            <History className="w-3.5 h-3.5 mb-0.5" />
-            <span className="text-[10px]">{t('tabHistory', undefined, 'History')}</span>
+            <History className={`w-[22px] h-[22px] mb-1 transition-transform ${activeTab === 'history' ? 'stroke-[2.25]' : 'stroke-[1.75]'}`} />
+            <span className="text-xs tracking-tight">{t('tabHistory', undefined, 'History')}</span>
           </button>
- 
+
           {/* TAB 2: SESSIONS / SPLIT */}
           <button
+            type="button"
             onClick={() => {
               setActiveTab('sessions');
               triggerHaptic('light');
             }}
-            className={`relative z-10 flex flex-col items-center justify-center py-2 rounded-full transition-colors duration-200 font-bold active:scale-95 ${
+            className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl transition-colors duration-200 active:scale-95 cursor-pointer select-none ${
               activeTab === 'sessions'
-                ? 'text-white dark:text-brand-950 font-extrabold'
-                : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                ? 'text-brand-600 dark:text-brand-400 font-bold'
+                : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 font-medium'
             }`}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 mb-0.5">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={activeTab === 'sessions' ? 2.25 : 1.75}
+              stroke="currentColor"
+              className="w-[22px] h-[22px] mb-1 transition-transform"
+            >
               <path strokeLinecap="round" strokeLinejoin="round" d="m9 14.25 6-6m4.5-3.493V21.75l-3.75-1.5-3.75 1.5-3.75-1.5-3.75 1.5V4.757c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0c1.1.128 1.907 1.077 1.907 2.185ZM9.75 9h.008v.008H9.75V9Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm4.125 4.5h.008v.008h-.008V13.5Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
             </svg>
-            <span className="text-[10px]">{t('tabSessions', undefined, 'Sessions')}</span>
+            <span className="text-xs tracking-tight">{t('tabSessions', undefined, 'Sessions')}</span>
           </button>
- 
+
           {/* TAB 3: SETTINGS */}
           <button
+            type="button"
             onClick={() => {
               setActiveTab('settings');
               triggerHaptic('light');
             }}
-            className={`relative z-10 flex flex-col items-center justify-center py-2 rounded-full transition-colors duration-200 font-bold active:scale-95 ${
+            className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl transition-colors duration-200 active:scale-95 cursor-pointer select-none ${
               activeTab === 'settings'
-                ? 'text-white dark:text-brand-950 font-extrabold'
-                : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                ? 'text-brand-600 dark:text-brand-400 font-bold'
+                : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 font-medium'
             }`}
           >
-            <Settings className="w-3.5 h-3.5 mb-0.5" />
-            <span className="text-[10px]">{t('tabSettings', undefined, 'Settings')}</span>
+            <Settings className={`w-[22px] h-[22px] mb-1 transition-transform ${activeTab === 'settings' ? 'stroke-[2.25]' : 'stroke-[1.75]'}`} />
+            <span className="text-xs tracking-tight">{t('tabSettings', undefined, 'Settings')}</span>
           </button>
         </div>
       </nav>

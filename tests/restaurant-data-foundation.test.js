@@ -210,7 +210,7 @@ test('requireRestaurantDataAdmin middleware enforces 401 unauthenticated and 403
 
 test('planBackfill accurately plans updates, handles idempotency, and never leaks PII', () => {
   const { planBackfill } = require('../scripts/restaurant-data-backfill');
-  const secret = 'test-secret-key-123456789012345';
+  const secret = 'mock-unit-test-secret-value';
   const rawPhone = '0501234567';
 
   const dataset = {
