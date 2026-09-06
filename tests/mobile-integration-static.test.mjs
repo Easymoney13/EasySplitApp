@@ -17,7 +17,8 @@ async function exists(path) {
 test('mobile package scripts are pinned and guarded by Node 22 without changing web scripts', async () => {
   const pkg = JSON.parse(await read('package.json'));
   assert.equal(pkg.scripts.build, 'next build');
-  assert.equal(pkg.scripts.start, 'NODE_ENV=production node server.js');
+  assert.equal(pkg.scripts.start, 'node server.js --production');
+  assert.match(await read('server.js'), /process\.argv\.includes\('--production'\)/);
   assert.match(pkg.scripts['mobile:build'], /mobile:check-node/);
   assert.equal(pkg.devDependencies['@capacitor/cli'], '8.5.0');
   assert.equal(pkg.devDependencies.vite, '8.2.2');

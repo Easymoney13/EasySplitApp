@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, Suspense, Component, ErrorInfo, ReactNode } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { createRoomPollPolicy } from '../../../../lib/roomPolling';
 import confetti from 'canvas-confetti';
 import {
   QrCode,
@@ -182,6 +183,8 @@ function SessionWorkspaceInner() {
   };
 
   const socketRef = useRef<WebSocket | null>(null);
+  const pollPolicyRef = useRef(createRoomPollPolicy());
+  const socketSubscribedRef = useRef(false);
   const activeSessionIdRef = useRef('');
   const activeSessionTokenRef = useRef('');
   const lastMobileRecoveryAtRef = useRef(0);
@@ -276,7 +279,7 @@ function SessionWorkspaceInner() {
           setSession(joined.session);
           setSessionNotFound(false);
           connectWebSocket(resolvedId, joined.accessToken);
-          pollInterval = setInterval(() => fetchSessionData(resolvedId), 3000);
+          pollInterval = setInterval(() => fetchSessionData(resolvedId, false), 3000);
         }
       } catch (err: any) {
         console.error('Error initializing session:', err);
@@ -298,6 +301,8 @@ function SessionWorkspaceInner() {
 
     return () => {
       disposed = true;
+      activeSessionIdRef.current = '';
+      pollPolicyRef.current = createRoomPollPolicy();
       if (pollInterval) clearInterval(pollInterval);
       const socket = socketRef.current;
       socketRef.current = null;
@@ -500,24 +505,39 @@ function SessionWorkspaceInner() {
     setSessionNotFound(true);
   };
 
-  const fetchSessionData = async (id: string) => {
+  const fetchSessionData = async (id: string, force = true) => {
+    if (activeSessionIdRef.current !== id) return;
+    const policy = pollPolicyRef.current;
+    if (!policy.begin({ visible: document.visibilityState !== 'hidden', connected: socketSubscribedRef.current && socketRef.current?.readyState === WebSocket.OPEN, force })) return;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+    let status = 0;
+    let retryAfter = '';
     try {
-      const res = await fetch(apiUrl(`/api/session/${id}`), { headers: roomHeaders('session', id, false) });
+      const res = await fetch(apiUrl(`/api/session/${id}`), { headers: roomHeaders('session', id, false), signal: controller.signal });
+      status = res.status;
+      retryAfter = res.headers.get('Retry-After') || '';
       if (res.ok) {
         const data = await res.json();
+        if (activeSessionIdRef.current !== id || pollPolicyRef.current !== policy) return;
         if (data.session) {
           setSession(data.session);
           setSessionNotFound(false);
         }
-      } else if (res.status === 404) {
+      } else if (res.status === 404 && activeSessionIdRef.current === id && pollPolicyRef.current === policy) {
         handleSessionDeleted(id);
       }
     } catch (err) {
+      status = 0;
       console.error('Error fetching session:', err);
+    } finally {
+      clearTimeout(timeout);
+      policy.finish(status, retryAfter);
     }
   };
 
   const connectWebSocket = (id: string, accessToken: string) => {
+    socketSubscribedRef.current = false;
     activeSessionIdRef.current = id;
     activeSessionTokenRef.current = accessToken;
     try {
@@ -548,9 +568,11 @@ function SessionWorkspaceInner() {
       };
 
       ws.onmessage = (event) => {
+        if (socketRef.current !== ws || activeSessionIdRef.current !== id) return;
         try {
           const data = JSON.parse(event.data);
           if (data.type === 'SESSION_UPDATE' && data.session) {
+            socketSubscribedRef.current = true;
             setSession(data.session);
           } else if (data.type === 'SESSION_DELETED') {
             handleSessionDeleted(id);

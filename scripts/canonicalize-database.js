@@ -5,11 +5,12 @@
  * 
  * Analyzes all restaurant names and phone numbers in Firestore,
  * finds OCR typos and variations, resolves them to canonical forms,
- * and updates live Firestore records safely.
+ * previews name candidates and transactionally normalizes phone records.
  * 
  * Usage:
- *   node scripts/canonicalize-database.js           # Live apply
+ *   node scripts/canonicalize-database.js           # Preview mode
  *   node scripts/canonicalize-database.js --dry-run # Preview mode
+ *   node scripts/canonicalize-database.js --apply   # Explicit phone updates
  */
 
 const path = require('path');
@@ -17,8 +18,16 @@ const { initializeFirebaseAdmin } = require('./verify-firestore-parity');
 const { getFirestore } = require('firebase-admin/firestore');
 const { refactorDatabase } = require('../lib/canonicalEngine');
 
-async function main() {
-  const isDryRun = process.argv.includes('--dry-run');
+function canonicalMode(args) {
+  if (args.some((arg) => !['--apply', '--dry-run'].includes(arg))
+    || (args.includes('--apply') && args.includes('--dry-run'))) {
+    throw new Error('Use --dry-run (default) or --apply, never both');
+  }
+  return { dryRun: !args.includes('--apply') };
+}
+
+async function main(args = process.argv.slice(2)) {
+  const { dryRun: isDryRun } = canonicalMode(args);
   const projectRoot = path.resolve(__dirname, '..');
   const app = initializeFirebaseAdmin(projectRoot);
   const db = getFirestore(app);
@@ -30,7 +39,7 @@ async function main() {
 
   const result = await refactorDatabase(db, { dryRun: isDryRun });
 
-  console.log('--- Restaurant Canonical Mappings ---');
+  console.log('--- Name suggestions only; no restaurant identity or receipt names are rewritten ---');
   for (const [original, canonical] of Object.entries(result.canonicalMap)) {
     if (original !== canonical) {
       console.log(`  🔄 "${original}" -> "${canonical}"`);
@@ -38,8 +47,8 @@ async function main() {
   }
 
   console.log('\n--- Updates Summary ---');
-  console.log(`  Sessions updated:    ${result.sessionUpdatesCount}`);
-  console.log(`  Groups updated:      ${result.groupUpdatesCount}`);
+  console.log(`  Sessions ${isDryRun ? 'proposed' : 'updated'}:    ${result.sessionUpdatesCount}`);
+  console.log(`  Groups ${isDryRun ? 'proposed' : 'updated'}:      ${result.groupUpdatesCount}`);
   console.log(`  Restaurants updated: ${result.restaurantUpdatesCount}`);
 
   if (result.sessionUpdates.length > 0) {
@@ -52,7 +61,11 @@ async function main() {
   console.log(`\n✅ Database canonicalization ${isDryRun ? 'dry-run preview' : 'application'} completed successfully.\n`);
 }
 
-main().catch((err) => {
-  console.error('❌ Error running database canonicalization:', err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error('❌ Error running database canonicalization:', err);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { canonicalMode };

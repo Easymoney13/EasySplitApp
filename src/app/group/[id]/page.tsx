@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { createRoomPollPolicy } from '../../../../lib/roomPolling';
 import {
   ChevronLeft,
   Users,
@@ -79,6 +80,8 @@ export default function GroupWorkspacePage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  const pollPolicyRef = useRef(createRoomPollPolicy());
+  const socketSubscribedRef = useRef(false);
   const activeGroupIdRef = useRef('');
   const activeGroupTokenRef = useRef('');
   const lastMobileRecoveryAtRef = useRef(0);
@@ -271,7 +274,7 @@ export default function GroupWorkspacePage() {
           persistGroupToLocal(joined.group);
           setFetchError(null);
           connectWebSocket(resolvedId, joined.accessToken);
-          interval = setInterval(() => fetchGroupData(resolvedId), 4000);
+          interval = setInterval(() => fetchGroupData(resolvedId, false), 4000);
           if (resolvedId !== groupId) router.replace(`/group/${resolvedId}`);
         }
       } catch (err) {
@@ -289,6 +292,8 @@ export default function GroupWorkspacePage() {
 
     return () => {
       disposed = true;
+      activeGroupIdRef.current = '';
+      pollPolicyRef.current = createRoomPollPolicy();
       if (interval) clearInterval(interval);
       clearTimeout(timeoutTimer);
       const socket = socketRef.current;
@@ -338,11 +343,21 @@ export default function GroupWorkspacePage() {
     };
   }, [groupId]);
 
-  const fetchGroupData = async (id: string) => {
+  const fetchGroupData = async (id: string, force = true) => {
+    if (activeGroupIdRef.current !== id) return;
+    const policy = pollPolicyRef.current;
+    if (!policy.begin({ visible: document.visibilityState !== 'hidden', connected: socketSubscribedRef.current && socketRef.current?.readyState === WebSocket.OPEN, force })) return;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+    let status = 0;
+    let retryAfter = '';
     try {
-      const res = await fetch(apiUrl(`/api/groups/${id}`), { headers: roomHeaders('group', id, false) });
+      const res = await fetch(apiUrl(`/api/groups/${id}`), { headers: roomHeaders('group', id, false), signal: controller.signal });
+      status = res.status;
+      retryAfter = res.headers.get('Retry-After') || '';
       if (res.ok) {
         const data = await res.json();
+        if (activeGroupIdRef.current !== id || pollPolicyRef.current !== policy) return;
         if (data && data.group) {
           setGroup(data.group);
           persistGroupToLocal(data.group);
@@ -351,15 +366,20 @@ export default function GroupWorkspacePage() {
             router.replace(`/group/${data.group.id}`);
           }
         }
-      } else if (res.status === 404) {
+      } else if (res.status === 404 && activeGroupIdRef.current === id && pollPolicyRef.current === policy) {
         handleGroupDeleted(id);
       }
     } catch (err) {
+      status = 0;
       console.error('Error fetching group:', err);
+    } finally {
+      clearTimeout(timeout);
+      policy.finish(status, retryAfter);
     }
   };
 
   const connectWebSocket = (id: string, accessToken: string) => {
+    socketSubscribedRef.current = false;
     activeGroupIdRef.current = id;
     activeGroupTokenRef.current = accessToken;
     try {
@@ -389,9 +409,11 @@ export default function GroupWorkspacePage() {
       };
 
       ws.onmessage = (event) => {
+        if (socketRef.current !== ws || activeGroupIdRef.current !== id) return;
         try {
           const data = JSON.parse(event.data);
           if (data.type === 'GROUP_UPDATE' && data.group) {
+            socketSubscribedRef.current = true;
             setGroup(data.group);
             persistGroupToLocal(data.group);
           } else if (data.type === 'GROUP_DELETED') {

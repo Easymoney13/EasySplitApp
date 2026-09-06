@@ -107,7 +107,8 @@ test('critical HTTP and WebSocket paths shed load without crashing', { timeout: 
       NODE_ENV: 'test',
       NEXT_TELEMETRY_DISABLED: '1',
       BILLSPLIT_DB_PATH: dbPath,
-      WS_SUBSCRIPTION_TIMEOUT_MS: '500',
+      // Keep the burst inside one admission window even on a busy CI runner.
+      WS_SUBSCRIPTION_TIMEOUT_MS: '3000',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -174,15 +175,19 @@ test('critical HTTP and WebSocket paths shed load without crashing', { timeout: 
   assert.ok(mutationStatuses.includes(429));
   assert.ok(mutationStatuses.every((status) => status === 200 || status === 429));
 
-  const socketAttempts = await Promise.all(Array.from({ length: 12 }, () => openSocket(`ws://127.0.0.1:${port}/`)));
+  // Shared restaurant Wi-Fi permits 128 connections, but still sheds excess
+  // connections and closes clients that never prove room membership.
+  const socketAttempts = await Promise.all(Array.from({ length: 140 }, () => openSocket(`ws://127.0.0.1:${port}/`)));
+  t.after(() => socketAttempts.forEach(({ ws }) => ws.terminate()));
   const openedAttempts = socketAttempts.filter(({ outcome }) => outcome === 'open');
   const openSockets = openedAttempts.map(({ ws }) => ws);
   const rejectedSockets = socketAttempts.filter(({ outcome }) => outcome.startsWith('rejected-'));
-  assert.ok(openSockets.length <= 8);
-  assert.ok(rejectedSockets.length >= 4);
+  assert.equal(openSockets.length, 128);
+  assert.equal(rejectedSockets.length, 12);
+  assert.ok(rejectedSockets.every(({ outcome }) => outcome === 'rejected-429'));
   const deadlineCloses = await Promise.race([
     Promise.all(openedAttempts.map(({ closed }) => closed)),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('WebSockets did not close on the subscription deadline')), 2_000)),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('WebSockets did not close on the subscription deadline')), 5_000)),
   ]);
   assert.ok(deadlineCloses.every(({ code }) => code === 1008 || code === 1006));
 

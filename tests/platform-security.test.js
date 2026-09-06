@@ -66,6 +66,7 @@ test('CORS middleware leaves web requests untouched and only opens exact configu
   assert.match(ios.headers.get('access-control-allow-headers'), /X-Room-Token/);
   assert.match(ios.headers.get('access-control-allow-headers'), /X-EasySplit-Client-Id/);
   assert.match(ios.headers.get('access-control-allow-headers'), /X-Firebase-AppCheck/);
+  assert.equal(ios.headers.get('access-control-expose-headers'), 'Retry-After');
 
   const android = run({ origin: 'https://localhost', method: 'OPTIONS' });
   assert.equal(android.statusCode, 204);

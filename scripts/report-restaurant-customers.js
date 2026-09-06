@@ -9,6 +9,8 @@
 const path = require('path');
 const { initializeFirebaseAdmin } = require('./verify-firestore-parity');
 const { getFirestore } = require('firebase-admin/firestore');
+const { resolveRestaurantAliases } = require('../lib/restaurantResolution');
+const { canonicalizePhone } = require('../lib/canonicalEngine');
 
 async function main() {
   const projectRoot = path.resolve(__dirname, '..');
@@ -28,10 +30,20 @@ async function main() {
   usersSnap.docs.forEach(d => {
     const data = d.data();
     if (data.phone) usersMap.set(d.id, data.phone);
-    if (data.username) usersMap.set(data.username, data.phone);
   });
 
   const restaurantMap = new Map();
+  const restaurantRecords = restaurantsSnap.docs.map(d => ({ ...d.data(), id: d.id }));
+  const aliasCache = new Map();
+  function venueKey(restaurantId, sourceId, name) {
+    if (!restaurantId || !restaurantMap.has(restaurantId)) return `${name || 'Unknown restaurant'} [unresolved:${sourceId}]`;
+    if (!aliasCache.has(restaurantId)) {
+      const aliases = resolveRestaurantAliases(restaurantRecords, restaurantId);
+      const key = `${aliases.canonicalPrintedName || restaurantMap.get(aliases.canonicalId)} [${aliases.canonicalId}]`;
+      aliases.restaurantIds.forEach(id => aliasCache.set(id, key));
+    }
+    return aliasCache.get(restaurantId);
+  }
   restaurantsSnap.docs.forEach(d => {
     const data = d.data();
     restaurantMap.set(d.id, data.printedName || data.normalizedName || d.id);
@@ -39,15 +51,15 @@ async function main() {
 
   const restaurantParticipants = {};
 
-  function addEntry(restaurantName, phone, userName, role, date) {
+  function addEntry(restaurantName, phone, userName, role, date, participantKey) {
     if (!restaurantName) return;
     const cleanName = String(restaurantName).trim();
     if (!cleanName) return;
     if (!restaurantParticipants[cleanName]) {
       restaurantParticipants[cleanName] = new Map();
     }
-    const cleanPhone = phone && typeof phone === 'string' ? phone.trim() : (phone ? String(phone).trim() : '');
-    const key = (cleanPhone && cleanPhone !== 'Not provided') ? cleanPhone : `no-phone:${userName}`;
+    const cleanPhone = canonicalizePhone(phone);
+    const key = cleanPhone || `no-phone:${participantKey}`;
     if (!restaurantParticipants[cleanName].has(key)) {
       restaurantParticipants[cleanName].set(key, {
         phone: cleanPhone || 'Not provided',
@@ -65,19 +77,19 @@ async function main() {
   // 1. Sessions
   sessionsSnap.docs.forEach(d => {
     const s = d.data();
-    const rName = s.storeName || (s.restaurantId && restaurantMap.get(s.restaurantId));
+    const rName = venueKey(s.restaurant?.id || s.restaurantId, d.id, s.storeName || s.restaurant?.printedName);
     if (!rName) return;
     const date = s.date || (s.created ? new Date(s.created).toISOString().slice(0, 10) : '');
 
-    const hostPhone = s.hostPhone || (s.hostId && usersMap.get(s.hostId));
+    const hostPhone = s.hostPhone;
     if (hostPhone || s.hostName) {
-      addEntry(rName, hostPhone, s.hostName || 'Host', 'Host', date);
+      addEntry(rName, hostPhone, s.hostName || 'Host', 'Host', date, `${d.id}:host`);
     }
 
     if (Array.isArray(s.members)) {
-      s.members.forEach(m => {
-        const phone = m.phone || (m.userId && usersMap.get(m.userId)) || (m.name && usersMap.get(m.name));
-        addEntry(rName, phone, m.name || m.displayName, m.isHost ? 'Host' : 'Member', date);
+      s.members.forEach((m, index) => {
+        const phone = canonicalizePhone(m.phone) || usersMap.get(m.userId || m.uid);
+        addEntry(rName, phone, m.name || m.displayName, m.isHost ? 'Host' : 'Member', date, `${d.id}:${m.id || index}`);
       });
     }
   });
@@ -86,13 +98,14 @@ async function main() {
   groupsSnap.docs.forEach(d => {
     const g = d.data();
     if (Array.isArray(g.bills)) {
-      g.bills.forEach(b => {
-        const rName = b.storeName || b.restaurantName;
+      g.bills.forEach((b, index) => {
+        const rName = venueKey(b.restaurant?.id || b.restaurantId, `${d.id}:${b.id || index}`, b.storeName || b.restaurantName);
         if (!rName) return;
         const date = b.date || '';
-        const payerPhone = b.payerPhone || (b.payerId && usersMap.get(b.payerId));
+        const payer = (g.members || []).find(member => member.id === b.payerId);
+        const payerPhone = canonicalizePhone(b.payerPhone) || canonicalizePhone(payer?.phone) || usersMap.get(payer?.userId || payer?.uid);
         if (payerPhone || b.payerName) {
-          addEntry(rName, payerPhone, b.payerName, 'Payer', date);
+          addEntry(rName, payerPhone, b.payerName, 'Payer', date, `${d.id}:${b.id || index}:${b.payerId || 'payer'}`);
         }
       });
     }

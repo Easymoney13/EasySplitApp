@@ -285,7 +285,21 @@ app.prepare().then(() => {
   const wss = new WebSocket.Server({ noServer: true, maxPayload: 10_000 });
   const wsConnectionsByIp = new Map();
   const maxWebSockets = 500;
-  const maxWebSocketsPerIp = 8;
+  const maxWebSocketsPerIp = 128;
+  function admitMemberSocket(ws, kind, roomId, memberId) {
+    const key = `${kind}:${roomId}:${memberId}`;
+    let count = 0;
+    for (const client of wss.clients) {
+      if (client !== ws && client.readyState === WebSocket.OPEN && client.verifiedMembers?.has(key)) count += 1;
+    }
+    if (count >= 3) {
+      ws.close(1008, 'Member connection limit exceeded');
+      return false;
+    }
+    ws.verifiedMembers ||= new Set();
+    ws.verifiedMembers.add(key);
+    return true;
+  }
   const wsSubscriptionTimeoutMs = Math.max(500, Math.min(30_000, Number(process.env.WS_SUBSCRIPTION_TIMEOUT_MS) || 10_000));
 
   function rejectUpgrade(socket, statusCode, statusText) {
@@ -503,10 +517,12 @@ app.prepare().then(() => {
   }
 
   function authorizedRoomMember(req, room) {
-    return findRoomMember(room, {
+    const actor = findRoomMember(room, {
       uid: req.user?.uid,
       accessToken: getRequestRoomToken(req),
     });
+    if (actor) roomReadAdmission.remember(req, room.id);
+    return actor;
   }
 
   function roomDiscovery(room) {
@@ -751,7 +767,10 @@ app.prepare().then(() => {
       buckets.set(key, bucket);
       if (buckets.size > 1_000) pruneRateBuckets(buckets, now);
       const effectiveLimit = typeof limit === 'function' ? limit(req) : limit;
-      if (bucket.count > effectiveLimit) return res.status(429).json({ error: message });
+      if (bucket.count > effectiveLimit) {
+        res.setHeader('Retry-After', String(Math.max(1, Math.ceil((bucket.startedAt + 600_000 - now) / 1000))));
+        return res.status(429).json({ error: message });
+      }
       return nextMiddleware();
     };
   }
@@ -762,6 +781,7 @@ app.prepare().then(() => {
   // per-account budget while allowing one full 100-person room through a
   // shared Wi-Fi address without treating legitimate joins as an attack.
   const roomLookupRateLimit = roomWindowRateLimit(roomLookupRateBuckets, (req) => req.user?.uid ? 60 : 180, 'Too many room lookups. Please wait and try again.');
+  const roomReadAdmission = require('./lib/roomReadAdmission').createRoomReadAdmission({ discover: roomLookupRateLimit });
   const roomJoinRateLimit = roomWindowRateLimit(roomJoinRateBuckets, (req) => req.user?.uid ? 30 : 150, 'Too many room join attempts. Please wait and try again.');
   const mutationRateLimit = roomWindowRateLimit(mutationRateBuckets, 240, 'Too many room updates. Please wait and try again.');
   const accountReadRateLimit = roomWindowRateLimit(accountReadRateBuckets, 240, 'Too many account reads. Please wait and try again.');
@@ -1358,7 +1378,7 @@ app.prepare().then(() => {
     }
   });
 
-  server.get('/api/session/:idOrCode', authenticateUser, roomLookupRateLimit, sessionCodeLookupAdmission, async (req, res) => {
+  server.get('/api/session/:idOrCode', authenticateUser, roomReadAdmission.middleware, sessionCodeLookupAdmission, async (req, res) => {
     const sanitizedId = security.sanitizeString(req.params.idOrCode, 100);
     const session = await db.getSession(sanitizedId);
     if (!session) {
@@ -1368,7 +1388,7 @@ app.prepare().then(() => {
     return res.json({ session: actor ? publicRoom(session) : roomDiscovery(session) });
   });
 
-  server.get('/api/session/:sessionId/payment-target/:memberId', authenticateUser, roomLookupRateLimit, async (req, res) => {
+  server.get('/api/session/:sessionId/payment-target/:memberId', authenticateUser, roomReadAdmission.middleware, async (req, res) => {
     const sessionId = security.sanitizeString(req.params.sessionId, 100);
     const memberId = security.sanitizeString(req.params.memberId, 100);
     const session = await db.getSession(sessionId);
@@ -1490,6 +1510,7 @@ app.prepare().then(() => {
         });
       }
       global.broadcastSessionState(mutation.session.id);
+      roomReadAdmission.remember(req, mutation.session.id, joined.accessToken);
       return res.json({
         success: true,
         memberId: joined.member.id,
@@ -1807,7 +1828,7 @@ app.prepare().then(() => {
   });
 
   // 2. Fetch Group by durable ID or human invite code
-  server.get('/api/groups/:idOrCode', authenticateUser, roomLookupRateLimit, groupCodeLookupAdmission, async (req, res) => {
+  server.get('/api/groups/:idOrCode', authenticateUser, roomReadAdmission.middleware, groupCodeLookupAdmission, async (req, res) => {
     const sanitizedId = security.sanitizeString(req.params.idOrCode, 50);
     const group = await db.getGroup(sanitizedId);
     if (!group || String(group.status || '').toLowerCase() === 'deleting') {
@@ -1818,7 +1839,7 @@ app.prepare().then(() => {
     return res.json({ group: actor ? publicGroupWithDebt(group) : roomDiscovery(group) });
   });
 
-  server.get('/api/groups/:groupId/payment-target/:memberId', authenticateUser, roomLookupRateLimit, async (req, res) => {
+  server.get('/api/groups/:groupId/payment-target/:memberId', authenticateUser, roomReadAdmission.middleware, async (req, res) => {
     const groupId = security.sanitizeString(req.params.groupId, 100);
     const memberId = security.sanitizeString(req.params.memberId, 100);
     const group = await db.getGroup(groupId);
@@ -1885,6 +1906,7 @@ app.prepare().then(() => {
       }
       global.broadcastGroupState(mutation.group.id);
 
+      roomReadAdmission.remember(req, mutation.group.id, joined.accessToken);
       return res.json({
         success: true,
         memberId: joined.member.id,
@@ -3039,6 +3061,7 @@ app.prepare().then(() => {
             }
             return;
           }
+          if (!admitMemberSocket(ws, 'group', group.id, member.id)) return;
           const authorization = { memberId: member.id, tokenHash: hashAccessToken(accessToken) };
           subscribeClient(ws, 'group', group.id, authorization);
           if (group.code) subscribeClient(ws, 'group', group.code, authorization);
@@ -3063,6 +3086,7 @@ app.prepare().then(() => {
             }
             return;
           }
+          if (!admitMemberSocket(ws, 'session', session.id, member.id)) return;
           const authorization = { memberId: member.id, tokenHash: hashAccessToken(accessToken) };
           subscribeClient(ws, 'session', session.id, authorization);
           if (session.code) subscribeClient(ws, 'session', session.code, authorization);
@@ -3119,27 +3143,33 @@ app.prepare().then(() => {
       cleanupInterval.unref?.();
     }
 
-    // Periodic Database Canonicalization Engine (runs once daily)
-    const runCanonicalEngine = () => {
-      try {
-        const { refactorDatabase } = require('./lib/canonicalEngine');
-        const firestore = typeof db.getFirestore === 'function' ? db.getFirestore() : null;
-        if (firestore) {
-          void refactorDatabase(firestore).then((result) => {
-            if (result.sessionUpdatesCount > 0 || result.groupUpdatesCount > 0) {
-              console.log(`[CanonicalEngine] Refactored ${result.sessionUpdatesCount} sessions and ${result.groupUpdatesCount} groups.`);
-            }
-          }).catch((error) => {
-            console.warn('[CanonicalEngine] Background refactoring error:', error.message);
-          });
-        }
-      } catch (_) {}
-    };
-    const initialCanonicalTimeout = setTimeout(runCanonicalEngine, 60_000);
-    initialCanonicalTimeout.unref?.();
-    const CANONICAL_INTERVAL_MS = 24 * 60 * 60 * 1000; // Daily (24 hours)
-    const canonicalInterval = setInterval(runCanonicalEngine, CANONICAL_INTERVAL_MS);
-    canonicalInterval.unref?.();
+    // Optional read-only audit. API startup must never silently rewrite live
+    // rooms. Applying maintenance is an explicit transactional CLI operation.
+    if (process.env.EASYSPLIT_CANONICAL_AUDIT_ENABLED === 'true' && !process.env.BILLSPLIT_DB_PATH) {
+      let canonicalAuditRunning = false;
+      const runCanonicalEngine = () => {
+        if (canonicalAuditRunning) return;
+        try {
+          const { refactorDatabase } = require('./lib/canonicalEngine');
+          const firestore = typeof db.getFirestore === 'function' ? db.getFirestore() : null;
+          if (firestore) {
+            canonicalAuditRunning = true;
+            void refactorDatabase(firestore, { dryRun: true }).then((result) => {
+              if (result.sessionUpdatesCount > 0 || result.groupUpdatesCount > 0) {
+                console.log(`[CanonicalEngine] Preview only: ${result.sessionUpdatesCount} sessions and ${result.groupUpdatesCount} groups may need phone normalization.`);
+              }
+            }).catch((error) => {
+              console.warn('[CanonicalEngine] Background audit error:', error.message);
+            }).finally(() => { canonicalAuditRunning = false; });
+          }
+        } catch (_) {}
+      };
+      const initialCanonicalTimeout = setTimeout(runCanonicalEngine, 60_000);
+      initialCanonicalTimeout.unref?.();
+      const CANONICAL_INTERVAL_MS = 24 * 60 * 60 * 1000;
+      const canonicalInterval = setInterval(runCanonicalEngine, CANONICAL_INTERVAL_MS);
+      canonicalInterval.unref?.();
+    }
   });
 }).catch((err) => {
   console.error('❌ Failed to prepare Next.js app:', err);

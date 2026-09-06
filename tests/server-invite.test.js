@@ -8,6 +8,7 @@ const { spawn } = require('node:child_process');
 const { createRoomMember } = require('../lib/roomAuth');
 const { hashAccessToken } = require('../lib/ids');
 const { calculateDebtMinimization } = require('../lib/debtMinimizer');
+const WebSocket = require('ws');
 
 async function getAvailablePort() {
   const probe = net.createServer();
@@ -43,6 +44,7 @@ function waitForServer(child, timeoutMs = 45_000) {
 test('guest receipt parsing and legacy invite access remain account-free', { timeout: 60_000 }, async (t) => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'easysplit-invite-'));
   const dbPath = path.join(tempDir, 'db.json');
+  const sharedWifiMembers = Array.from({ length: 10 }, (_, i) => createRoomMember({ name: `WiFi Guest ${i}`, phone: `050111110${i}` }));
   const sessionHost = createRoomMember({ name: 'Session Host', phone: '0501111111', isHost: true });
   const sessionGuest = createRoomMember({ name: 'Session Guest', phone: '0504444444' });
   const groupHost = createRoomMember({ name: 'Group Host', phone: '0502222222', isHost: true });
@@ -74,6 +76,10 @@ test('guest receipt parsing and legacy invite access remain account-free', { tim
       'delete-history-guest': [{ historyId: 'sess_delete_history_test' }],
     },
     sessions: {
+      sess_shared_wifi_test: {
+        id: 'sess_shared_wifi_test', code: '98765', status: 'active', currency: 'NIS',
+        members: sharedWifiMembers.map(entry => entry.member), items: [],
+      },
       'sess_invite_test': {
         id: 'sess_invite_test',
         code: '4321',
@@ -210,6 +216,60 @@ test('guest receipt parsing and legacy invite access remain account-free', { tim
 
   await waitForServer(child);
   const baseUrl = `http://127.0.0.1:${port}`;
+
+  await t.test('shared Wi-Fi allows ten authenticated sockets, reconnects and sustained member reads', async () => {
+    const sockets = new Set();
+    function subscribe(entry) {
+      return new Promise((resolve, reject) => {
+        const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+        sockets.add(ws);
+        const timeout = setTimeout(() => reject(new Error('Subscription timed out')), 5000);
+        ws.once('error', error => { clearTimeout(timeout); reject(error); });
+        ws.once('close', () => { clearTimeout(timeout); reject(new Error('Closed before subscription')); });
+        ws.once('open', () => ws.send(JSON.stringify({ type: 'SUBSCRIBE', sessionId: 'sess_shared_wifi_test', accessToken: entry.accessToken })));
+        ws.once('message', message => {
+          clearTimeout(timeout);
+          assert.equal(JSON.parse(message).type, 'SESSION_UPDATE');
+          resolve(ws);
+        });
+      });
+    }
+    try {
+      const connected = await Promise.all(sharedWifiMembers.map(subscribe));
+      connected[0].terminate();
+      await subscribe(sharedWifiMembers[0]);
+      await subscribe(sharedWifiMembers[1]);
+      await subscribe(sharedWifiMembers[1]);
+      await new Promise((resolve, reject) => {
+        const extra = new WebSocket(`ws://127.0.0.1:${port}`);
+        sockets.add(extra);
+        const timeout = setTimeout(() => reject(new Error('Member socket cap was not enforced')), 5000);
+        extra.once('error', reject);
+        extra.once('open', () => extra.send(JSON.stringify({ type: 'SUBSCRIBE', sessionId: 'sess_shared_wifi_test', accessToken: sharedWifiMembers[1].accessToken })));
+        extra.once('close', code => {
+          clearTimeout(timeout);
+          assert.equal(code, 1008);
+          resolve();
+        });
+      });
+      for (let round = 0; round < 25; round += 1) {
+        const statuses = await Promise.all(sharedWifiMembers.map(async entry => {
+          const res = await fetch(`${baseUrl}/api/session/sess_shared_wifi_test`, { headers: { 'x-room-token': entry.accessToken } });
+          await res.arrayBuffer();
+          return res.status;
+        }));
+        assert.deepEqual(statuses, Array(10).fill(200));
+      }
+      // Rate classification must not preserve access after membership revocation.
+      const current = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+      current.sessions.sess_shared_wifi_test.members[0].active = false;
+      fs.writeFileSync(dbPath, JSON.stringify(current));
+      const revoked = await fetch(`${baseUrl}/api/session/sess_shared_wifi_test`, { headers: { 'x-room-token': sharedWifiMembers[0].accessToken } });
+      assert.equal((await revoked.json()).session.members, undefined);
+    } finally {
+      for (const ws of sockets) ws.terminate();
+    }
+  });
 
   const anonymousReceiptDraft = await fetch(`${baseUrl}/api/receipt/parse`, {
     method: 'POST',
