@@ -169,6 +169,29 @@ test('database audience query returns aggregate-only linkable counts and respect
   assert.equal(afterDeletion.excluded.deletedSource, 1);
 });
 
+test('audience query unifies verified OCR aliases and deduplicates customers across their receipts', () => {
+  const base = { address: 'Herzl 12 Tel Aviv', phone: '0501234567', trustScore: 0.98,
+    confidence: 0.98, identityBasis: 'name_address', venueResolutionStatus: 'resolved',
+    fieldVerification: { printedName: 'verified', address: 'verified', phone: 'verified' } };
+  const restaurants = [
+    { ...base, id: 'rest_dddddddddddddddddddddddd', printedName: 'Cafe Northern' },
+    { ...base, id: 'rest_eeeeeeeeeeeeeeeeeeeeeeee', printedName: 'Cafe Northem' },
+  ];
+  restaurants.forEach((restaurant, i) => {
+    const member = { id: `alias-member-${i}`, name: 'Customer', phone: '0504444444' };
+    db.createSessionIfAbsent({ id: `sess_alias_${i}`, code: `6543${i}`, createdAt: 40_000 + i,
+      date: '2026-08-30', restaurant, members: [member] }, { restaurantVisitMembers: [member] });
+  });
+  for (const restaurant of restaurants) {
+    const result = db.queryRestaurantAudience(restaurant.id, 30_000, 50_000);
+    assert.equal(result.restaurant.resolution, 'verified_aliases');
+    assert.equal(result.linkableVisits, 2);
+    assert.equal(result.uniqueLinkablePhones, 1);
+  }
+  db.deleteSession('sess_alias_0');
+  assert.equal(db.queryRestaurantAudience(restaurants[1].id, 30_000, 50_000).linkableVisits, 1);
+});
+
 test('restaurant data administration requires an explicit custom claim', () => {
   assert.equal(isRestaurantDataAdmin(null), false);
   assert.equal(isRestaurantDataAdmin({ uid: 'ordinary-user' }), false);
