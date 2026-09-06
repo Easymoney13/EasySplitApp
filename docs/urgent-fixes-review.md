@@ -3,7 +3,7 @@
 Base: `4d6af8c3b2f44f55bd8ae886d49ace0162682c15`.
 Branch: `codex/urgent-data-realtime-fixes`.
 
-These changes are prepared locally. They have not been pushed, deployed, or applied to production data.
+The original changes were uploaded as `a2dd952f63be4b0e90e3ec51d77e218c19da1739` in [PR #17](https://github.com/Easymoney13/EasySplitApp/pull/17), following user approval. The uploaded tree exactly matches locally tested commit `935ecae`. No merge, deployment or production data change has been performed.
 
 ## 1. Preserve live data during maintenance
 
@@ -51,6 +51,8 @@ Initial checks exposed two setup issues: the network guard blocked Tesseract's p
 Firestore concurrency regression tests use a deterministic transaction double to inject changes between initial collection reads and transaction reads. The real Firestore service/emulator and native iOS/Android devices were not exercised. Production data quality and deployment configuration still require verification in the authorized deployment environment.
 
 ## Review and rollout
+
+CI run `34020377786` passed all 276 Node tests, all 5 OCR tests, TypeScript and the Next build, then failed the standalone strain test because it still asserted the retired eight-socket limit. Android/iOS jobs were skipped. The prepared follow-up updates that test to attempt 140 connections and require exactly 128 admissions, 12 HTTP 429 rejections, and closure of all 128 unauthenticated sockets. It preserves the remaining HTTP, join and mutation load assertions. This test passed locally after the update; the follow-up needs separate push approval before CI can verify it. Product code is unchanged by the follow-up.
 
 1. Review and approve pushing this isolated branch; no main-branch push is needed.
 2. Open a PR against main and run the repository CI gates.
