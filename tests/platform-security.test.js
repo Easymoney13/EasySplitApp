@@ -170,3 +170,54 @@ test('CSRF protection middleware permits valid mutations and rejects malicious c
   assert.equal(crossOriginAttacker.nextCalled, false);
   assert.equal(crossOriginAttacker.statusCode, 403);
 });
+
+test('combined CORS and CSRF preserve guest receipt JSON, native preflights, and trusted mutations', () => {
+  const allowed = resolveAllowedMobileOrigins('https://preview.easysplit.example');
+  const cors = createApiCorsMiddleware(allowed);
+  const csrf = createCsrfProtectionMiddleware(allowed);
+  function request(origin, extra = {}, method = 'POST') {
+    let status = 200;
+    let reachedHandler = false;
+    const responseHeaders = new Map();
+    const req = { method, path: '/api/receipt/parse', headers: {
+      host: 'easysplit.example', 'content-type': 'application/json', ...extra,
+      ...(origin === undefined ? {} : { origin }),
+    } };
+    const res = {
+      setHeader(name, value) { responseHeaders.set(name.toLowerCase(), value); },
+      getHeader(name) { return responseHeaders.get(name.toLowerCase()); },
+      status(code) { status = code; return this; },
+      end() { return this; },
+      json() { return this; },
+    };
+    cors(req, res, () => csrf(req, res, () => { reachedHandler = true; }));
+    return { status, reachedHandler, responseHeaders };
+  }
+
+  assert.equal(request('https://easysplit.example', { 'sec-fetch-site': 'same-origin' }).reachedHandler, true);
+  for (const origin of allowed) {
+    const guest = request(origin, { 'sec-fetch-site': 'cross-site' });
+    assert.equal(guest.reachedHandler, true, origin);
+    assert.equal(guest.responseHeaders.get('access-control-allow-origin'), origin);
+    const preflight = request(origin, {
+      'access-control-request-method': 'POST',
+      'access-control-request-headers': 'content-type,x-room-token,x-easysplit-client-id',
+    }, 'OPTIONS');
+    assert.equal(preflight.status, 204);
+    assert.equal(preflight.reachedHandler, false);
+    assert.match(preflight.responseHeaders.get('access-control-allow-headers'), /X-Room-Token/);
+    assert.equal(request(origin, { 'content-type': 'multipart/form-data', 'x-room-token': 'mock-room-token' }).reachedHandler, true);
+    assert.equal(request(origin, { 'content-type': 'multipart/form-data' }).status, 403);
+  }
+
+  for (const origin of ['https://attacker.example', 'https://localhost.attacker.example', 'capacitor://localhost.attacker.example', 'https://localhost:444', 'null']) {
+    for (const method of ['POST', 'OPTIONS']) {
+      const blocked = request(origin, { 'sec-fetch-site': 'cross-site', authorization: 'Bearer mock-token' }, method);
+      assert.equal(blocked.status, 403, `${method} ${origin}`);
+      assert.equal(blocked.reachedHandler, false);
+      assert.equal(blocked.responseHeaders.has('access-control-allow-origin'), false);
+    }
+  }
+  assert.equal(request(undefined, { 'sec-fetch-site': 'cross-site' }).status, 403);
+  assert.equal(request(undefined).reachedHandler, true);
+});
