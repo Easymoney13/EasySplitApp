@@ -60,3 +60,34 @@ test('maintenance does not resurrect deleted rooms or apply without transactions
   assert.equal(f.writes(), 0);
   await assert.rejects(refactorDatabase({ collection() { assert.fail(); } }, { dryRun: false }), /transactions/);
 });
+
+test('maintenance preserves a concurrent payment and is idempotent after phone normalization', async () => {
+  const f = fixture(data => {
+    data.sessions.s.status = 'settled';
+    data.sessions.s.payerId = 'm';
+    data.sessions.s.tipPercentage = 17;
+    data.sessions.s.members[0].settled = true;
+    data.groups.g.bills[0].status = 'settled';
+    data.groups.g.bills[0].paidAt = 123456789;
+  });
+  await refactorDatabase(f.firestore, { dryRun: false });
+  assert.equal(f.data.sessions.s.status, 'settled');
+  assert.equal(f.data.sessions.s.payerId, 'm');
+  assert.equal(f.data.sessions.s.tipPercentage, 17);
+  assert.equal(f.data.sessions.s.members[0].settled, true);
+  assert.equal(f.data.groups.g.bills[0].status, 'settled');
+  assert.equal(f.data.groups.g.bills[0].paidAt, 123456789);
+  const afterFirstRun = structuredClone(f.data);
+  const writesAfterFirstRun = f.writes();
+  await refactorDatabase(f.firestore, { dryRun: false });
+  assert.deepEqual(f.data, afterFirstRun);
+  assert.equal(f.writes(), writesAfterFirstRun);
+});
+
+test('an unmatched explicit UID never borrows a same-name account phone', async () => {
+  const f = fixture();
+  f.data.sessions.s.members[0].userId = 'not-a-registered-account';
+  await refactorDatabase(f.firestore, { dryRun: false });
+  assert.equal(f.data.sessions.s.members[0].phone, '');
+  assert.equal(f.data.sessions.s.members[0].userId, 'not-a-registered-account');
+});

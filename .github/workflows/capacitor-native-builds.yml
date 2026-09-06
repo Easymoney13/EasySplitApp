@@ -9,8 +9,12 @@ on:
       - 'lib/**'
       - 'mobile/**'
       - 'src/**'
-      - 'tests/mobile-*.test.mjs'
-      - 'tests/platform-security.test.js'
+      - 'server.js'
+      - 'firestore.rules'
+      - 'firestore.indexes.json'
+      - 'firebase.json'
+      - 'firebase.emulators.json'
+      - 'tests/**'
       - 'capacitor.config.ts'
       - 'package.json'
       - 'package-lock.json'
@@ -25,8 +29,12 @@ on:
       - 'lib/**'
       - 'mobile/**'
       - 'src/**'
-      - 'tests/mobile-*.test.mjs'
-      - 'tests/platform-security.test.js'
+      - 'server.js'
+      - 'firestore.rules'
+      - 'firestore.indexes.json'
+      - 'firebase.json'
+      - 'firebase.emulators.json'
+      - 'tests/**'
       - 'capacitor.config.ts'
       - 'package.json'
       - 'package-lock.json'
@@ -48,6 +56,31 @@ env:
   NEXT_PUBLIC_EASYSPLIT_WS_ORIGIN: wss://api.easysplit.invalid
 
 jobs:
+  firestore-rules:
+    name: Firestore rules against local emulator
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Set up Java 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install exact dependencies
+        run: npm ci
+      - name: Enforce database access rules without production credentials
+        run: >-
+          npx --yes firebase-tools@15.29.0 emulators:exec
+          --config firebase.emulators.json --project demo-easysplit-audit --only firestore
+          "node --test tests/firestore-rules.integration.mjs"
+
   shared-verification:
     name: Shared regression and mobile shell
     runs-on: ubuntu-latest
