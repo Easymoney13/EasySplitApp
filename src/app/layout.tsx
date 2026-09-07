@@ -1,13 +1,38 @@
 import './globals.css';
 import React from 'react';
+import type { Metadata } from 'next';
 import { LanguageProvider } from '../components/LanguageContext';
 
-export const metadata = {
-  title: 'EasySplit - Split the Bill Together',
-  description: 'Split restaurant and group bills in real-time with friends via receipt scanning, photo uploads, WebSockets, and 1-tap Bit/Paybox transfers.',
+const title = 'EasySplit - Split the Bill Together';
+const description = 'Scan a receipt, split items with friends in real time, and settle the bill in seconds.';
+const socialPreview = '/images/easysplit-social-preview.png';
+
+export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_EASYSPLIT_WEB_ORIGIN || 'https://billspltapp.onrender.com'),
+  title,
+  description,
   icons: {
     icon: '/images/easysplit-logo.webp',
     apple: '/images/easysplit-logo.webp',
+  },
+  openGraph: {
+    type: 'website',
+    url: '/',
+    siteName: 'EasySplit',
+    title,
+    description,
+    images: [{
+      url: socialPreview,
+      width: 1200,
+      height: 630,
+      alt: 'EasySplit - Split the bill together',
+    }],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title,
+    description,
+    images: [socialPreview],
   },
 };
 
