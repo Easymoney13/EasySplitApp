@@ -14,6 +14,21 @@ const swipeableSource = read('src/components/SwipeableCard.tsx');
 const cameraSource = read('src/components/CameraViewfinder.tsx');
 const ocrProgressSource = read('src/components/OCRProgressOverlay.tsx');
 const serverSource = read('server.js');
+const layoutSource = read('src/app/layout.tsx');
+
+test('social shares use a stable privacy-safe branded preview', () => {
+  assert.match(layoutSource, /metadataBase: new URL\(process\.env\.NEXT_PUBLIC_EASYSPLIT_WEB_ORIGIN/);
+  assert.match(layoutSource, /openGraph:[\s\S]*?type: 'website'[\s\S]*?images:/);
+  assert.match(layoutSource, /twitter:[\s\S]*?card: 'summary_large_image'/);
+  assert.match(layoutSource, /const socialPreview = '\/images\/easysplit-social-preview\.png'/);
+  assert.doesNotMatch(layoutSource, /sessionId|groupId|displayName|phoneNumber/);
+
+  const image = fs.readFileSync(path.join(__dirname, '..', 'public/images/easysplit-social-preview.png'));
+  assert.equal(image.subarray(1, 4).toString('ascii'), 'PNG');
+  assert.equal(image.readUInt32BE(16), 1200);
+  assert.equal(image.readUInt32BE(20), 630);
+  assert.ok(image.length < 300_000, `Social preview is unexpectedly large: ${image.length} bytes`);
+});
 
 test('every receipt scan keeps the original phone video and result-bound progress bar', () => {
   assert.match(homeSource, /<OCRProgressOverlay isVisible=\{isUploading\} \/>/);
