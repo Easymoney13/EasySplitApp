@@ -45,7 +45,9 @@ import { CreateGroupModal } from '../components/CreateGroupModal';
 import { SleepingPandaIllustration } from '../components/PandaIllustrations';
 import { EasySplitWordmark } from '../components/EasySplitBrand';
 import { compressAvatarImage } from '../../lib/imageUtils';
-import { createReceiptDraft, receiptConfirmationPayload, receiptScanUserMessage } from '../../lib/receiptScanClient';
+import { createReceiptDraft, receiptConfirmationPayload, receiptScanUserMessage, isReceiptCloudConsentDeclined } from '../../lib/receiptScanClient';
+import { nativeCameraErrorMessage } from '../../lib/nativeCameraFeedback';
+import { PrivacySettingsLink } from '../components/ReceiptPrivacy';
 import { getCookie, setCookie } from '../../lib/cookies';
 import { triggerHaptic } from '../../lib/haptics';
 import { MOBILE_BACK_REQUEST_EVENT } from '../../lib/mobileEvents';
@@ -277,6 +279,14 @@ export default function HomePage() {
     }
   };
 
+  const openManualReceipt = () => {
+    setShowCamera(false);
+    setPendingReceiptDraft(null);
+    setPendingScanId('');
+    setPendingRecoveryToken('');
+    setShowManualModal(true);
+  };
+
   const handleScanCamera = async () => {
     if (Capacitor.isNativePlatform()) {
       try {
@@ -296,6 +306,10 @@ export default function HomePage() {
             setPendingRecoveryToken(draft.recoveryToken);
             setShowManualModal(true);
           } catch (err: any) {
+            if (isReceiptCloudConsentDeclined(err)) {
+              if (err.manualEntry) openManualReceipt();
+              return;
+            }
             console.error(err);
             alert(err?.message || receiptScanUserMessage(t));
           } finally {
@@ -304,7 +318,8 @@ export default function HomePage() {
           return;
         }
       } catch (e) {
-        console.warn('Native camera cancelled or failed:', e);
+        const message = nativeCameraErrorMessage(e, language);
+        if (message) alert(message);
         return;
       }
     }
@@ -757,6 +772,10 @@ export default function HomePage() {
       setPendingRecoveryToken(draft.recoveryToken);
       setShowManualModal(true);
     } catch (err: any) {
+      if (isReceiptCloudConsentDeclined(err)) {
+        if (err.manualEntry) openManualReceipt();
+        return;
+      }
       console.error(err);
       alert(err?.message || receiptScanUserMessage(t));
     } finally {
@@ -1001,13 +1020,7 @@ export default function HomePage() {
         <CameraViewfinder
           onScanComplete={handleScanComplete}
           onCancel={() => setShowCamera(false)}
-          onManualEntry={() => {
-            setShowCamera(false);
-            setPendingReceiptDraft(null);
-            setPendingScanId('');
-            setPendingRecoveryToken('');
-            setShowManualModal(true);
-          }}
+          onManualEntry={openManualReceipt}
           hostName={profile.displayName || 'Host'}
         />
       )}
@@ -1947,6 +1960,8 @@ export default function HomePage() {
                 {savedSuccess ? <Check className="w-4 h-4 text-white" /> : null}
                 <span>{savedSuccess ? t('settingsSavedMsg', undefined, 'Settings Saved!') : t('saveSettingsBtn', undefined, 'Save Settings')}</span>
               </button>
+
+              <PrivacySettingsLink />
 
               {(firebaseUser || profile.displayName) && (
                 <button

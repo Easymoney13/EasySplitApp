@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useEffect, useState } from 'react';
 import {
   NAV_EVENT,
   buildShellSearch,
@@ -36,4 +36,18 @@ export function useRouter() {
 
 export function useParams() {
   return paramsFromRoute(routeFromSearch(window.location.search));
+}
+
+export function usePathname() {
+  const [pathname, setPathname] = useState(() => routeFromSearch(window.location.search));
+  useEffect(() => {
+    const sync = () => setPathname(routeFromSearch(window.location.search));
+    window.addEventListener('popstate', sync);
+    window.addEventListener(NAV_EVENT, sync);
+    return () => {
+      window.removeEventListener('popstate', sync);
+      window.removeEventListener(NAV_EVENT, sync);
+    };
+  }, []);
+  return pathname;
 }

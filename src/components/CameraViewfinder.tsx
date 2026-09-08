@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Camera, Image as ImageIcon, Zap, RotateCcw, X, Keyboard, AlertCircle } from 'lucide-react';
 import { useLanguage } from './LanguageContext';
-import { createReceiptDraft, receiptScanUserMessage } from '../../lib/receiptScanClient';
+import { createReceiptDraft, receiptScanUserMessage, isReceiptCloudConsentDeclined } from '../../lib/receiptScanClient';
 import { OCRProgressOverlay } from './OCRProgressOverlay';
 
 interface CameraViewfinderProps {
@@ -38,12 +38,21 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
   const [cameraPermissionGranted, setCameraPermissionGranted] = useState<boolean | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
 
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const cameraRequestRef = useRef(0);
+
+  const attachVideo = useCallback((video: HTMLVideoElement | null) => {
+    videoRef.current = video;
+    // Scanning and the captured preview unmount the video. Reuse the existing
+    // stream when retaking a photo without asking for camera access again.
+    if (video && streamRef.current) video.srcObject = streamRef.current;
+  }, []);
 
   const startCamera = useCallback(async (facing: 'environment' | 'user') => {
+    const request = ++cameraRequestRef.current;
     try {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
@@ -62,6 +71,11 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
         }
       });
 
+      if (request !== cameraRequestRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+
       streamRef.current = stream;
       const videoTrack = stream.getVideoTracks()[0];
       const capabilities = videoTrack && typeof videoTrack.getCapabilities === 'function'
@@ -76,6 +90,7 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
       setCameraPermissionGranted(true);
       setCameraError(null);
     } catch (err: any) {
+      if (request !== cameraRequestRef.current) return;
       console.error('Camera permission error:', err);
       setCameraPermissionGranted(false);
       setCameraError(err.message || 'Camera permission denied or camera not found');
@@ -86,8 +101,10 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
     void startCamera(facingMode);
 
     return () => {
+      cameraRequestRef.current += 1;
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
       }
     };
   }, [facingMode, startCamera]);
@@ -122,7 +139,11 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
         confirmationRequired: true,
         usedLocalFallback: draft.usedLocalFallback,
       });
-    } catch (err) {
+    } catch (err: any) {
+      if (isReceiptCloudConsentDeclined(err)) {
+        if (err.manualEntry) (onManualEntry || onCancel)();
+        return;
+      }
       console.error(err);
       alert(receiptScanUserMessage(t));
     } finally {
@@ -219,7 +240,7 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
           </div>
         ) : (
           <video
-            ref={videoRef}
+            ref={attachVideo}
             autoPlay
             playsInline
             muted
@@ -311,4 +332,3 @@ export const CameraViewfinder: React.FC<CameraViewfinderProps> = ({
     </div>
   );
 };
-

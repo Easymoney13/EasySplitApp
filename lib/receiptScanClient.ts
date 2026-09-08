@@ -1,6 +1,9 @@
 import { prepareReceiptImages, type ReceiptImageQuality } from './imageUtils';
 import { scanBillImagesInBrowser } from './ocrScanner';
 import { apiUrl } from './platformTransport';
+import { receiptConsent, isReceiptCloudConsentDeclined } from './receiptPrivacyConsent';
+
+export { isReceiptCloudConsentDeclined } from './receiptPrivacyConsent';
 
 export interface ReceiptDraftResult {
   receipt: any;
@@ -50,7 +53,11 @@ export async function createReceiptDraft(
   fileOrBase64: File | string,
   hostName = 'Host',
 ): Promise<ReceiptDraftResult> {
+  // Consent is checked before image work and again just before network transfer.
+  // Declining never invokes either the cloud or local fallback scanner.
+  const cloudReceiptConsent = await receiptConsent.requireConsent();
   const prepared = await prepareReceiptImages(fileOrBase64);
+  receiptConsent.assertCurrent(cloudReceiptConsent);
   const scanId = createScanId();
   const recoveryToken = createRecoveryToken();
   const controller = new AbortController();
@@ -72,9 +79,16 @@ export async function createReceiptDraft(
         hostName,
         scanId,
         recoveryToken,
+        cloudReceiptConsent,
       }),
     });
     const data = await readJsonSafely(response);
+    if (response.status === 428) {
+      receiptConsent.revoke();
+      const error = new Error(data.error || 'Receipt cloud processing needs your permission');
+      Object.assign(error, { code: 'RECEIPT_CLOUD_CONSENT_REQUIRED' });
+      throw error;
+    }
     if (response.ok && data.success && data.receipt?.items?.length) {
       return {
         receipt: data.receipt,
@@ -90,6 +104,7 @@ export async function createReceiptDraft(
     }
     serverError = data.error || 'Could not read the receipt image';
   } catch (error) {
+    if (isReceiptCloudConsentDeclined(error) || (error as any)?.code === 'RECEIPT_CLOUD_CONSENT_REQUIRED') throw error;
     if (error instanceof Error && (error.message.includes('limit') || error.message.includes('sign in') || error.message.includes('Authentication'))) {
       throw error;
     }

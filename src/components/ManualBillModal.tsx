@@ -11,6 +11,7 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import { useLanguage } from './LanguageContext';
+import { getReceiptPayableTotal, reconcileReceipt } from '../../lib/receiptMath';
 
 interface ManualBillModalProps {
   isOpen: boolean;
@@ -132,13 +133,12 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
     }, 0);
   };
 
-  const calculateGrandTotal = () => {
-    const subtotal = calculateSubtotal();
-    const serviceFee = Number(initialData?.service || 0);
-    const taxFee = Number(initialData?.tax || 0);
-    const discountFee = Number(initialData?.discount || 0);
-    return Math.max(0, subtotal + serviceFee + taxFee - discountFee);
-  };
+  // Recompute from the editable rows; the OCR reconciliation becomes stale
+  // as soon as a price is changed, added, or removed.
+  const draftReconciliation = reconcileReceipt({ ...initialData, items });
+  const grandTotal = getReceiptPayableTotal({ reconciliation: draftReconciliation });
+  const taxIncluded = ['matched', 'matched_adjusted'].includes(draftReconciliation.status)
+    && !draftReconciliation.calculationMode.includes('tax');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -375,7 +375,7 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
 
               {taxFee > 0 && (
                 <div className="flex justify-between text-slate-500 dark:text-slate-400 font-medium">
-                  <span>{t('taxLabel', undefined, isRtl ? 'מע״מ / מס' : 'Tax')}</span>
+                  <span>{t('taxLabel', undefined, isRtl ? 'מע״מ / מס' : 'Tax')}{taxIncluded ? (isRtl ? ' (כלול)' : ' (included)') : ''}</span>
                   <span className="font-mono font-bold text-brand-500">
                     {formatPrice(taxFee, selectedCurrency)}
                   </span>
@@ -385,7 +385,7 @@ export const ManualBillModal: React.FC<ManualBillModalProps> = ({
               <div className="flex justify-between items-center text-sm sm:text-base font-black text-slate-900 dark:text-white pt-1.5 border-t border-slate-100 dark:border-slate-800">
                 <span>{t('totalBillLabel', undefined, isRtl ? 'סה״כ לתשלום' : 'Total Bill')}</span>
                 <span className="font-mono font-black text-base sm:text-lg text-slate-900 dark:text-white">
-                  {formatPrice(calculateGrandTotal(), selectedCurrency)}
+                  {formatPrice(grandTotal, selectedCurrency)}
                 </span>
               </div>
             </div>

@@ -73,7 +73,8 @@ const splitCents = debtMinimizer.splitCents;
 const toCents = debtMinimizer.toCents;
 const { createEntityId, hashAccessToken } = require('./lib/ids');
 const { ValidationError, normalizeIsraeliPhone, validateItems, validateReceiptBody, validateUserSyncBody } = require('./lib/validation');
-const { processSessionAction } = require('./lib/sessionActions');
+const { processSessionAction, hasFinishedShare } = require('./lib/sessionActions');
+const { isValidReceiptCloudConsent } = require('./lib/receiptPrivacyConsent');
 const {
   createRoomMember,
   findRoomMember,
@@ -590,6 +591,10 @@ app.prepare().then(() => {
       settledMemberIds: (session.members || [])
         .filter((member) => member.active !== false && member.settled === true)
         .map((member) => member.id),
+      unconfirmedMemberIds: (session.members || [])
+        .filter((member) => member.active !== false && member.deletedAccount === true
+          && member.settled !== true && member.deletionResolution?.status === 'unconfirmed')
+        .map((member) => member.id),
       settledAt: session.settledAt || Date.now(),
       createdAt: session.createdAt || Date.now(),
       ...(session.groupId ? { groupId: session.groupId, isGroupBill: true } : {}),
@@ -883,7 +888,20 @@ app.prepare().then(() => {
     return hash.digest('hex');
   }
 
+  function requireReceiptCloudConsent(body) {
+    const providerInput = Boolean(body?.rawText || body?.imageBase64
+      || (Array.isArray(body?.imageBase64Parts) && body.imageBase64Parts.length));
+    if (providerInput && !isValidReceiptCloudConsent(body?.cloudReceiptConsent)) {
+      const error = new Error('Explicit receipt cloud processing permission is required');
+      error.statusCode = 428;
+      error.errorCode = 'RECEIPT_CLOUD_CONSENT_REQUIRED';
+      error.publicMessage = 'Please review and accept the receipt scanning privacy notice before uploading a receipt.';
+      throw error;
+    }
+  }
+
   async function parseReceiptRequest(req) {
+    requireReceiptCloudConsent(req.body);
     const {
       imageBase64,
       imageBase64Parts,
@@ -1074,6 +1092,7 @@ app.prepare().then(() => {
       metadata: { route: '/api/receipt/parse', ocrSource },
     });
     try {
+      requireReceiptCloudConsent(req.body);
       const scanId = normalizeScanId(req.body?.scanId);
       const ownerKey = req.user?.uid || req.ip || req.socket.remoteAddress || 'guest';
       const cacheKey = scanId ? `parse:${ownerKey}:${scanId}:${receiptInputDigest(req.body)}` : '';
@@ -1129,6 +1148,7 @@ app.prepare().then(() => {
       metadata: { route: '/api/receipt/scan', ocrSource },
     });
     try {
+      requireReceiptCloudConsent(req.body);
       const providerBackedInput = Boolean(
         req.body?.imageBase64
         || (Array.isArray(req.body?.imageBase64Parts) && req.body.imageBase64Parts.length)
@@ -1473,7 +1493,7 @@ app.prepare().then(() => {
           }
         }
         const settlementStarted = (currentSession.members || [])
-          .some((member) => member.active !== false && member.settled === true);
+          .some((member) => member.active !== false && hasFinishedShare(member));
         if (settlementStarted && !existingSessionIdentity) {
           const error = new Error('New participants cannot join after payments have started');
           error.statusCode = 409;
@@ -1651,6 +1671,10 @@ app.prepare().then(() => {
           linkedBill.finishedMemberIds = (updatedSession.members || [])
             .filter((member) => member.active !== false && member.settled === true)
             .map((member) => member.id);
+          linkedBill.unconfirmedMemberIds = (updatedSession.members || [])
+            .filter((member) => member.active !== false && member.deletedAccount === true
+              && member.settled !== true && member.deletionResolution?.status === 'unconfirmed')
+            .map((member) => member.id);
           // In a linked split this flag means "allocation confirmed", not
           // "financially paid". Debt minimization excludes settledMemberIds,
           // so carrying these confirmations there would erase the bill.
@@ -1671,7 +1695,7 @@ app.prepare().then(() => {
           }
         }
         const isSettlementToggle = action === 'TOGGLE_SETTLED';
-        const shouldPersistHistory = action === 'SETTLE_ALL' || isSettlementToggle;
+        const shouldPersistHistory = action === 'SETTLE_ALL' || isSettlementToggle || action === 'RESOLVE_DELETED_MEMBER';
         const actorHistoryId = actor.userId
           || actor.uid
           || (actor.id && !String(actor.id).startsWith('member_') ? actor.id : '');
@@ -2311,9 +2335,9 @@ app.prepare().then(() => {
             return { group, session: liveSession, idempotentReplay: true };
           }
           const activeLiveMembers = (liveSession?.members || []).filter((member) => member.active !== false);
-          const hasFinishedLiveMember = activeLiveMembers.some((member) => member.settled === true);
+          const hasFinishedLiveMember = activeLiveMembers.some(hasFinishedShare);
           const allLiveMembersFinished = activeLiveMembers.length > 0
-            && activeLiveMembers.every((member) => member.settled === true);
+            && activeLiveMembers.every(hasFinishedShare);
           if (hasFinishedLiveMember && !['FINALIZE_BILL', 'REOPEN_BILL'].includes(requestedAction)) {
             const error = new Error('Payment allocations are locked while a member is marked paid');
             error.statusCode = 409;
@@ -2374,8 +2398,14 @@ app.prepare().then(() => {
               liveSession.status = 'active';
               delete liveSession.settledAt;
               delete liveSession.groupSettlementDeferred;
-              (liveSession.members || []).forEach((member) => { member.settled = false; });
+              delete liveSession.unconfirmedMemberIds;
+              (liveSession.members || []).forEach((member) => {
+                member.settled = false;
+                delete member.settledAt;
+                delete member.deletionResolution;
+              });
               bill.finishedMemberIds = [];
+              delete bill.unconfirmedMemberIds;
               if (previousStatus !== BILL_STATUS.ACTIVE && reopenCode) {
                 liveSession.code = reopenCode;
                 liveSession.inviteTokenHash = hashAccessToken(reopenInviteToken);
@@ -2590,7 +2620,7 @@ app.prepare().then(() => {
       // Sync avatar URL from Google if available
       if (picture && user.avatarUrl !== picture) {
         user.avatarUrl = picture;
-        await db.saveUser(user, uid);
+        await db.saveUser({ id: uid, avatarUrl: picture }, uid);
       }
 
       void trackAnalyticsEvent('user_synced', {
