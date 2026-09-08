@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { access, readFile } from 'node:fs/promises';
+import { runInNewContext } from 'node:vm';
 
 const root = new URL('../', import.meta.url);
 const read = async (path) => readFile(new URL(path, root), 'utf8');
@@ -22,6 +23,30 @@ test('mobile package scripts are pinned and guarded by Node 22 without changing 
   assert.match(pkg.scripts['mobile:build'], /mobile:check-node/);
   assert.equal(pkg.devDependencies['@capacitor/cli'], '8.5.0');
   assert.equal(pkg.devDependencies.vite, '8.2.2');
+});
+
+test('production start selects production before loading dependencies and dev start preserves its environment', async () => {
+  const source = await read('server.js');
+  const pkg = JSON.parse(await read('package.json'));
+  const startupArgs = pkg.scripts.start.split(' ').slice(1);
+  const stopBeforeDependencies = new Error('bootstrap observed');
+  for (const { args, initial, expected } of [
+    { args: startupArgs, initial: undefined, expected: 'production' },
+    { args: startupArgs, initial: 'development', expected: 'production' },
+    { args: ['server.js', '--prod'], initial: undefined, expected: 'production' },
+    { args: ['server.js'], initial: 'production', expected: 'production' },
+    { args: ['server.js'], initial: 'development', expected: 'development' },
+    { args: ['server.js'], initial: undefined, expected: undefined },
+  ]) {
+    const env = initial === undefined ? {} : { NODE_ENV: initial };
+    assert.throws(() => runInNewContext(source, {
+      process: { argv: ['node', ...args], env },
+      require() {
+        assert.equal(env.NODE_ENV, expected);
+        throw stopBeforeDependencies;
+      },
+    }), (error) => error === stopBeforeDependencies);
+  }
 });
 
 test('mobile shell is included in Tailwind scanning and generated output stays untracked', async () => {
