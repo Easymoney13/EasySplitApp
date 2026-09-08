@@ -38,6 +38,11 @@ test('real Tesseract pipeline exceeds the 96% Hebrew synthetic-fixture acceptanc
     // Tesseract.js caches language data in cwd under Node. Keep that cache out
     // of the repository while exercising the same browser worker code.
     process.chdir(temporaryDirectory);
+    // This gate measures fixture accuracy. Download the same language assets
+    // before the scan budget starts so a slow CDN cannot consume the time
+    // reserved for Hebrew verification. Keep each real scan's 18-second budget.
+    const languageSetupWorker = await require('tesseract.js').createWorker(['heb', 'eng']);
+    await languageSetupWorker.terminate();
     const { scanBillImagesInBrowser } = loadBrowserOcrModule();
     const expected = {
       items: [

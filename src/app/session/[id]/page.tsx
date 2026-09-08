@@ -46,6 +46,7 @@ import { apiUrl, realtimeUrl } from '../../../../lib/platformTransport';
 import { MOBILE_RECOVERY_EVENT } from '../../../../lib/mobileEvents';
 import { purgeDeletedSessionFromStorage } from '../../../../lib/localLifecycle';
 import { openPayBoxPayment } from '../../../../lib/nativeActions';
+import { requestSessionJson } from '../../../../lib/sessionRequest';
 
 function createClientActionId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -117,6 +118,12 @@ function SessionWorkspaceInner() {
   // Connection & state management
   const [session, setSession] = useState<any>(null);
   const [currentMemberId, setCurrentMemberId] = useState<string>('');
+  const [sessionLoadError, setSessionLoadError] = useState<{ status: number } | null>(null);
+  const [initializationAttempt, setInitializationAttempt] = useState(0);
+  const initializationErrorRef = useRef<{ status: number } | null>(null);
+  const retryInitializationRef = useRef<(automatic?: boolean) => void>(() => {});
+  const [resolvingDeletedMemberId, setResolvingDeletedMemberId] = useState('');
+  const resolvingDeletedMemberRef = useRef(false);
   
   // Modals & Triggers
   const [showAddItemModal, setShowAddItemModal] = useState<boolean>(false);
@@ -192,6 +199,15 @@ function SessionWorkspaceInner() {
   const finishTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const joinInFlightRef = useRef<{ roomId: string; promise: Promise<any> } | null>(null);
 
+  retryInitializationRef.current = (automatic = false) => {
+    const error = initializationErrorRef.current;
+    if (!error || (automatic && error.status > 0 && error.status < 500)) return;
+    // Clear synchronously so simultaneous recovery events only start one attempt.
+    initializationErrorRef.current = null;
+    setSessionLoadError(null);
+    setInitializationAttempt((attempt) => attempt + 1);
+  };
+
   useEffect(() => () => {
     if (finishTimerRef.current) clearTimeout(finishTimerRef.current);
   }, []);
@@ -212,16 +228,17 @@ function SessionWorkspaceInner() {
     if (!sessionId || authLoading || !displayName || !isValidIsraeliPhone(phoneNumber)) return;
     let disposed = false;
     let pollInterval: ReturnType<typeof setInterval> | null = null;
+    initializationErrorRef.current = null;
+    setSessionLoadError(null);
+    setSessionNotFound(false);
+    setSession(null);
+    setCurrentMemberId('');
 
     const initializeSession = async () => {
       try {
-        const initialRes = await fetch(apiUrl(`/api/session/${sessionId}`), { headers: roomHeaders('session', sessionId, false) });
-        if (initialRes.status === 404) {
-          if (!disposed) handleSessionDeleted(sessionId);
-          return;
-        }
-        const initialData = await initialRes.json();
-        if (!initialRes.ok || !initialData.session) throw new Error(initialData.error || 'Could not load session');
+        const initialData = await requestSessionJson(apiUrl(`/api/session/${sessionId}`), { headers: roomHeaders('session', sessionId, false) });
+        if (disposed) return;
+        if (!initialData.session?.id) throw new Error('Could not load session');
 
         const resolvedId = initialData.session.id;
         const urlParams = new URLSearchParams(window.location.search);
@@ -237,14 +254,17 @@ function SessionWorkspaceInner() {
         }
 
         if (initialData.session.status === 'settled') {
-          if (!disposed) setSession(initialData.session);
+          if (!disposed) {
+            setCurrentMemberId(getRoomMemberId('session', resolvedId));
+            setSession(initialData.session);
+          }
           return;
         }
 
         let joinEntry = joinInFlightRef.current;
         if (!joinEntry || joinEntry.roomId !== resolvedId) {
           const promise = (async () => {
-            const joinRes = await fetch(apiUrl(`/api/session/${resolvedId}/join`), {
+            const joined = await requestSessionJson(apiUrl(`/api/session/${resolvedId}/join`), {
               method: 'POST',
               headers: roomHeaders('session', resolvedId),
               body: JSON.stringify({
@@ -255,9 +275,8 @@ function SessionWorkspaceInner() {
                 manualCode,
               }),
             });
-            const joined = await joinRes.json();
-            if (!joinRes.ok || !joined.session || !joined.accessToken) {
-              throw new Error(joined.error || 'Could not join session');
+            if (!joined.session || !joined.accessToken || !joined.memberId) {
+              throw new Error('Could not join session');
             }
             saveRoomCredentials('session', resolvedId, joined.memberId, joined.accessToken);
             if (resolvedId !== sessionId) saveRoomCredentials('session', sessionId, joined.memberId, joined.accessToken);
@@ -283,8 +302,14 @@ function SessionWorkspaceInner() {
         }
       } catch (err: any) {
         console.error('Error initializing session:', err);
-        if (!disposed && err?.status === 404) {
-          setSessionNotFound(true);
+        if (!disposed) {
+          if (err?.status === 404) {
+            handleSessionDeleted(sessionId);
+          } else {
+            const error = { status: Number(err?.status) || 0 };
+            initializationErrorRef.current = error;
+            setSessionLoadError(error);
+          }
         }
       }
     };
@@ -292,12 +317,12 @@ function SessionWorkspaceInner() {
     initializeSession();
 
     // Load user groups from Cookie / LocalStorage
-    const cookieGroups = getCookie('billsplit_user_groups');
-    const localGroups = localStorage.getItem('billsplit_user_groups');
-    const rawGroups = cookieGroups || (localGroups ? JSON.parse(localGroups) : []);
-    if (Array.isArray(rawGroups)) {
-      setUserGroups(rawGroups);
-    }
+    try {
+      const cookieGroups = getCookie('billsplit_user_groups');
+      const localGroups = localStorage.getItem('billsplit_user_groups');
+      const rawGroups = cookieGroups || (localGroups ? JSON.parse(localGroups) : []);
+      if (Array.isArray(rawGroups)) setUserGroups(rawGroups);
+    } catch (_) { /* A stale local cache must not prevent room initialization. */ }
 
     return () => {
       disposed = true;
@@ -308,7 +333,7 @@ function SessionWorkspaceInner() {
       socketRef.current = null;
       if (socket) socket.close();
     };
-  }, [sessionId, profile.displayName, profile.phoneNumber, authLoading]);
+  }, [sessionId, profile.displayName, profile.phoneNumber, authLoading, initializationAttempt]);
 
 
   useEffect(() => {
@@ -319,7 +344,10 @@ function SessionWorkspaceInner() {
 
       const id = activeSessionIdRef.current;
       const accessToken = activeSessionTokenRef.current;
-      if (!id || !accessToken) return;
+      if (!id || !accessToken) {
+        retryInitializationRef.current(true);
+        return;
+      }
 
       void fetchSessionData(id);
       const staleSocket = socketRef.current;
@@ -342,11 +370,13 @@ function SessionWorkspaceInner() {
 
     window.addEventListener(MOBILE_RECOVERY_EVENT, recoverMobileRuntime);
     window.addEventListener('focus', recoverMobileRuntime);
+    window.addEventListener('online', recoverMobileRuntime);
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       window.removeEventListener(MOBILE_RECOVERY_EVENT, recoverMobileRuntime);
       window.removeEventListener('focus', recoverMobileRuntime);
+      window.removeEventListener('online', recoverMobileRuntime);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [sessionId]);
@@ -631,7 +661,7 @@ function SessionWorkspaceInner() {
           sessionId: session?.id || sessionId,
           action,
           actionId: createClientActionId(),
-          payload: { ...payload, memberId: currentMemberId },
+          payload: { ...payload, memberId: action === 'RESOLVE_DELETED_MEMBER' ? payload.memberId : currentMemberId },
         }),
       });
       const data = await res.json();
@@ -658,6 +688,22 @@ function SessionWorkspaceInner() {
           localStorage.setItem(key, JSON.stringify(entries.filter((entry: any) => entry?.id !== session.id)));
         }
       } catch (_) {}
+    }
+  };
+
+  const resolveDeletedMember = async (memberId: string) => {
+    if (resolvingDeletedMemberRef.current) return;
+    const confirmed = window.confirm(isRtl
+      ? 'המשתתף מחק את החשבון ולא אישר תשלום. לסגור את חלקו כלא מאושר? החוב והסכומים יישמרו ולא יסומנו כשולמו. הסשן ייסגר רק לאחר ששאר המשתתפים יסיימו.'
+      : 'This participant deleted their account without confirming payment. Close their share as unconfirmed? The debt and amounts will be kept and will not be marked as paid. The session will close only once all remaining participants finish.');
+    if (!confirmed) return;
+    resolvingDeletedMemberRef.current = true;
+    setResolvingDeletedMemberId(memberId);
+    try {
+      await sendAction('RESOLVE_DELETED_MEMBER', { memberId });
+    } finally {
+      resolvingDeletedMemberRef.current = false;
+      setResolvingDeletedMemberId('');
     }
   };
 
@@ -782,7 +828,10 @@ function SessionWorkspaceInner() {
   const isGroupLinked = Boolean(session?.groupId && session?.billId);
   const isGroupDeferredComplete = Boolean(session?.groupSettlementDeferred);
   const isSessionClosed = session?.status === 'settled';
-  const hasSettledMembers = validMembers.some((member: any) => member?.settled === true);
+  const hasSettledMembers = validMembers.some((member: any) => member?.settled === true
+    || (member?.deletedAccount && member?.deletionResolution?.status === 'unconfirmed'));
+  const deletedUnpaidMembers = activeMembers.filter((member: any) => member.deletedAccount && member.settled !== true);
+  const hasUnconfirmedShares = deletedUnpaidMembers.some((member: any) => member.deletionResolution?.status === 'unconfirmed');
   const isCurrentMemberSettled = Boolean(currentMember?.settled);
   const isAccountingLocked = isSessionClosed || hasSettledMembers;
   const openShareModal = async () => {
@@ -809,7 +858,8 @@ function SessionWorkspaceInner() {
     }
   };
   const settledMemberIds = new Set(
-    validMembers.filter((member: any) => member?.active !== false && member?.settled === true).map((member: any) => member.id),
+    validMembers.filter((member: any) => member?.active !== false && (member?.settled === true
+      || (member?.deletedAccount && member?.deletionResolution?.status === 'unconfirmed'))).map((member: any) => member.id),
   );
 
   const activePayerId = session?.payerId || 'each';
@@ -941,6 +991,25 @@ function SessionWorkspaceInner() {
           <p className="max-w-sm text-sm text-slate-500">{t('sessionNotFoundText', undefined, 'This link or code is invalid, expired, or the room was deleted.')}</p>
           <button onClick={() => router.push('/')} className="photo-btn-indigo px-6 py-3 text-sm font-bold">
             {t('backToHomeBtn', undefined, 'Back to Home')}
+          </button>
+        </div>
+      );
+    }
+    if (sessionLoadError) {
+      const inviteError = sessionLoadError.status === 401 || sessionLoadError.status === 403;
+      return (
+        <div className="app-surface flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center text-slate-900 dark:text-white" dir={isRtl ? 'rtl' : 'ltr'}>
+          <h2 className="text-xl font-extrabold">{isRtl ? 'לא הצלחנו לפתוח את הסשן' : 'Could not open session'}</h2>
+          <p role="alert" className="max-w-sm text-sm text-slate-500">
+            {inviteError
+              ? (isRtl ? 'לא ניתן להצטרף עם ההזמנה הזו. בקשו מהמארח קישור או קוד עדכני.' : 'This invitation could not be used. Ask the host for a current link or code.')
+              : (isRtl ? 'החיבור לסשן נכשל. בדקו את חיבור האינטרנט ונסו שוב.' : 'The connection to the session failed. Check your internet connection and try again.')}
+          </p>
+          <button data-testid="session-load-retry" onClick={() => retryInitializationRef.current()} className="photo-btn-indigo px-6 py-3 text-sm font-bold">
+            {isRtl ? 'נסה שוב' : 'Try again'}
+          </button>
+          <button onClick={() => router.push('/')} className="px-6 py-3 text-sm font-bold">
+            {isRtl ? 'חזרה למסך הבית' : 'Back to Home'}
           </button>
         </div>
       );
@@ -1091,9 +1160,28 @@ function SessionWorkspaceInner() {
 
       {/* Shared Receipt Items Section */}
       <div className="flex-1 space-y-4 pt-1">
+        {deletedUnpaidMembers.length > 0 && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 space-y-3 text-xs text-slate-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-slate-200" dir={isRtl ? 'rtl' : 'ltr'}>
+            <p>{isRtl ? 'קיים חלק בחשבון של משתתף שמחק את החשבון ולא אישר תשלום.' : 'A participant deleted their account without confirming payment for their share.'}</p>
+            {deletedUnpaidMembers.map((member: any, index: number) => (
+              <div key={member.id} className="flex items-center justify-between gap-3">
+                <span>{isRtl ? `משתתף מחוק ${index + 1}` : `Deleted participant ${index + 1}`}</span>
+                {member.deletionResolution?.status === 'unconfirmed'
+                  ? <span className="font-bold">{isRtl ? 'נסגר ללא אישור תשלום — החוב נשמר' : 'Closed as unconfirmed — debt retained'}</span>
+                  : isCurrentUserHost && !isSessionClosed
+                    ? <button type="button" data-testid={`resolve-deleted-member-${member.id}`} disabled={Boolean(resolvingDeletedMemberId)} onClick={() => resolveDeletedMember(member.id)} className="rounded-lg border border-amber-400 px-3 py-2 font-bold disabled:opacity-50">
+                        {resolvingDeletedMemberId === member.id ? (isRtl ? 'שומר...' : 'Saving...') : (isRtl ? 'סגירה ללא אישור תשלום' : 'Close as unconfirmed')}
+                      </button>
+                    : <span>{isRtl ? 'ממתין לטיפול המארח' : 'Awaiting host resolution'}</span>}
+              </div>
+            ))}
+          </div>
+        )}
         {isSessionClosed && (
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-center text-sm font-bold text-slate-800 dark:border-slate-700 dark:bg-slate-900/30 dark:text-slate-200">
-            {isGroupDeferredComplete
+            {hasUnconfirmedShares
+              ? (isRtl ? 'הסשן נסגר לקריאה בלבד. נותרו חלקים ללא אישור תשלום; החובות נשמרו.' : 'This session is closed and read-only. Some shares have no payment confirmation; their debts have been retained.')
+              : isGroupDeferredComplete
               ? (isRtl ? 'החלוקה הסתיימה ונכללת במאזן הקבוצה. חזרו לקבוצה כדי לראות את מצב ההתחשבנות.' : 'Split complete and included in the group balance. Return to the group to see settlement status.')
               : t('sessionClosedNotice', undefined, 'This session is settled and is now read-only.')}
           </div>

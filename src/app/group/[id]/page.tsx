@@ -35,7 +35,8 @@ import { CameraViewfinder } from '../../../components/CameraViewfinder';
 import { OCRProgressOverlay } from '../../../components/OCRProgressOverlay';
 import { SwipeableCard } from '../../../components/SwipeableCard';
 import { AnimatedRollingNumber } from '../../../components/AnimatedRollingNumber';
-import { createReceiptDraft, receiptConfirmationPayload, receiptScanUserMessage } from '../../../../lib/receiptScanClient';
+import { createReceiptDraft, receiptConfirmationPayload, receiptScanUserMessage, isReceiptCloudConsentDeclined } from '../../../../lib/receiptScanClient';
+import { nativeCameraErrorMessage } from '../../../../lib/nativeCameraFeedback';
 import { getCookie, setCookie } from '../../../../lib/cookies';
 import { formatCurrency } from '../../../../lib/i18n';
 import { cleanIsraeliPhone, isValidIsraeliPhone, triggerBitPayment } from '../../../../lib/bitDeepLink';
@@ -174,6 +175,15 @@ export default function GroupWorkspacePage() {
     router.replace('/');
   };
 
+  const openManualReceipt = () => {
+    setShowCamera(false);
+    setEditingBill(null);
+    setPendingReceiptDraft(null);
+    setPendingScanId('');
+    setPendingRecoveryToken('');
+    setShowCreateBillModal(true);
+  };
+
   const handleScanCamera = async () => {
     if (Capacitor.isNativePlatform()) {
       try {
@@ -193,7 +203,11 @@ export default function GroupWorkspacePage() {
             setPendingScanId(draft.scanId);
             setPendingRecoveryToken(draft.recoveryToken);
             setShowCreateBillModal(true);
-          } catch (err) {
+          } catch (err: any) {
+            if (isReceiptCloudConsentDeclined(err)) {
+              if (err.manualEntry) openManualReceipt();
+              return;
+            }
             console.error(err);
             alert(receiptScanUserMessage(t));
           } finally {
@@ -202,7 +216,8 @@ export default function GroupWorkspacePage() {
           return;
         }
       } catch (e) {
-        console.warn('Native camera cancelled or failed:', e);
+        const message = nativeCameraErrorMessage(e, isRtl ? 'he' : 'en');
+        if (message) alert(message);
         return;
       }
     }
@@ -551,7 +566,11 @@ export default function GroupWorkspacePage() {
       setPendingScanId(draft.scanId);
       setPendingRecoveryToken(draft.recoveryToken);
       setShowCreateBillModal(true);
-    } catch (err) {
+    } catch (err: any) {
+      if (isReceiptCloudConsentDeclined(err)) {
+        if (err.manualEntry) openManualReceipt();
+        return;
+      }
       console.error(err);
       alert(receiptScanUserMessage(t));
     } finally {
@@ -703,10 +722,7 @@ export default function GroupWorkspacePage() {
         <CameraViewfinder
           onScanComplete={handleCameraScanComplete}
           onCancel={() => setShowCamera(false)}
-          onManualEntry={() => {
-            setShowCamera(false);
-            setShowCreateBillModal(true);
-          }}
+          onManualEntry={openManualReceipt}
           parseOnly
           hostName={profile.displayName || 'Member'}
         />

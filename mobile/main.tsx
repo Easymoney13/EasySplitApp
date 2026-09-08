@@ -5,6 +5,8 @@ import './mobile.css';
 import HomePage from '../src/app/page';
 import SessionPage from '../src/app/session/[id]/page';
 import GroupPage from '../src/app/group/[id]/page';
+import PrivacyPage from '../src/app/privacy/page';
+import { ReceiptPrivacyProvider } from '../src/components/ReceiptPrivacy';
 import { LanguageProvider } from '../src/components/LanguageContext';
 import { NAV_EVENT, routeFromSearch } from './router-core.mjs';
 import { installMobileRuntime } from './runtime/mobileRuntime';
@@ -14,6 +16,7 @@ document.documentElement.classList.add('easysplit-mobile');
 document.body.className = 'app-viewport bg-brand-950 text-brand-950 min-h-0 overflow-hidden antialiased';
 
 function routeView(route: string) {
+  if (route === '/privacy') return <PrivacyPage />;
   if (/^\/session\/[^/]+$/.test(route)) return <SessionPage />;
   if (/^\/group\/[^/]+$/.test(route)) return <GroupPage />;
   return <HomePage />;
@@ -50,11 +53,13 @@ function MobileApp() {
 
   return (
     <LanguageProvider>
-      <div className="app-viewport w-full min-h-0 bg-[#F8F8FC] dark:bg-brand-950 relative overflow-hidden flex flex-col">
-        <main className="flex-1 min-h-0 w-full relative z-10 flex flex-col overflow-y-auto">
-          {routeView(route)}
-        </main>
-      </div>
+      <ReceiptPrivacyProvider>
+        <div className="app-viewport w-full min-h-0 bg-[#F8F8FC] dark:bg-brand-950 relative overflow-hidden flex flex-col">
+          <main className="flex-1 min-h-0 w-full relative z-10 flex flex-col overflow-y-auto">
+            {routeView(route)}
+          </main>
+        </div>
+      </ReceiptPrivacyProvider>
     </LanguageProvider>
   );
 }

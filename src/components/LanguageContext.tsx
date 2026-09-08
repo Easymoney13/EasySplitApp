@@ -1,6 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { usePathname } from 'next/navigation';
 import { Capacitor } from '@capacitor/core';
 import { Sparkles, Phone, User, Globe, LogOut, Loader2, AlertCircle, CheckCircle, X } from 'lucide-react';
 import defaultTranslations, { translations as namedTranslations, formatCurrency, convertCurrency, formatDualPrice, updateLiveExchangeRates } from '../../lib/i18n';
@@ -13,6 +14,7 @@ import {
   transitionAccountScope,
 } from '../../lib/accountIsolation';
 import { clearCreatorIntent, readCreatorIntent } from '../../lib/creatorIntent';
+import { receiptConsent } from '../../lib/receiptPrivacyConsent';
 import { isProtectedApi } from '../../lib/authFetch';
 import { cleanIsraeliPhone, isValidIsraeliPhone } from '../../lib/bitDeepLink';
 import { apiUrl, getApiOrigin } from '../../lib/platformTransport';
@@ -79,6 +81,7 @@ interface LanguageContextType {
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
 
 export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const pathname = usePathname();
   const [language, setLanguageState] = useState<Language>('en');
   const [currency, setCurrencyState] = useState<Currency>('NIS');
   const [theme, setThemeState] = useState<Theme>('light');
@@ -258,6 +261,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             } else {
               clearGuestAccountMigration(sessionStorage);
             }
+            receiptConsent.revoke();
             removeCookie('billsplit_user_groups');
             const pendingCreatorProfile = pendingCreatorIntent?.creatorProfile;
             if (pendingCreatorProfile?.displayName && pendingCreatorProfile?.phoneNumber) {
@@ -601,6 +605,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const { auth } = await import('../../lib/firebase');
       const { signOut } = await import('firebase/auth');
       await signOut(auth).catch(() => undefined);
+      receiptConsent.revoke();
       if (typeof window !== 'undefined') {
         clearAccountScopedStorage(localStorage);
         clearCreatorIntent(localStorage);
@@ -631,6 +636,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const logout = async () => {
+    receiptConsent.revoke();
     try {
       if (typeof window !== 'undefined') {
         clearAccountScopedStorage(localStorage);
@@ -789,7 +795,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       {children}
 
       {/* Global Onboarding / Profile Modal */}
-      {showProfileModal && (
+      {showProfileModal && pathname !== '/privacy' && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-md animate-fadeIn" dir={isRtl ? 'rtl' : 'ltr'}>
           <div role="dialog" aria-modal="true" aria-label={language === 'he' ? 'ברוכים הבאים ל-EasySplit' : 'Welcome to EasySplit'} className="w-full max-w-sm max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-[28px] p-6 bg-white dark:bg-brand-900 border border-slate-200 dark:border-[#222C3D] text-slate-900 dark:text-white space-y-4 shadow-2xl transition-all">
             

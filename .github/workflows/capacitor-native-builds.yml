@@ -75,11 +75,11 @@ jobs:
           java-version: '21'
       - name: Install exact dependencies
         run: npm ci
-      - name: Enforce database access rules without production credentials
+      - name: Verify database rules and account cleanup without production credentials
         run: >-
           npx --yes firebase-tools@15.29.0 emulators:exec
           --config firebase.emulators.json --project demo-easysplit-audit --only firestore
-          "node --test tests/firestore-rules.integration.mjs"
+          "node --test tests/firestore-rules.integration.mjs tests/account-deletion.firestore.integration.mjs"
 
   shared-verification:
     name: Shared regression and mobile shell
