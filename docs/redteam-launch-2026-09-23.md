@@ -36,3 +36,7 @@ Counts overlap; they are not a sum of unique checks. The initial Android wall-cl
 - Signed archive, real-device/TestFlight verification, factual operator/support information and provider/store configuration remain the separate App Store release gates recorded in `launch-readiness-2026-09-23.md`.
 
 This document records local review evidence before push. The PR and exact-head CI results are the remote merge evidence; no remote result is inferred from local tests.
+
+## CI environment repair
+
+PR #23's first native run (`35874534190`) passed shared verification and Firestore; Android failed before the application build because setup-android v3 requested its default retired `tools` SDK package. Its official action input/source confirms that `packages: platform-tools` selects the supported package while command-line tools are installed separately. All three existing setup-android steps now specify that input. API/build-tools and emulator installation remain in their existing steps; product code, runtime assertions and deadlines are unchanged. The updated head requires a new complete CI run before merge.
