@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { once } = require('node:events');
+const { createHash } = require('node:crypto');
 const { createRoomMember } = require('../lib/roomAuth');
 const { calculateDebtMinimization } = require('../lib/debtMinimizer');
 const { RECEIPT_CLOUD_CONSENT_VERSION } = require('../lib/receiptPrivacyConsent');
@@ -62,6 +63,10 @@ async function apiFixture(t) {
       fixture_host: { id: 'fixture_host', groups: ['grp_deleted_share'], bills: [] },
       fixture_guest: { id: 'fixture_guest', groups: ['grp_deleted_share'], bills: [] },
       fixture_sync: { id: 'fixture_sync', username: 'Before', phone: '0503333333', groups: ['grp_existing'], bills: [{ id: 'bill_existing' }] },
+      fixture_incomplete_delete: { id: 'fixture_incomplete_delete', username: 'Cleanup unfinished' },
+    },
+    deletedAccountFences: {
+      [createHash('sha256').update('easysplit-account-deletion-v1:fixture_incomplete_delete').digest('hex')]: { deletedAt: 1 },
     },
     sessions: { sess_deleted_share: {
       id: 'sess_deleted_share', code: '54672', groupId: 'grp_deleted_share', billId: 'bill_deleted_share',
@@ -96,14 +101,28 @@ async function apiFixture(t) {
   fs.writeFileSync(preloadPath, `
 const Module = require('node:module');
 const path = require('node:path');
+const projectRequire = Module.createRequire(path.join(process.cwd(), 'package.json'));
+const { initializeApp } = projectRequire('firebase-admin/app');
+const { getAuth } = projectRequire('firebase-admin/auth');
+const fixtureAuth = getAuth(initializeApp({ projectId: 'demo-easysplit-api' }));
+const deletedAccounts = new Set();
+// Retain the SDK's real revocation/deletion checks. Only signature verification
+// and the account-record RPC are substituted, so no identity network is used.
+fixtureAuth.idTokenVerifier.verifyJWT = async token => {
+  if (!/^fixture_[a-z0-9_-]+$/.test(token)) throw new Error('Invalid fixture token');
+  if (token === 'fixture_expired_delete') throw Object.assign(new Error('Expired fixture token'), { code: 'auth/id-token-expired' });
+  return { uid: token, sub: token, auth_time: 1000, name: 'Fixture User', firebase: { sign_in_provider: token === 'fixture_anonymous' ? 'anonymous' : 'google.com' }, ...(token === 'fixture_sync' ? { picture: 'https://example.invalid/avatar.png' } : {}) };
+};
+fixtureAuth.getUser = async uid => {
+  if (deletedAccounts.has(uid) || ['fixture_missing', 'fixture_incomplete_delete'].includes(uid)) throw Object.assign(new Error('User not found'), { code: 'auth/user-not-found' });
+  return { uid, disabled: uid === 'fixture_disabled', tokensValidAfterTime: uid === 'fixture_revoked' ? new Date(2000 * 1000).toISOString() : undefined };
+};
+fixtureAuth.deleteUser = async uid => { deletedAccounts.add(uid); };
 const originalLoad = Module._load;
 Module._load = function(request, ...args) {
   if (request === 'next') return () => ({ prepare: async () => {}, getRequestHandler: () => (_req, res) => { res.statusCode = 404; res.end(); } });
   if (request === 'firebase-admin/app') return { cert: value => value, initializeApp: () => ({}) };
-  if (request === 'firebase-admin/auth') return { getAuth: () => ({ verifyIdToken: async token => {
-    if (!/^fixture_[a-z0-9_-]+$/.test(token)) throw new Error('Invalid fixture token');
-    return { uid: token, name: 'Fixture User', ...(token === 'fixture_sync' ? { picture: 'https://example.invalid/avatar.png' } : {}) };
-  } }) };
+  if (request === 'firebase-admin/auth') return { getAuth: () => fixtureAuth };
   return originalLoad.call(this, request, ...args);
 };
 const originalFetch = global.fetch;
@@ -133,6 +152,7 @@ db.findOrCreateUser = async (...args) => {
     env: {
       ...process.env, NODE_ENV: 'test', PORT: String(port), NEXT_TELEMETRY_DISABLED: '1',
       BILLSPLIT_DB_PATH: dbPath, GEMINI_API_KEY: 'loopback-fixture-key',
+      FIREBASE_AUTH_EMULATOR_HOST: '',
       FIREBASE_PRIVATE_KEY: '', FIREBASE_CLIENT_EMAIL: '', FIREBASE_PROJECT_ID: 'demo-easysplit-api',
       FIREBASE_SERVICE_ACCOUNT_PATH: path.join(directory, 'no-service-account.json'),
       ENFORCE_APP_CHECK: 'false', MIGRATE_LOCAL_DB_TO_FIRESTORE: 'false',
@@ -154,6 +174,12 @@ db.findOrCreateUser = async (...args) => {
   return {
     host, guest, lateGuest, deleted, providerCalls,
     readDb: () => JSON.parse(fs.readFileSync(dbPath, 'utf8')),
+    async deleteAccount(token) {
+      const response = await fetch(`http://127.0.0.1:${port}/api/user/account`, {
+        method: 'DELETE', headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000),
+      });
+      return { status: response.status, body: await response.json() };
+    },
     async post(route, body, token = '', roomToken = '') {
       const response = await fetch(`http://127.0.0.1:${port}${route}`, {
         method: 'POST', headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(roomToken ? { 'x-room-token': roomToken } : {}) },
@@ -353,5 +379,59 @@ test('pre-store repairs preserve the real receipt and shared-debt API boundaries
     assert.equal(user.avatarUrl, 'https://example.invalid/avatar.png');
     assert.deepEqual(user.groups, ['grp_existing', 'grp_concurrent']);
     assert.deepEqual(user.bills.map(bill => bill.id), ['bill_existing', 'bill_concurrent']);
+  });
+
+  await t.test('an unexpired token cannot recreate a successfully deleted account', async () => {
+    const token = 'fixture_delete_account';
+    const profile = { username: 'Delete Me', phone: '0505555555' };
+    const before = await api.post('/api/user/sync', profile, token);
+    assert.equal(before.status, 200, JSON.stringify(before.body));
+    const deletion = await api.deleteAccount(token);
+    assert.equal(deletion.status, 200, JSON.stringify(deletion.body));
+    assert.equal(api.readDb().users[token], undefined);
+    const replay = await api.post('/api/user/sync', profile, token);
+    assert.equal(replay.status, 401, 'Deleted Firebase account tokens must be rejected before profile writes');
+    assert.equal(api.readDb().users[token], undefined);
+  });
+
+  await t.test('a lost successful deletion response can be retried only after proven completed cleanup', async () => {
+    const token = 'fixture_delete_retry';
+    const profile = { username: 'Retry deletion', phone: '0505555555' };
+    assert.equal((await api.post('/api/user/sync', profile, token)).status, 200);
+    // The client may never receive this response even though deletion commits.
+    assert.equal((await api.deleteAccount(token)).status, 200);
+    const completed = api.readDb();
+    const retry = await api.deleteAccount(token);
+    assert.equal(retry.status, 200, JSON.stringify(retry.body));
+    assert.equal(retry.body.success, true);
+    assert.equal(retry.body.deleted, false);
+    assert.deepEqual(api.readDb(), completed, 'The completion response does not rerun cleanup or recreate identity');
+    assert.equal((await api.post('/api/user/sync', profile, token)).status, 401, 'The retry exception grants no profile access');
+
+    for (const rejected of ['invalid-signature', 'fixture_expired_delete', 'fixture_missing', 'fixture_incomplete_delete', 'fixture_disabled', 'fixture_revoked']) {
+      const response = await api.deleteAccount(rejected);
+      assert.equal(response.status, 401, `${rejected}: ${JSON.stringify(response.body)}`);
+      assert.notEqual(response.body.success, true);
+    }
+    assert.deepEqual(api.readDb(), completed, 'Unauthorized and unfinished deletions remain untouched');
+  });
+
+  await t.test('disabled and revoked identities cannot create profiles with otherwise valid tokens', async () => {
+    for (const token of ['fixture_disabled', 'fixture_revoked']) {
+      const response = await api.post('/api/user/sync', { username: 'Blocked', phone: '0506666666' }, token);
+      assert.equal(response.status, 401, token);
+      assert.equal(api.readDb().users[token], undefined);
+    }
+  });
+
+  await t.test('guest and active anonymous Firebase identities retain account-free room creation', async () => {
+    for (const token of ['', 'fixture_anonymous']) {
+      const response = await api.post('/api/groups', {
+        name: 'Guest launch check', hostName: 'Guest', hostPhone: '0507777777',
+      }, token);
+      assert.equal(response.status, 200, JSON.stringify(response.body));
+      assert.equal(response.body.success, true);
+      assert.equal(api.readDb().groups[response.body.groupId].members.length, 1);
+    }
   });
 });

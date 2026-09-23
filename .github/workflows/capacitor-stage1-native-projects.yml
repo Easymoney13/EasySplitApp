@@ -39,6 +39,8 @@ jobs:
 
       - name: Set up Android command-line tools
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Verify native toolchain requirements
         shell: bash

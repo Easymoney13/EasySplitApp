@@ -12,7 +12,12 @@ fi
 
 bash scripts/verify-ios-release-toolchain.sh
 
-npm run mobile:sync
+# Store builds must pass the production-origin and clean-bundle checks before
+# copying assets or invoking Apple's signing/provisioning tools. Do not rebuild
+# between the audit and sync: that would package a different, unaudited bundle.
+npm run verify:mobile-release
+./node_modules/.bin/cap sync ios
+node scripts/verify-mobile-release.mjs ios/App/App/public
 
 ARCHIVE_PATH="${EASYSPLIT_IOS_ARCHIVE_PATH:-/tmp/EasySplit.xcarchive}"
 rm -rf "$ARCHIVE_PATH"
@@ -22,6 +27,7 @@ xcodebuild \
   -scheme App \
   -configuration Release \
   -sdk iphoneos \
+  -destination 'generic/platform=iOS' \
   -archivePath "$ARCHIVE_PATH" \
   DEVELOPMENT_TEAM="$EASYSPLIT_APPLE_TEAM_ID" \
   CODE_SIGN_STYLE=Automatic \

@@ -45,3 +45,88 @@ test('iOS release toolchain rejects iPhoneOS SDK older than 26', () => {
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /require the iPhoneOS 26\+ SDK/);
 });
+
+// Execute the real archive script with isolated command doubles. This proves
+// failed audits stop before provisioning/signing without needing Apple secrets.
+function runArchive({ auditStatus = 0, copiedAuditStatus = 0 } = {}) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'easysplit-archive-'));
+  try {
+    fs.mkdirSync(path.join(directory, 'scripts'));
+    fs.mkdirSync(path.join(directory, 'bin'));
+    fs.mkdirSync(path.join(directory, 'node_modules/.bin'), { recursive: true });
+    for (const name of ['archive-ios-release.sh', 'verify-ios-release-toolchain.sh']) {
+      fs.copyFileSync(path.join(root, 'scripts', name), path.join(directory, 'scripts', name));
+    }
+    const writeCommand = (name, contents) => {
+      const target = path.join(directory, name);
+      fs.writeFileSync(target, `#!/usr/bin/env bash\nset -euo pipefail\n${contents}\n`);
+      fs.chmodSync(target, 0o755);
+    };
+    writeCommand('bin/xcodebuild', `
+if [[ "$*" == '-version' ]]; then
+  printf 'Xcode 26.4.1\\nBuild version TEST\\n'
+else
+  printf 'archive %s\\n' "$*" >> "$EASYSPLIT_TEST_COMMAND_LOG"
+fi`);
+    writeCommand('bin/xcrun', "printf '26.4\\n'");
+    writeCommand('bin/npm', `
+printf 'npm %s\\n' "$*" >> "$EASYSPLIT_TEST_COMMAND_LOG"
+[[ "$*" == 'run verify:mobile-release' ]] || exit 99
+exit ${auditStatus}`);
+    writeCommand('node_modules/.bin/cap', `
+printf 'cap %s\\n' "$*" >> "$EASYSPLIT_TEST_COMMAND_LOG"
+[[ "$*" == 'sync ios' ]] || exit 98`);
+    writeCommand('bin/node', `
+printf 'node %s\\n' "$*" >> "$EASYSPLIT_TEST_COMMAND_LOG"
+[[ "$*" == 'scripts/verify-mobile-release.mjs ios/App/App/public' ]] || exit 97
+exit ${copiedAuditStatus}`);
+    const commandLog = path.join(directory, 'commands.log');
+    const result = spawnSync('bash', [path.join(directory, 'scripts/archive-ios-release.sh')], {
+      cwd: directory,
+      env: {
+        ...process.env,
+        PATH: `${directory}/bin:${process.env.PATH}`,
+        EASYSPLIT_APPLE_TEAM_ID: 'TESTTEAM',
+        EASYSPLIT_IOS_ARCHIVE_PATH: path.join(directory, 'Test.xcarchive'),
+        EASYSPLIT_TEST_COMMAND_LOG: commandLog,
+      },
+      encoding: 'utf8',
+    });
+    return {
+      ...result,
+      commands: fs.existsSync(commandLog) ? fs.readFileSync(commandLog, 'utf8').trim().split('\n') : [],
+    };
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+test('iOS archive never syncs or signs when production bundle verification fails', () => {
+  const result = runArchive({ auditStatus: 23 });
+  assert.equal(result.status, 23, result.stderr);
+  assert.deepEqual(result.commands, ['npm run verify:mobile-release']);
+});
+
+test('iOS archive never signs when the copied native assets fail verification', () => {
+  const result = runArchive({ copiedAuditStatus: 24 });
+  assert.equal(result.status, 24, result.stderr);
+  assert.deepEqual(result.commands, [
+    'npm run verify:mobile-release',
+    'cap sync ios',
+    'node scripts/verify-mobile-release.mjs ios/App/App/public',
+  ]);
+});
+
+test('iOS archive signs only after auditing the exact synced bundle', () => {
+  const result = runArchive();
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.commands.slice(0, 3), [
+    'npm run verify:mobile-release',
+    'cap sync ios',
+    'node scripts/verify-mobile-release.mjs ios/App/App/public',
+  ]);
+  assert.equal(result.commands.length, 4);
+  assert.match(result.commands[3], /^archive /);
+  assert.match(result.commands[3], /-configuration Release -sdk iphoneos -destination generic\/platform=iOS/);
+  assert.match(result.commands[3], /DEVELOPMENT_TEAM=TESTTEAM/);
+});

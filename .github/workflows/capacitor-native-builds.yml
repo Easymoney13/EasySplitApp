@@ -102,6 +102,7 @@ jobs:
         run: |
           set -euo pipefail
           npm run verify
+          npm run test:release
           npm run test:strain
           npm run verify:mobile-shell
           ! grep -Rqs 'GATE4_NATIVE_CORE_FLOW=PASS' mobile-dist
@@ -252,6 +253,8 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Enable KVM acceleration
         shell: bash

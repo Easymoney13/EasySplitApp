@@ -18,6 +18,26 @@ const killedExit = 'I/Zygote  ( 300): Process 200 exited due to signal 9 (Killed
 
 const rootBackOptions = { requireRootBackTeardown: true, appProcessIds: ['100'] };
 
+function pollingClock(context) {
+  let elapsedMs = 0;
+  context.mock.method(Date, 'now', () => elapsedMs);
+  const sleep = context.mock.method(globalThis, 'setTimeout', (callback, delay) => {
+    elapsedMs += delay;
+    queueMicrotask(callback);
+  });
+  return {
+    read(snapshot) {
+      return async () => {
+        // Model time spent reading ADB as well as the interval between polls.
+        // This also lets the unchanged inclusive deadline expire naturally.
+        elapsedMs += 1;
+        return snapshot();
+      };
+    },
+    intervals: () => sleep.mock.calls.map(({ arguments: args }) => args[1]),
+  };
+}
+
 function recordRootBack(afterLogcat, beforeLogcat = '') {
   const expected = new Map();
   recordIntentionalRendererTerminations(
@@ -171,7 +191,8 @@ test('root Back rejects two independently complete renderer teardown chains', ()
   );
 });
 
-test('root Back polling waits behaviorally for delayed system disposition', async () => {
+test('root Back polling waits behaviorally for delayed system disposition', async (context) => {
+  const clock = pollingClock(context);
   const snapshots = [
     appDestroyed,
     `${appDestroyed}\n${intentional}`,
@@ -180,20 +201,22 @@ test('root Back polling waits behaviorally for delayed system disposition', asyn
   ];
   let reads = 0;
   const evidence = await waitForIntentionalRendererTerminations(
-    async () => snapshots[Math.min(reads++, snapshots.length - 1)],
+    clock.read(() => snapshots[Math.min(reads++, snapshots.length - 1)]),
     '',
     rootBackOptions,
     { timeoutMs: 100, intervalMs: 1 },
   );
 
   assert.equal(reads, 4);
+  assert.deepEqual(clock.intervals(), [1, 1, 1]);
   assert.deepEqual(evidence.expectedLines, [intentional]);
 });
 
-test('root Back polling fails when a termination never receives a complete disposition', async () => {
+test('root Back polling fails when a termination never receives a complete disposition', async (context) => {
+  const clock = pollingClock(context);
   await assert.rejects(
     waitForIntentionalRendererTerminations(
-      async () => `${appDestroyed}\n${intentional}\n${systemKill}`,
+      clock.read(() => `${appDestroyed}\n${intentional}\n${systemKill}`),
       '',
       rootBackOptions,
       { timeoutMs: 5, intervalMs: 1 },
@@ -202,12 +225,13 @@ test('root Back polling fails when a termination never receives a complete dispo
   );
 });
 
-test('root Back polling remembers an incomplete termination after log rotation hides it', async () => {
+test('root Back polling remembers an incomplete termination after log rotation hides it', async (context) => {
+  const clock = pollingClock(context);
   const snapshots = [`${appDestroyed}\n${intentional}`, ''];
   let reads = 0;
   await assert.rejects(
     waitForIntentionalRendererTerminations(
-      async () => snapshots[Math.min(reads++, snapshots.length - 1)],
+      clock.read(() => snapshots[Math.min(reads++, snapshots.length - 1)]),
       '',
       rootBackOptions,
       { timeoutMs: 5, intervalMs: 1 },

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { Capacitor } from '@capacitor/core';
 import { Sparkles, Phone, User, Globe, LogOut, Loader2, AlertCircle, CheckCircle, X } from 'lucide-react';
 import defaultTranslations, { translations as namedTranslations, formatCurrency, convertCurrency, formatDualPrice, updateLiveExchangeRates } from '../../lib/i18n';
@@ -82,6 +82,7 @@ const LanguageContext = createContext<LanguageContextType | undefined>(undefined
 
 export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const pathname = usePathname();
+  const router = useRouter();
   const [language, setLanguageState] = useState<Language>('en');
   const [currency, setCurrencyState] = useState<Currency>('NIS');
   const [theme, setThemeState] = useState<Theme>('light');
@@ -823,6 +824,18 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                   ? (language === 'he' ? 'השלימו שם ומספר טלפון כדי להמשיך.' : 'Complete your name and phone number to continue.')
                   : (language === 'he' ? 'מלאו פרטים להמשך כאורח, או התחברו עם Google / Apple לסנכרון בין מכשירים.' : 'Enter your details, or sign in with Google / Apple to sync across devices.')}
               </p>
+              <p className="mt-2 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                {language === 'he'
+                  ? 'השם שלכם מוצג בחשבונות משותפים. מספר הטלפון נמסר למשתתף שבוחר בכם כנמען לתשלום.'
+                  : 'Your name appears on shared bills. Your phone number is shared with a participant who selects you as a payment recipient.'}
+              </p>
+              <button
+                type="button"
+                onClick={() => router.push('/privacy')}
+                className="min-h-11 px-3 text-xs font-semibold text-brand-600 underline underline-offset-4 dark:text-brand-300"
+              >
+                {language === 'he' ? 'מדיניות פרטיות' : 'Privacy policy'}
+              </button>
             </div>
 
             {/* Connected account status if authenticated */}

@@ -36,6 +36,7 @@ const privateCollections = [
   'sessions', 'groups', 'history', 'restaurants', 'restaurant_visits',
   'restaurant_observations', 'restaurant_visit_source_deletions',
   '_room_codes', 'receipt_proof_uses', 'rate_limits', 'unknown_collection',
+  '_account_deletions', '_deleted_account_fences',
 ];
 
 test.before(async () => {

@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const Module = require('node:module');
+const crypto = require('node:crypto');
 
 // Exercise lib/db's Firestore branch; this double applies optimistic conflict
 // retries and lets a committed competing write land at a deterministic boundary.
@@ -8,6 +9,7 @@ let active;
 const firestore = {
   settings() {},
   collection: (...args) => active.collection(...args),
+  collectionGroup: (...args) => active.collectionGroup(...args),
   runTransaction: (...args) => active.runTransaction(...args),
   batch: (...args) => active.batch(...args),
 };
@@ -22,6 +24,7 @@ const db = require('../lib/db');
 Module._load = originalLoad;
 
 const uid = 'delete-account';
+const fencePath = (accountId) => `_deleted_account_fences/${crypto.createHash('sha256').update(`easysplit-account-deletion-v1:${accountId}`).digest('hex')}`;
 const clone = (value) => value === undefined ? undefined : structuredClone(value);
 function fixture() {
   const room = { id: 's1', status: 'active', members: [
@@ -46,22 +49,30 @@ function harness(store = fixture()) {
     versions.set(path, (versions.get(path) || 0) + 1);
   };
   const ref = (path) => ({ path, id: path.split('/').at(-1), get: async () => snapshot(path),
-    set: async (value, options) => h.write(path, value, options), collection: (name) => collection(`${path}/${name}`) });
+    set: async (value, options) => h.write(path, value, options),
+    update: async (value) => { assert.ok(store.has(path)); h.write(path, value, { merge: true }); },
+    delete: async () => h.write(path, undefined),
+    collection: (name) => collection(`${path}/${name}`) });
   const snapshot = (path) => { const value = clone(store.get(path)); return { id: path.split('/').at(-1), ref: ref(path), exists: value !== undefined, data: () => clone(value) }; };
   const collection = (prefix, filters = []) => ({ doc: (id) => ref(`${prefix}/${id}`),
     where: (key, op, value) => collection(prefix, [...filters, (row) => op === 'array-contains' ? (row[key] || []).includes(value) : row[key] === value]),
     get: async () => {
       const result = { docs: [...store.keys()].filter((path) => path.startsWith(`${prefix}/`) && !path.slice(prefix.length + 1).includes('/') && filters.every((filter) => filter(store.get(path)))).map(snapshot) };
+      result.forEach = (callback) => result.docs.forEach(callback);
       if (h.afterScan) await h.afterScan(prefix);
       return result;
     },
   });
   h.collection = collection;
+  h.collectionGroup = (name) => ({ get: async () => ({
+    docs: [...store.keys()].filter((path) => path.split('/').at(-2) === name).map(snapshot),
+  }) });
   h.runTransaction = async (callback) => {
     for (let attempt = 0; attempt < 6; attempt++) {
       const reads = new Map();
       const writes = [];
       const tx = { get: async (r) => { reads.set(r.path, versions.get(r.path) || 0); return snapshot(r.path); },
+        create: (r, data) => { assert.equal(store.has(r.path), false); writes.push({ path: r.path, data: clone(data) }); },
         set: (r, data, options) => writes.push({ path: r.path, data: clone(data), options }),
         delete: (r) => writes.push({ path: r.path }) };
       const result = await callback(tx);
@@ -182,4 +193,189 @@ test('profile synchronization preserves a group index and settings committed aft
   assert.equal(h.store.get('users/alice').phone, user.phone);
   assert.equal(h.store.get('users/alice').username_lowercase, 'updated');
   assert.equal(h.store.get('users/alice').phoneAssurance, user.phoneAssurance);
+});
+
+test('late new rooms and joins cannot escape the account deletion scan', async () => {
+  const h = harness();
+  const staleRoom = { ...clone(h.store.get('sessions/s1')), id: 'late-room' };
+  let attempts = 0;
+  h.afterScan = async (name) => {
+    if (name !== 'sessions') return;
+    await assert.rejects(db.createSessionIfAbsent(staleRoom), { errorCode: 'ACCOUNT_DELETED' }); attempts++;
+    await assert.rejects(db.saveGroup({ ...staleRoom, id: 'late-group', bills: [] }), { errorCode: 'ACCOUNT_DELETED' }); attempts++;
+    await assert.rejects(db.transactGroupMembership('g1', (group) => {
+      group.members.push(staleRoom.members[0]); return group;
+    }), { errorCode: 'ACCOUNT_DELETED' }); attempts++;
+  };
+  await db.deleteUserAccountData(uid);
+  assert.equal(attempts, 3);
+  assert.equal(h.store.has('sessions/late-room'), false);
+  assert.equal(h.store.has('groups/late-group'), false);
+  assert.equal(JSON.stringify(h.store.get('groups/g1')).includes(uid), false);
+  assert.deepEqual(Object.keys(h.store.get(fencePath(uid))), ['deletedAt']);
+});
+
+test('a creation that read no fence retries and rejects when deletion wins the commit race', async () => {
+  const h = harness();
+  const staleRoom = { ...clone(h.store.get('sessions/s1')), id: 'late-commit' };
+  let injected = false;
+  h.beforeCommit = async (writes) => {
+    if (!injected && writes.some((write) => write.path === 'sessions/late-commit')) {
+      injected = true;
+      await db.deleteUserAccountData(uid);
+    }
+  };
+  await assert.rejects(db.createSessionIfAbsent(staleRoom), { errorCode: 'ACCOUNT_DELETED' });
+  assert.equal(injected, true);
+  assert.equal(h.retries, 1);
+  assert.equal(h.store.has('sessions/late-commit'), false);
+  assert.equal(h.store.has(`users/${uid}`), false);
+});
+
+test('finished deletion fences stale profile, history, room and restaurant identity writers', async () => {
+  const h = harness();
+  const staleRoom = clone(h.store.get('sessions/s1'));
+  const staleGroup = clone(h.store.get('groups/g1'));
+  const staleHistory = clone(h.store.get('history/h1'));
+  const visitSession = { ...staleRoom, restaurant: { id: 'rest_fence', confidence: 1, identityBasis: 'name_only_session' } };
+  await db.deleteUserAccountData(uid);
+  const before = clone([...h.store]);
+  const writes = [
+    () => db.saveUser({ id: uid, username: 'Restored' }, uid),
+    () => db.saveUser({ id: 'bob', bills: [staleHistory] }, 'bob'),
+    () => db.findOrCreateUser(uid, 'Restored', '0501234567'),
+    () => db.addUserBill(uid, 'Restored', '0501234567', staleHistory),
+    () => db.saveSession(staleRoom),
+    () => db.saveGroup(staleGroup),
+    () => db.saveGroupAndSession(staleGroup, staleRoom),
+    () => db.addToHistory(staleHistory),
+    () => db.saveSessionAndHistory(staleRoom, staleHistory),
+    () => db.recordRestaurantVisit(visitSession, staleRoom.members[0]),
+    () => db.transactSessionAndLinkedGroup('s1', (session) => ({ session, history: staleHistory })),
+    () => db.saveGroupBillAndSession('g1', staleGroup.bills[0], staleRoom, 'bob'),
+  ];
+  for (const write of writes) await assert.rejects(write(), { errorCode: 'ACCOUNT_DELETED' });
+  assert.deepEqual([...h.store], before);
+  const current = await db.transactSessionAndLinkedGroup('s1', (session) => {
+    session.members.find((member) => member.id === 'bob').settled = true;
+    return { session };
+  });
+  assert.equal(current.session.members.find((member) => member.id === 'bob').settled, true);
+  assert.deepEqual(current.session.items, h.store.get('sessions/s1').items);
+  await db.findOrCreateUser('replacement-account', 'New Account', '0501234567');
+  assert.equal(h.store.get('users/replacement-account').phone, '0501234567');
+});
+
+test('legacy shared bills in other profiles are anonymized without losing concurrent profile or bill updates', async () => {
+  const h = harness();
+  const shared = { ...clone(h.store.get('history/h1')), amount: 100 };
+  h.write('users/bob', { id: 'bob', username: 'Bob', phone: '0507777777', settings: { theme: 'dark' }, groups: ['g1'], bills: [shared] });
+  let injected = false;
+  h.beforeCommit = (writes) => {
+    if (!injected && writes.some((write) => write.path === 'users/bob' && write.data?.bills)) {
+      injected = true;
+      h.write('users/bob', { username: 'Bob Updated', bills: [shared, { id: 'concurrent-bill', amount: 27 }] }, { merge: true });
+    }
+  };
+  await db.deleteUserAccountData(uid);
+  const bob = h.store.get('users/bob');
+  assert.equal(injected, true);
+  assert.equal(bob.username, 'Bob Updated');
+  assert.equal(bob.phone, '0507777777');
+  assert.deepEqual(bob.settings, { theme: 'dark' });
+  assert.deepEqual(bob.groups, ['g1']);
+  assert.equal(bob.bills[0].amount, 100);
+  assert.deepEqual(bob.bills[1], { id: 'concurrent-bill', amount: 27 });
+  assert.equal(JSON.stringify(bob).includes(uid), false);
+  const deletedId = h.store.get('history/h1').members.find((member) => member.deletedAccount).id;
+  assert.equal(bob.bills[0].members.find((member) => member.deletedAccount).id, deletedId);
+  assert.deepEqual(bob.bills[0].items[0].claimedBy, [deletedId, 'bob']);
+  h.beforeCommit = null;
+  await assert.rejects(db.addUserBill('bob', 'Bob Updated', '0507777777', shared), { errorCode: 'ACCOUNT_DELETED' });
+  assert.equal(JSON.stringify(h.store.get('users/bob')).includes(uid), false);
+});
+
+test('legacy history subcollections retain fresh financial changes and stable anonymization after retry', async () => {
+  const h = harness();
+  const history = clone(h.store.get('history/h1'));
+  const nestedPath = 'users/bob/history/legacy';
+  const orphanPath = 'users/missing-profile/history/legacy';
+  h.write(nestedPath, { ...history, id: 'legacy', storeName: 'Cafe', amount: 100 });
+  h.write(orphanPath, { ...history, id: 'legacy', storeName: 'Cafe', amount: 100 });
+  const pointer = { historyId: 'h1', settledAt: 123 };
+  h.write('users/bob/history/pointer', pointer);
+  let interrupted = false;
+  h.beforeCommit = (writes) => {
+    if (!interrupted && writes.some((write) => write.path === nestedPath)) {
+      interrupted = true;
+      throw new Error('Interrupted nested history cleanup');
+    }
+  };
+  await assert.rejects(db.deleteUserAccountData(uid), /Interrupted nested history cleanup/);
+  const anonymousId = h.store.get('history/h1').members.find((member) => member.deletedAccount).id;
+  let concurrent = false;
+  h.beforeCommit = (writes) => {
+    if (!concurrent && writes.some((write) => write.path === nestedPath)) {
+      concurrent = true;
+      const latest = clone(h.store.get(nestedPath));
+      latest.amount = 125;
+      latest.items.push({ id: 'concurrent-item', price: 25, claimedBy: ['bob'] });
+      h.write(nestedPath, latest);
+    }
+  };
+  await db.deleteUserAccountData(uid);
+  assert.equal(concurrent, true);
+  assert.equal(h.retries, 1);
+  for (const path of [nestedPath, orphanPath]) {
+    const stored = h.store.get(path);
+    assert.equal(stored.members.find((member) => member.deletedAccount).id, anonymousId);
+    assert.equal(JSON.stringify(stored).includes(uid), false);
+    assert.equal(JSON.stringify(stored).includes('0501234567'), false);
+  }
+  assert.equal(h.store.get(nestedPath).amount, 125);
+  assert.deepEqual(h.store.get(nestedPath).items[1], { id: 'concurrent-item', price: 25, claimedBy: ['bob'] });
+  assert.deepEqual(h.store.get('users/bob/history/pointer'), pointer);
+});
+
+test('history deletion cannot restore identity or discard bills from a stale profile scan', async () => {
+  const h = harness();
+  const shared = clone(h.store.get('history/h1'));
+  h.write('users/bob', { id: 'bob', bills: [shared, { id: 'remove-history' }] });
+  let concurrent = false;
+  h.afterScan = async (name) => {
+    if (!concurrent && name === 'users') {
+      concurrent = true;
+      await db.deleteUserAccountData(uid);
+      const current = h.store.get('users/bob');
+      h.write('users/bob', { ...current, bills: [...current.bills, { id: 'concurrent-bill', amount: 25 }] });
+    }
+  };
+  await db.deleteHistory('remove-history');
+  const bills = h.store.get('users/bob').bills;
+  assert.equal(concurrent, true);
+  assert.equal(JSON.stringify(bills).includes(uid), false);
+  assert.deepEqual(bills.map((bill) => bill.id), ['h1', 'concurrent-bill']);
+  assert.equal(h.store.has(`users/${uid}`), false);
+});
+
+test('deletion completion requires a durable fence and no remaining profile or cleanup job', async () => {
+  const h = harness(new Map());
+  assert.equal(await db.isAccountDeletionComplete(uid), false);
+  h.write(fencePath(uid), { deletedAt: 1 });
+  h.write(`users/${uid}`, { id: uid });
+  assert.equal(await db.isAccountDeletionComplete(uid), false);
+  h.write(`users/${uid}`, undefined);
+  h.write(`_account_deletions/${uid}`, { seed: 'pending' });
+  assert.equal(await db.isAccountDeletionComplete(uid), false);
+  h.write(`_account_deletions/${uid}`, undefined);
+  assert.equal(await db.isAccountDeletionComplete(uid), true);
+  let injected = false;
+  h.beforeCommit = () => {
+    if (!injected) {
+      injected = true;
+      h.write(`_account_deletions/${uid}`, { seed: 'concurrent-retry' });
+    }
+  };
+  assert.equal(await db.isAccountDeletionComplete(uid), false);
+  assert.equal(h.retries, 1);
 });

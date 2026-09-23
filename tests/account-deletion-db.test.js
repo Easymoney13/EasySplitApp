@@ -59,6 +59,7 @@ const db = require('../lib/db');
 test.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
 
 test('deleteUserAccountData removes the account and anonymizes shared records', async () => {
+  assert.equal(db.isAccountDeletionComplete('firebase-uid'), false);
   const result = await db.deleteUserAccountData('firebase-uid');
   assert.equal(result.deleted, true);
   assert.equal(result.deletedVisits, 1);
@@ -86,4 +87,38 @@ test('deleteUserAccountData removes the account and anonymizes shared records', 
   assert.equal(deletedGroupMember.id, deletedHistoryMember.id);
   assert.equal(stored.groups.g1.bills[0].payerId, deletedGroupMember.id);
   assert.equal(stored.sessions.s1.payerId, deletedGroupMember.id);
+  assert.equal(db.isAccountDeletionComplete('firebase-uid'), true);
+  assert.equal(db.isAccountDeletionComplete('unknown-account'), false);
+});
+
+test('account deletion anonymizes readable legacy history snapshots and preserves simple pointers', () => {
+  const uid = 'legacy-deleted';
+  const legacy = {
+    id: 'legacy-only', storeName: 'Cafe', amount: 42, settledAt: 123,
+    memberIds: [uid, 'other'], payerId: uid,
+    members: [
+      { id: uid, userId: uid, name: 'Private legacy name', phone: '0501234567' },
+      { id: 'other', userId: 'other', name: 'Bob' },
+    ],
+    items: [{ id: 'meal', price: 42, claimedBy: [uid, 'other'] }],
+  };
+  const pointer = { historyId: 's1', settledAt: 100 };
+  const data = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+  data.users[uid] = { id: uid, username: 'Private legacy name' };
+  data.historyPointers.other = [legacy, pointer];
+  data.historyPointers['missing-profile'] = [legacy];
+  fs.writeFileSync(dbPath, JSON.stringify(data));
+  assert.equal(db.deleteUserAccountData(uid).deleted, true);
+  const stored = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+  const readable = db.getHistoryPageForUser('other').slots[0];
+  const anonymousId = readable.members.find((member) => member.deletedAccount)?.id;
+  assert.ok(anonymousId);
+  assert.equal(readable.amount, 42);
+  assert.equal(readable.payerId, anonymousId);
+  assert.deepEqual(readable.items[0].claimedBy, [anonymousId, 'other']);
+  assert.equal(JSON.stringify(stored.historyPointers).includes(uid), false);
+  assert.equal(JSON.stringify(stored.historyPointers).includes('Private legacy name'), false);
+  assert.equal(JSON.stringify(stored.historyPointers).includes('0501234567'), false);
+  assert.deepEqual(stored.historyPointers.other[1], pointer);
+  assert.deepEqual(stored.historyPointers['missing-profile'][0], readable);
 });

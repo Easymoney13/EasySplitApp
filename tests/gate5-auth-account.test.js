@@ -49,7 +49,7 @@ test('account deletion is authenticated, permanent, and wired through Settings',
   const ctx = read('src/components/LanguageContext.tsx');
   const page = read('src/app/page.tsx');
 
-  assert.match(server, /server\.delete\('\/api\/user\/account', authenticateUser/);
+  assert.match(server, /server\.delete\('\/api\/user\/account', authenticateAccountDeletion/);
   assert.match(server, /if \(!req\.user\)[\s\S]*status\(401\)/);
   assert.match(server, /provider === 'apple\.com'[\s\S]*revokeAppleAuthorization\(req\.body\?\.authorizationCode\)[\s\S]*db\.deleteUserAccountData\(uid\)/);
   assert.match(server, /getAuth\(\)\.deleteUser\(uid\)/);

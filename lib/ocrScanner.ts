@@ -281,7 +281,7 @@ export function parseReceiptText(rawText: string): ParsedBill | null {
       .replace(/\s+/g, ' ')
       .trim();
     if (!finalTotalLabel.test(label)) continue;
-    const value = Number(numericMatches.at(-1)?.[1].replace(',', '.'));
+    const value = Number(numericMatches[numericMatches.length - 1]?.[1].replace(',', '.'));
     if (Number.isFinite(value) && value > 0 && value <= 50_000) receiptTotal = value;
   }
 
@@ -383,7 +383,7 @@ export function parseReceiptText(rawText: string): ParsedBill | null {
       text: match[0],
       index: match.index || 0,
     }));
-    let decimalMatch = decimalMatches.at(-1);
+    let decimalMatch = decimalMatches[decimalMatches.length - 1];
     if (decimalMatches.length > 1) {
       const decimalCandidates = decimalMatches.map((match) => ({
         match,

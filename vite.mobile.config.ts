@@ -75,7 +75,9 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: resolve(repoRoot, 'mobile-dist'),
       emptyOutDir: true,
-      target: ['ios16.4', 'chrome111'],
+      // Match the native iOS 15 deployment target; do not emit newer syntax
+      // for devices that the App Store still allows to install this app.
+      target: ['ios15', 'chrome111'],
       // Keep source maps for instrumented Gate 4 diagnostics only. Clean/store
       // builds must not ship repository source maps inside the native bundle.
       sourcemap: gate4NativeE2E,
