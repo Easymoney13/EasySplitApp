@@ -18,14 +18,15 @@ function compile(relativePath, requireMock, globals = {}) {
 
 // Render the actual global provider in its hydrated, incomplete-profile state.
 // Effects are excluded so the fixture cannot initiate real authentication or I/O.
-function providerHarness(usePathname, signedIn = false) {
+function providerHarness(usePathname, signedIn = false, { router = {}, language = 'en' } = {}) {
   let stateIndex = 0;
   const hooks = {
     ...React,
     useEffect: () => {},
     useState: (initial) => {
       const index = stateIndex++;
-      const value = index === 3 ? true // Local state initialized.
+      const value = index === 0 ? language
+        : index === 3 ? true // Local state initialized.
         : index === 4 ? false // Firebase hydration finished.
           : index === 7 ? (signedIn ? { uid: 'new-account', providerData: [{ providerId: 'google.com' }] } : null)
             : typeof initial === 'function' ? initial() : initial;
@@ -35,7 +36,7 @@ function providerHarness(usePathname, signedIn = false) {
   const module = compile('src/components/LanguageContext.tsx', (name) => {
     if (name === 'react') return hooks;
     if (name === 'react/jsx-runtime') return require(name);
-    if (name === 'next/navigation') return { usePathname };
+    if (name === 'next/navigation') return { usePathname, useRouter: () => router };
     if (name === '@capacitor/core') return { Capacitor: { getPlatform: () => 'ios' } };
     if (name === 'lucide-react') return new Proxy({}, { get: () => () => null });
     if (name === '../../lib/i18n') return { en: {}, he: {} };
@@ -70,6 +71,27 @@ for (const signedIn of [false, true]) {
   });
 }
 
+for (const language of ['en', 'he']) {
+  for (const signedIn of [false, true]) {
+    test(`${language} onboarding opens privacy without requiring an incomplete ${signedIn ? 'signed-in' : 'guest'} profile`, () => {
+      let pathname = '/';
+      const router = { push: (path) => { pathname = path; } };
+      const render = providerHarness(() => pathname, signedIn, { router, language });
+      const dialog = elements(render()).find((node) => node.props?.role === 'dialog');
+      const policyButton = elements(dialog).find((node) => node.type === 'button'
+        && node.props.children === (language === 'he' ? 'מדיניות פרטיות' : 'Privacy policy'));
+      assert.ok(policyButton, 'privacy must be reachable before sending profile details');
+      assert.equal(policyButton.props.type, 'button', 'reading the policy must not submit the profile');
+      assert.notEqual(policyButton.props.disabled, true);
+      policyButton.props.onClick();
+      assert.equal(pathname, '/privacy');
+      assertPolicyUnblocked(render());
+      pathname = '/';
+      assert.equal(elements(render()).filter((node) => node.props?.role === 'dialog').length, 1);
+    });
+  }
+}
+
 for (const signedIn of [false, true]) {
 test(`native direct privacy entry and route changes update the ${signedIn ? 'signed-in' : 'guest'} onboarding exemption`, async () => {
   const core = await import('../mobile/router-core.mjs');
@@ -97,12 +119,13 @@ test(`native direct privacy entry and route changes update the ${signedIn ? 'sig
     };
     throw new Error(`Unexpected shim import ${name}`);
   }, { window: browser, Event });
-  const render = providerHarness(shim.usePathname, signedIn);
+  const render = providerHarness(shim.usePathname, signedIn, { router: shim.useRouter() });
   assertPolicyUnblocked(render());
 
   shim.useRouter().push('/');
-  assert.equal(elements(render()).filter((node) => node.props?.role === 'dialog').length, 1);
-  shim.useRouter().push('/privacy');
+  const dialog = elements(render()).find((node) => node.props?.role === 'dialog');
+  assert.ok(dialog);
+  elements(dialog).find((node) => node.type === 'button' && node.props.children === 'Privacy policy').props.onClick();
   assertPolicyUnblocked(render());
 
   browser.location.search = '?esRoute=%2F';

@@ -143,3 +143,25 @@ test('Hebrew OCR recognizes business identifiers printed with gershayim', () => 
   assert.ok(receipt);
   assert.equal(receipt.restaurant.businessId, '515123456');
 });
+
+test('browser OCR parses prices and totals on iOS 15 without Array.prototype.at', () => {
+  const { parseReceiptText } = loadBrowserOcrModule();
+  const originalAt = Object.getOwnPropertyDescriptor(Array.prototype, 'at');
+  let receipt;
+  let integerReceipt;
+  try {
+    Object.defineProperty(Array.prototype, 'at', { configurable: true, value: undefined });
+    receipt = parseReceiptText('קפה 12.00\nעוגה 24.00\nסה״כ 36.00');
+    integerReceipt = parseReceiptText('קפה 12\nסה״כ 12');
+  } finally {
+    if (originalAt) Object.defineProperty(Array.prototype, 'at', originalAt);
+    else delete Array.prototype.at;
+  }
+  assert.equal(receipt.receiptTotal, 36);
+  assert.deepEqual(receipt.items.map(({ name, price }) => ({ name, price })), [
+    { name: 'קפה', price: 12 },
+    { name: 'עוגה', price: 24 },
+  ]);
+  assert.equal(integerReceipt.receiptTotal, 12);
+  assert.equal(integerReceipt.items[0].price, 12);
+});

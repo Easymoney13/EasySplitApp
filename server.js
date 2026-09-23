@@ -191,7 +191,7 @@ if (process.env.MIGRATE_LOCAL_DB_TO_FIRESTORE === 'true' && typeof db.migrateLoc
 }
 
 // Middleware to verify Firebase ID token in Authorization header
-async function authenticateUser(req, res, nextMiddleware) {
+async function authenticateUser(req, res, nextMiddleware, { allowCompletedDeletion = false } = {}) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     req.user = null;
@@ -200,14 +200,36 @@ async function authenticateUser(req, res, nextMiddleware) {
 
   const token = authHeader.split('Bearer ')[1];
   try {
-    const decodedToken = await getAuth().verifyIdToken(token);
+    // Signature/expiry alone still accepts a token after its account is deleted
+    // or disabled. Check current Auth state before permitting any profile/room
+    // write so an old token cannot recreate a successfully deleted account.
+    const decodedToken = await getAuth().verifyIdToken(token, true);
     req.user = decodedToken;
     nextMiddleware();
   } catch (err) {
+    // A lost successful DELETE response must remain retryable after Auth has
+    // removed the user. This exception proves the signed identity and completed
+    // cleanup; it grants no access to any other route or unfinished deletion.
+    if (allowCompletedDeletion && err?.code === 'auth/user-not-found') {
+      try {
+        const decodedToken = await getAuth().verifyIdToken(token);
+        if (await db.isAccountDeletionComplete(decodedToken.uid)) {
+          req.user = decodedToken;
+          req.completedAccountDeletion = true;
+          return nextMiddleware();
+        }
+      } catch (_) {
+        // Invalid/expired tokens and an unavailable completion check fail closed.
+      }
+    }
     console.warn('⚠️ Invalid or expired Firebase ID token:', err.message);
     req.user = null;
     return res.status(401).json({ error: 'Unauthorized: Invalid or expired token' });
   }
+}
+
+function authenticateAccountDeletion(req, res, nextMiddleware) {
+  return authenticateUser(req, res, nextMiddleware, { allowCompletedDeletion: true });
 }
 
 function requireValidCreatorProfile(req, res, nextMiddleware) {
@@ -2635,7 +2657,7 @@ app.prepare().then(() => {
   });
 
   // DELETE /api/user/account - Permanently delete the authenticated account and personal data
-  server.delete('/api/user/account', authenticateUser, async (req, res) => {
+  server.delete('/api/user/account', authenticateAccountDeletion, async (req, res) => {
     try {
       if (!req.user) {
         return res.status(401).json({ error: 'Unauthorized: Authentication required' });
@@ -2643,6 +2665,9 @@ app.prepare().then(() => {
 
       const uid = req.user.uid;
       const provider = req.user.firebase?.sign_in_provider || '';
+      if (req.completedAccountDeletion) {
+        return res.json({ success: true, deleted: false, anonymizedRecords: 0, deletedVisits: 0, provider });
+      }
 
       // Apple requires revoking the user's authorization when an account created
       // through Sign in with Apple is deleted. A fresh authorization code is

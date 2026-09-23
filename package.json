@@ -32,7 +32,7 @@
     "verify:mobile-release": "npm run verify:mobile-release-env && npm run mobile:build && node scripts/verify-mobile-release.mjs",
     "verify:mobile-release-env": "node scripts/verify-mobile-release-env.mjs",
     "verify:mobile-release-endpoints": "node scripts/verify-mobile-release-endpoints.mjs",
-    "mobile:bundle:android": "npm run mobile:sync && cd android && ./gradlew :app:bundleRelease --no-daemon --stacktrace",
+    "mobile:bundle:android": "npm run verify:mobile-release && cap sync android && node scripts/verify-mobile-release.mjs android/app/src/main/assets/public && cd android && ./gradlew :app:bundleRelease --no-daemon --stacktrace",
     "mobile:archive:ios": "bash scripts/archive-ios-release.sh",
     "test:release": "node --test tests/release-compliance.test.mjs tests/mobile-release-env.test.mjs tests/mobile-release-bundle-audit.test.mjs tests/ios-release-toolchain.test.mjs tests/apple-token-revocation.test.js"
   },

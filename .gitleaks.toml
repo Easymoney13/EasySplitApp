@@ -1,19 +1,33 @@
-# Gitleaks configuration for EasySplit repository
-# Suppresses false positives for test fixtures, mock assertions, and historical migration artifacts
-
 title = "EasySplit Gitleaks Config"
 
-[allowlist]
-description = "Global allowlist for testing fixtures and historical database migration files"
-paths = [
-  '''(?i)^tests/.*''',
-  '''(?i)^scripts/verify-mobile-release\.mjs$''',
-  '''(?i)^db(\.example)?\.json$''',
-  '''(?i)^lib/firebase\.ts$''',
+[extend]
+useDefault = true
+
+# Do not exclude whole source files, tests, or historical database files.
+# Only the existing public Firebase client identifier is exempted here.
+# A different key or server credential in this same file must still be reported.
+# Scope the exception to both key rules, so other credentials in this file still
+# get scanned. Global path allowlists may skip the whole file before matching.
+[[rules]]
+id = "gcp-api-key"
+
+[[rules.allowlists]]
+description = "Existing public Firebase client identifier in its client config only"
+condition = "AND"
+paths = ['''^lib/firebase\.ts$''']
+regexTarget = "secret"
+regexes = [
+  '''^AIzaSyBQmeJV8TR77XGRSybwTJXA6HZXh8DmGx8$''',
 ]
 
+[[rules]]
+id = "generic-api-key"
+
+[[rules.allowlists]]
+description = "Existing public Firebase client identifier in its client config only"
+condition = "AND"
+paths = ['''^lib/firebase\.ts$''']
+regexTarget = "secret"
 regexes = [
-  '''mock-[a-z0-9_-]+''',
-  '''test-[a-z0-9_-]+''',
-  '''sample-[a-z0-9_-]+''',
+  '''^AIzaSyBQmeJV8TR77XGRSybwTJXA6HZXh8DmGx8$''',
 ]
